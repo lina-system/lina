@@ -1,7 +1,8 @@
 """The read-only ``hermes`` board source (lina#481) over a scratch LINA root and a fake Hermes CLI.
 
 The fake CLI is a script outside the LINA tree that logs its argv and answers from ``canned.json`` under the configured
-Hermes home, next to a ``kanban.db`` LINA must never open. Replies are checked against the published schemas
+Hermes home, next to a ``kanban.db`` LINA must never open. Its ``kanban watch`` prints one event each time a ``poke``
+file appears there. The board is read in the background (lina#533): ``Hermes.on`` waits for the first pass. Replies are checked against the published schemas
 (``docs/api/work-client.yaml``, ``docs/api/board-client.yaml``).
 """
 
@@ -12,6 +13,7 @@ import importlib.util
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 import jsonschema
@@ -35,14 +37,24 @@ import json, os, sys, time
 here = os.path.dirname(os.path.abspath(__file__))
 with open(os.path.join(here, "calls.log"), "a", encoding="utf-8") as log:
     log.write(json.dumps(sys.argv[1:]) + "\\n")
+args = sys.argv[1:]
+if args == ["kanban", "--board", "{board}", "watch", "--interval", "2"]:
+    print("Watching kanban events (initial board '{board}'). Ctrl-C to stop.", flush=True)
+    poke = os.path.join(os.environ["HERMES_HOME"], "poke")
+    while True:
+        if os.path.exists(poke):
+            os.remove(poke)
+            print("[now] t_a1 commented (@alpha)", flush=True)
+        time.sleep(0.05)
 with open(os.path.join(os.environ["HERMES_HOME"], "canned.json"), encoding="utf-8") as f:
     canned = json.load(f)
+if args == ["json"] or args[3:4] == ["show"]:
+    time.sleep(canned.get("sleep", 0))
 if canned.get("mode") == "fail":
     sys.stderr.write("kanban: database is locked\\n")
     sys.exit(3)
 if canned.get("mode") == "hang":
     time.sleep(30)
-args = sys.argv[1:]
 if args == ["json"]:
     print(json.dumps(canned["work"]))
 elif args == ["kanban", "--board", "{board}", "list", "--json"]:
@@ -131,10 +143,17 @@ class Hermes:
     def canned(self, data: dict, mode: str | None = None) -> None:
         (self.home / "canned.json").write_text(json.dumps(dict(data, mode=mode)), encoding="utf-8")
 
-    def on(self, **extra) -> None:
+    def on(self, wait: bool = True, **extra) -> None:
+        """Set the source; with *wait*, start its reader and wait for the first pass to end."""
         settings = {"command": [str(self.cli)], "board": BOARD, "work": [str(self.cli)], "home": str(self.home),
-                    "cache_seconds": 0, **extra}
+                    **extra}
         self.work.config(extra="board:\n  hermes: " + json.dumps(settings) + "\n")
+        if wait:
+            assert lina_board_hermes.reader().wait(1, timeout=30)
+
+    def poke(self) -> None:
+        """What a change on the board makes ``kanban watch`` print."""
+        (self.home / "poke").write_text("", encoding="utf-8")
 
     def off(self) -> None:
         self.work.config()
@@ -142,6 +161,13 @@ class Hermes:
     def calls(self) -> list[list[str]]:
         log = self.bin / "calls.log"
         return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()] if log.exists() else []
+
+    def reads(self) -> list[list[str]]:
+        """The calls of the passes, without the long-running ``kanban watch``."""
+        return [c for c in self.calls() if c[3:4] != ["watch"]]
+
+    def shows(self) -> list[str]:
+        return [c[4] for c in self.calls() if c[3:4] == ["show"]]
 
 
 @pytest.fixture
@@ -155,8 +181,8 @@ def work(tmp_path, monkeypatch):
     kb.init_db()
     with kbc.connect_closing() as conn:
         kb.create_task(conn, title="Own card", goal_mode=True, assignee="alpha")
-    lina_board_hermes._CACHE.clear()
-    return env
+    yield env
+    lina_board_hermes.stop()
 
 
 @pytest.fixture
@@ -238,14 +264,17 @@ def test_hermes_cards_and_the_old_record_are_served_in_the_existing_shapes(herme
     assert ["kanban", "--board", BOARD, "show", "t_a1", "--json"] in hermes.calls()
 
 
-def test_a_reply_is_kept_for_cache_seconds(hermes, client):
-    hermes.on(cache_seconds=60)
+def test_a_request_runs_no_command_and_one_pass_reads_each_card_once(hermes, client):
+    hermes.on()
+    ran = hermes.reads()
+    assert sorted(map(tuple, ran)) == sorted([
+        ("json",), ("kanban", "--board", BOARD, "list", "--json"),
+        *[("kanban", "--board", BOARD, "show", i, "--json") for i in ("t_a1", "t_g1", "t_b1")]])
     for _ in range(3):
         _get(client, "/api/lina/board", "board-client.yaml", "BoardSnapshot")
         _get(client, f"{WORK}/cards", "work-client.yaml", "WorkCardList")
-    assert sorted(map(tuple, hermes.calls())) == sorted([
-        ("json",), ("kanban", "--board", BOARD, "list", "--json"),
-        *[("kanban", "--board", BOARD, "show", i, "--json") for i in ("t_a1", "t_g1", "t_b1")]])
+        _get(client, f"{WORK}/cards/hermes:t_a1", "work-client.yaml", "WorkCardDetail")
+    assert hermes.reads() == ran
 
 
 _PATH_EVENTS = {"open", "sqlite3.connect", "sqlite3.connect/handle", "os.listdir", "os.scandir", "glob.glob",
@@ -278,8 +307,9 @@ def test_every_read_goes_through_the_command_and_no_hermes_file_is_opened(hermes
     assert "hermes:T1" in [m["id"] for m in board["inbox"]["mine"]]
     home = str(hermes.home.resolve())
     assert opened and [p for _, p in opened if os.path.abspath(p).startswith(home)] == []
-    assert {tuple(call[:4]) if call[0] == "kanban" else tuple(call) for call in hermes.calls()} == {
-        ("json",), ("kanban", "--board", BOARD, "list"), ("kanban", "--board", BOARD, "show")}
+    assert {tuple(call[:4]) if call[0] == "kanban" else tuple(call) for call in hermes.calls()} <= {
+        ("json",), ("kanban", "--board", BOARD, "list"), ("kanban", "--board", BOARD, "show"),
+        ("kanban", "--board", BOARD, "watch")}
 
 
 @pytest.mark.parametrize(("method", "path", "body"), [
@@ -297,14 +327,14 @@ def test_write_routes_refuse_hermes_items_with_409_and_change_nothing(hermes, cl
     assert response.status_code == 409, (method, response.text)
     assert response.json()["detail"] == lina_board_hermes.READ_ONLY
     assert (_lines(work), _own_comments()) == (lines, comments)
-    assert [c for c in hermes.calls()[len(calls):] if c not in (["json"],)] == []
+    assert [c for c in hermes.calls()[len(calls):] if c[0] != "json" and c[3:4] not in (["list"], ["show"], ["watch"])] == []
 
 
 @pytest.mark.parametrize(("mode", "message"), [("fail", "exited 3: kanban: database is locked"),
                                                ("hang", "timed out after 0.5s")])
 def test_a_failing_command_is_one_error_and_the_other_sources_are_served(hermes, client, mode, message):
-    hermes.on(timeout_seconds=0.5)
     hermes.canned(_canned(), mode=mode)
+    hermes.on(timeout_seconds=0.5)
     board = _get(client, "/api/lina/board", "board-client.yaml", "BoardSnapshot")
     assert [(e["source"], message in e["message"]) for e in board["errors"]] == [("hermes", True)]
     assert board["inbox"]["mine"] == [] and board["counts"]["inbox"] == 0
@@ -313,15 +343,6 @@ def test_a_failing_command_is_one_error_and_the_other_sources_are_served(hermes,
     assert [c["title"] for c in cards["cards"]] == ["Own card"]
     assert [(e["source"], message in e["message"]) for e in cards["errors"]] == [("hermes", True)]
     assert client.get(f"{WORK}/cards/hermes:t_a1").status_code == 503
-
-
-def test_a_reply_slower_than_cache_seconds_is_kept_from_when_it_ended(hermes, client):
-    hermes.on(timeout_seconds=1, cache_seconds=0.5)
-    hermes.canned(_canned(), mode="hang")
-    for _ in range(2):
-        board = _get(client, "/api/lina/board", "board-client.yaml", "BoardSnapshot")
-        assert [(e["source"], "timed out" in e["message"]) for e in board["errors"]] == [("hermes", True)]
-    assert hermes.calls() == [["json"]]
 
 
 def test_the_old_record_is_served_when_lina_s_own_record_fails(hermes, client, monkeypatch):
@@ -344,8 +365,8 @@ def test_with_only_the_old_record_set_no_card_read_runs(hermes, client):
     hermes.on(command=None)
     for path, schema in (("cards", "WorkCardList"), ("goals", "GoalList"), ("inbox", "Inbox")):
         reply = _get(client, f"{WORK}/{path}", "work-client.yaml", schema)
-        assert reply["errors"] == [], path
-    assert hermes.calls() == []
+        assert reply["errors"] == [] and "hermesAt" not in reply, path
+    assert hermes.calls() == [["json"]]
     board = _get(client, "/api/lina/board", "board-client.yaml", "BoardSnapshot")
     assert board["errors"] == [] and [m["id"] for m in board["inbox"]["mine"]] == ["hermes:T1"]
 
@@ -362,15 +383,88 @@ def test_unset_nothing_runs_and_turning_it_off_leaves_no_file(hermes, client, wo
                                                  "BoardSnapshot").items() if k != "at"}}
     before = replies()
     files = _files(work.root, hermes.home)
-    assert hermes.calls() == [] and "errors" not in before["cards"]
+    assert hermes.calls() == [] and "errors" not in before["cards"] and "hermesAt" not in before["board"]
 
     hermes.on()
     on = replies()
     assert "hermes:t_a1" in [c["id"] for c in on["cards"]["cards"]]
     assert "hermes:T1" in [m["id"] for m in on["board"]["inbox"]["mine"]]
-    ran = len(hermes.calls())
+    ran = len(hermes.reads())
 
     hermes.off()
     assert replies() == before
-    assert len(hermes.calls()) == ran
+    assert len(hermes.reads()) == ran
     assert _files(work.root, hermes.home) == files
+
+
+def _done(task_id: str, ended: float) -> dict:
+    return dict(_task(task_id, f"Old card {task_id}", "done", "alpha"), completed_at=int(ended))
+
+
+def test_before_the_first_pass_ends_a_route_answers_at_once_with_one_error(hermes, client):
+    hermes.canned(dict(_canned(), sleep=5))
+    hermes.on(wait=False)
+    for path, spec, schema in ((f"{WORK}/cards", "work-client.yaml", "WorkCardList"),
+                               ("/api/lina/board", "board-client.yaml", "BoardSnapshot")):
+        started = time.monotonic()
+        reply = _get(client, path, spec, schema)
+        assert time.monotonic() - started < 1, path
+        assert [(e["source"], e["message"]) for e in reply["errors"]] == [("hermes", lina_board_hermes.FIRST_PASS)]
+        assert reply["hermesAt"] is None
+    cards = _get(client, f"{WORK}/cards", "work-client.yaml", "WorkCardList")
+    assert [c["title"] for c in cards["cards"]] == ["Own card"]
+    assert client.get(f"{WORK}/cards/hermes:t_a1").status_code == 503
+
+
+def test_a_pass_shows_only_open_cards_and_cards_done_within_the_window(hermes, client):
+    now = time.time()
+    data = _canned()
+    old = [_done(f"t_old{n}", now - 3 * lina_board.DONE_WINDOW_S) for n in range(300)]
+    recent = [_done(f"t_new{n}", now - 3600) for n in range(2)]
+    data["list"] += old + recent
+    data["show"].update({row["id"]: {"task": row, "parents": [], "children": [], "comments": [], "events": [],
+                                     "runs": []} for row in old + recent})
+    hermes.canned(data)
+    hermes.on()
+    assert sorted(hermes.shows()) == sorted(["t_a1", "t_g1", "t_b1", "t_new0", "t_new1"])
+    cards = _get(client, f"{WORK}/cards", "work-client.yaml", "WorkCardList")["cards"]
+    detail = {c["id"]: c.get("detail") for c in cards if c["id"].startswith("hermes:t_")}
+    assert [i for i, d in detail.items() if d is False] == [f"hermes:{row['id']}" for row in old]
+    assert (detail["hermes:t_new0"], detail["hermes:t_a1"]) == (None, None)
+    one = _get(client, f"{WORK}/cards/hermes:t_old7", "work-client.yaml", "WorkCardDetail")
+    assert (one["detail"], one["state"], one["comments"]) == (False, "done", [])
+    assert len(hermes.shows()) == 5
+
+
+def test_a_failing_pass_keeps_the_last_good_one_served_and_the_next_pass_tries_again(hermes, client):
+    hermes.on()
+    good = _get(client, f"{WORK}/cards", "work-client.yaml", "WorkCardList")
+    assert good["errors"] == [] and good["hermesAt"] is not None
+    hermes.canned(_canned(), mode="fail")
+    hermes.poke()
+    assert lina_board_hermes.reader().wait(2, timeout=10)
+    stale = _get(client, f"{WORK}/cards", "work-client.yaml", "WorkCardList")
+    assert [c["title"] for c in stale["cards"]] == [c["title"] for c in good["cards"]]
+    assert stale["hermesAt"] == good["hermesAt"]
+    assert [(e["source"], "exited 3" in e["message"], "serving the read of" in e["message"])
+            for e in stale["errors"]] == [("hermes", True, True)]
+    board = _get(client, "/api/lina/board", "board-client.yaml", "BoardSnapshot")
+    assert [e["source"] for e in board["errors"]] == ["hermes"]
+    assert [m["id"] for m in board["inbox"]["mine"]] == ["hermes:T1"]
+    assert _get(client, f"{WORK}/cards/hermes:t_a1", "work-client.yaml", "WorkCardDetail")["readOnly"] is True
+
+    hermes.canned(_canned())
+    hermes.poke()
+    assert lina_board_hermes.reader().wait(3, timeout=10)
+    again = _get(client, f"{WORK}/cards", "work-client.yaml", "WorkCardList")
+    assert again["errors"] == [] and again["hermesAt"] is not None
+    assert [c["title"] for c in again["cards"]] == [c["title"] for c in good["cards"]]
+
+
+def test_an_event_of_kanban_watch_starts_the_next_pass_before_the_timer(hermes):
+    hermes.on()
+    started = time.monotonic()
+    hermes.poke()
+    assert lina_board_hermes.reader().wait(2, timeout=lina_board_hermes.PASS_EVERY_S / 2)
+    assert time.monotonic() - started < lina_board_hermes.PASS_EVERY_S
+    assert ["kanban", "--board", BOARD, "watch", "--interval", "2"] in hermes.calls()

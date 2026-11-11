@@ -170,7 +170,7 @@ def due(now: float | None = None) -> dict:
     groups = work["due"] if work else {name: [] for name in ("overdue", "today", "week", "later")}
     return {"version": API_VERSION, "at": now, "errors": errors, "today": (work or {}).get("today"),
             "count": sum(len(v) for v in groups.values()) if work and not _own_failed(errors) else None,
-            "due": groups}
+            "due": groups, **_hermes_at(work)}
 
 
 def devices(now: float | None = None) -> dict:
@@ -217,8 +217,13 @@ def board(now: float | None = None) -> dict:
                            for row in (work or {}).get("mine", [])]},
         "due": work["due"] if work else {name: [] for name in ("overdue", "today", "week", "later")},
         "notices": lines or [], "machines": machines or [], "quota": services or [],
-        "writer": _writer(now),
+        "writer": _writer(now), **_hermes_at(work),
     }
+
+
+def _hermes_at(work: dict | None) -> dict:
+    """``hermesAt``: when the served rows of the ``hermes`` source were read (lina#533), only while it serves them."""
+    return {"hermesAt": work["hermesAt"]} if work and "hermesAt" in work else {}
 
 
 def _own_failed(errors: list[dict]) -> bool:
