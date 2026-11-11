@@ -399,6 +399,8 @@ class Drive:
         self.halted = False  # a limit was reached this tick, whether or not the board took the goal card's block
         self.created: list[str] = []  # tasks the drive submitted this tick (live, not yet in this pass's jobs)
         self.held: set[str] = set()  # action ids holding a run and a worker until their send is made, this pass only
+        self.usage_sources: dict[str, str] = {}
+        self.parks: list[tuple[dict, str]] = []
 
     def _load(self) -> dict:
         import json
@@ -479,12 +481,15 @@ class Drive:
 
     def _count(self) -> None:
         """Attempts by to-do (a run the drive moved keeps its attempt), runs by task and the goal's start."""
+        self.parks = self.committed_parks()
         jobs = sorted(self.jobs(), key=lambda job: (job["created"], job["id"]))
         self.ledger.setdefault("started_at", jobs[0]["created"] if jobs else self.now)
         highest: dict[str, int] = {}
         for job in jobs:
             todo = self._todo(job)
-            if job["id"] not in self.ledger["attempts"]:
+            if source := self.usage_sources.get(job["id"]):
+                self._moved(self.hub.store.load(source), job["id"], self.ledger["attempts"][source])
+            elif job["id"] not in self.ledger["attempts"]:
                 self.ledger["attempts"][job["id"]] = highest.get(todo, 0) + 1
             highest[todo] = max(highest.get(todo, 0), self.ledger["attempts"][job["id"]])
             if job.get("host"):
@@ -778,7 +783,7 @@ class Drive:
 
     def recover_parks(self) -> None:
         """Recover the latest committed worker action per to-do, then retry persisted board intents."""
-        for job, aid in self.committed_parks():
+        for job, aid in self.parks:
             card = self.entry["cards"][job["card"]["task"]]
             self.park_run(card, job, aid + "-park", job["id"])
         for task, wait in list(self.ledger["waits"].items()):
@@ -810,6 +815,12 @@ class Drive:
             job = self.hub.store.load(receipt["task"])
             if not job or not job.get("card") or job["card"]["task"] not in self.entry["cards"]:
                 continue
+            if parts[-1] == "usage-move":
+                source = next((source for source in self.jobs() if self._todo(source) == self._todo(job)
+                               and action_id(self.goal, source["card"]["task"], source["id"], int(parts[-2]),
+                                             "usage-move") == aid), None)
+                if source is not None:
+                    self.usage_sources[job["id"]] = source["id"]
             rank = (job["created"], int(receipt.get("run") or 1), int(parts[-2]))
             todo = self._todo(job)
             if todo not in latest or rank > latest[todo][0]:
