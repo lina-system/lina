@@ -316,7 +316,7 @@ def test_a_question_of_a_command_runner_is_written_once_on_its_card(asking):
     hub.tick()
     assert len(comments()) == 1 and "Which colour should ok.txt say?" in comments()[0]
     assert f"lina worker send {task.id}" in comments()[0]
-    assert [call["verb"] for call in calls()] == ["comment"]  # no attachment, no wake
+    assert [call["verb"] for call in calls()] == ["comment", "show"]  # no matching wait, no wake
     (task.work / "question.md").write_text("And which size?\n", encoding="utf-8")
     hub.tick()
     hub.tick()
@@ -331,6 +331,21 @@ def test_a_question_of_the_omo_runner_is_written_once_on_its_card(asking):
     hub.tick()
     hub.tick()
     assert len(comments()) == 1 and "Ship it on Friday?" in comments()[0]
+
+
+def test_question_notice_text_reaches_wake_without_status_question(asking, kanban, monkeypatch):
+    hub, task, _, comments, calls = asking
+    _, show, _ = kanban
+    show("scheduled", [_scheduled(f"workers={task.id}")])
+    monkeypatch.setattr(hub, "transport", lambda job: SimpleNamespace(
+        call=lambda *args, **kwargs: Reply(0, json.dumps({"open": True, "questions": [
+            {"question": "Choose the release region"}]}).encode(), "")))
+    monkeypatch.setattr(hub, "meta", lambda *args, **kwargs: {"state": "running", "run": 1, "live": {}})
+    hub._human_notice(hub.store.load(task.id), "1", 1000)
+    hub._human_notice(hub.store.load(task.id), "1", 1001)
+    assert len(comments()) == 1 and "Choose the release region" in comments()[0]
+    wakes = [call for call in calls() if call["verb"] == "unblock"]
+    assert len(wakes) == 1 and "Choose the release region" in wakes[0]["argv"][-1]
 
 
 @pytest.mark.parametrize("rules", ["- Never open the owner's key files.", None])

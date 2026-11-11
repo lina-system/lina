@@ -560,6 +560,60 @@ class HubStopped(BaseException):
     """The hub process ends here (no handler of the hub or the drive catches it)."""
 
 
+@pytest.mark.parametrize("stale_attempt", [None, 2])
+def test_usage_move_receipt_keeps_source_attempt_without_ledger_lineage(drive, stale_attempt):
+    drive.configure("  goal_limits: {usage_move: true}\n")
+    first = _submit(drive)
+    _usage_end(drive, first)
+    _tick(drive)
+    second = _hub(drive).store.all()[1]["id"]
+    _usage_end(drive, second)
+    _tick(drive)
+    jobs = _hub(drive).store.all()
+    ledger = _ledger(drive)
+    ledger["moved"] = {}
+    ledger["attempts"] = {first: 1}
+    if stale_attempt is not None:
+        ledger["attempts"].update({job["id"]: stale_attempt for job in jobs[1:]})
+    (drive.root / "hub" / "goals" / "t-goal.json").write_text(json.dumps(ledger))
+    _tick(drive)
+    assert _ledger(drive)["attempts"] == {job["id"]: 1 for job in jobs}
+
+
+def test_usage_move_crash_before_ledger_save_keeps_one_attempt(drive):
+    drive.configure("  goal_limits: {usage_move: true, attempts: 1}\n")
+    first = _submit(drive)
+    _usage_end(drive, first)
+    stop = _stop_after(drive, "submit")
+    with pytest.raises(HubStopped):
+        _tick(drive)
+    stop["armed"] = False
+    replacement = _hub(drive).store.all()[1]["id"]
+    assert first not in _ledger(drive)["moved"]
+    _tick(drive)
+    assert "stopped" not in _ledger(drive)
+    assert _ledger(drive)["attempts"] == {first: 1, replacement: 1}
+    _end(drive, replacement, "done")
+    _tick(drive)
+    assert _requests(drive, replacement) == ["request.1", "request.2"]
+    assert not _writes(drive, "block", GOAL)
+
+
+def test_returned_node_counts_as_live_worker_before_follow_up(drive):
+    drive.configure("  goal_limits: {workers: 1}\n")
+    first = _submit(drive)
+    _lose_node(drive)
+    assert _hub(drive).store.load(first)["state"] == "unknown"
+    _outage(drive, False)
+    (drive.root / "tasks" / first / "state").write_text("running\n")
+    second = _submit(drive, todo="acme/app#2", host="there")
+    _end(drive, second, "done")
+    _tick(drive)
+    assert _hub(drive).store.load(first)["state"] == "running"
+    assert _requests(drive, second) == ["request.1"]
+    assert _ledger(drive)["notes"][second] == "deferred: the workers limit (1) is reached (1 live)"
+
+
 def _stop_after(drive, verb: str) -> dict:
     """The hub stops right after ``Hub.<verb>`` returned, before the drive saves its ledger again."""
     state = {"armed": True, "fired": False}
