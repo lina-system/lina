@@ -287,6 +287,58 @@ def test_a_closed_pull_request_for_the_branch_still_refuses_the_landing(world):
     assert git(world["origin"], "rev-parse", f"refs/heads/{BRANCH}") == pr_head
 
 
+def _sized(gh: FakeGh, size: str) -> list:
+    """Issue #12 labeled ``size/<size>``; its comments are what the landings posted."""
+    gh.routes[f"repos/{REPO}/issues/12"] = {"number": 12, "state": "open", "body": "",
+                                           "labels": [{"name": f"size/{size}"}]}
+    posted = []
+    gh.routes[f"repos/{REPO}/issues/12/comments"] = lambda _query: list(posted)
+    real_write = gh.write
+
+    def write(method, path, payload=None):
+        if path == f"repos/{REPO}/issues/12/comments":
+            posted.append(payload)
+        return real_write(method, path, payload)
+
+    gh.write = write
+    return posted
+
+
+def test_a_change_bigger_than_its_size_is_noted_once_per_pull_request_and_still_lands(world):
+    """Three files against size/S (2 files): one comment and one line on the first landing, none on a follow-up."""
+    origin, work = world["origin"], world["work"]
+    for name in ("a", "b", "c"):
+        commit(work, f"app/{name}.py", f"{name.upper()} = 1\n", f"feat(app): {name}")
+    gh, lines = fake_github(), []
+    posted = _sized(gh, "S")
+
+    assert land(gh, BRANCH, TASK, "feat(app): three", 12, base=world["base"], out=lines.append) == rules.WAIT
+
+    assert git(origin, "rev-parse", f"refs/heads/{BRANCH}")  # landed regardless
+    assert len(posted) == 1 and "#31 changes 3 files and 3 lines, bigger than size/S" in posted[0]["body"]
+    assert [line for line in lines if "size/S" in line] == [
+        "#12: #31 changes 3 files and 3 lines, bigger than size/S (2 files and 150 lines); noted on the issue"]
+
+    git(work, "fetch", "-q", str(origin), BRANCH)
+    git(work, "merge", "-q", "--ff-only", "FETCH_HEAD")
+    commit(work, "app/d.py", "D = 1\n", "fix(app): d")
+    lines.clear()
+    land(gh, BRANCH, TASK, "feat(app): three", 12, base=world["base"], out=lines.append)
+
+    assert len(posted) == 1
+    assert any(line.endswith("already noted on the issue") and "4 files" in line for line in lines), lines
+
+
+def test_a_change_within_its_size_adds_no_comment_and_no_line(world):
+    commit(world["work"], "app/feature.py", "VALUE = 2\n", "feat(app): the feature")
+    gh, lines = fake_github(), []
+    posted = _sized(gh, "M")
+
+    land(gh, BRANCH, TASK, "feat(app): the feature", 12, base=world["base"], out=lines.append)
+
+    assert posted == [] and not any("size/" in line for line in lines)
+
+
 def test_the_bundle_verb_refuses_a_task_without_a_work_repository(tmp_path):
     (tmp_path / "lina").mkdir()
     code, out = device.dispatch(tmp_path / "lina" / "worker", ["bundle", "OT-NONE"])

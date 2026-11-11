@@ -12,6 +12,9 @@ A branch whose pull request is open takes the worker's new commits as a follow-u
 request's head merged into the worker branch when the branch lacks it (a conflict stops the landing), the same
 checks, the pull request's base merged in only when the result lacks it, and a fast-forward push (never forced).
 A closed or merged pull request for the branch refuses the landing.
+
+Either way the landed change is then compared with the issue's size (``size.py``): a bigger one adds one comment to
+the issue per pull request and one line here, and never stops the landing.
 """
 from __future__ import annotations
 
@@ -21,7 +24,7 @@ import tempfile
 from pathlib import Path
 from typing import Protocol
 
-from hermes_cli.delivery import settings
+from hermes_cli.delivery import settings, size
 from hermes_cli.delivery.merge import merge_pr
 from hermes_platform.resolver import locate_command
 
@@ -180,7 +183,12 @@ def _merge_pull_head(clone: Path, pushed: str, number: int, base: Path | None) -
     raise LandError(f"conflict with pull request #{number} in {', '.join(left) or 'the merge'}: resolve it by hand")
 
 
-def follow_up(gh, hub, job: dict, pull: dict, branch: str, *, base: Path | None, source, out, **merge_options) -> int:
+def _change(clone: Path, onto: str) -> tuple[int, int]:
+    return size.measure(git("diff", "--numstat", onto, "HEAD", cwd=clone, check=False))
+
+
+def follow_up(gh, hub, job: dict, pull: dict, branch: str, issue: int, *, base: Path | None, source, out,
+              **merge_options) -> int:
     """The worker's new commits onto the open pull request *pull* of *branch*, pushed as a fast-forward."""
     from hermes_cli.worker import settings as worker_settings
     repo, number, onto_branch = job["repo"], int(pull["number"]), pull["base"]["ref"]
@@ -206,6 +214,9 @@ def follow_up(gh, hub, job: dict, pull: dict, branch: str, *, base: Path | None,
         out(f"{branch}: {count} worker commit(s) added to #{number} as they are"
             + (f", {onto_branch} merged in" if merged else ""))
         git("push", "-q", "origin", f"{branch}:refs/heads/{branch}", cwd=clone)
+        change = _change(clone, onto)
+    if said := size.note(gh, repo, issue, number, change):
+        out(said)
     return merge_pr(gh, repo, number, base=base, out=out, **merge_options)
 
 
@@ -220,7 +231,7 @@ def land(gh, branch: str, task: str, title: str, issue: int, *, base: Path | Non
         raise LandError(f"{task} has no owner/name repository")
     pulls = gh.json(f"repos/{repo}/pulls?state=all&head={repo.split('/')[0]}:{branch}")
     if pulls:
-        return follow_up(gh, hub, job, _open_pull(pulls, branch), branch, base=base, source=source, out=out,
+        return follow_up(gh, hub, job, _open_pull(pulls, branch), branch, issue, base=base, source=source, out=out,
                          **merge_options)
     onto_branch = job.get("base_branch") or settings.base_branch(base)
     url = str(worker_settings.setting("repo_url", worker=hub.worker)).format(repo=repo)
@@ -238,6 +249,7 @@ def land(gh, branch: str, task: str, title: str, issue: int, *, base: Path | Non
         check_result(clone, onto, worker_head, base)
         out(f"{branch}: {count} worker commit(s) kept as they are, {onto_branch} merged in")
         git("push", "-q", "origin", f"{branch}:refs/heads/{branch}", cwd=clone)
+        change = _change(clone, onto)
         log = "\n".join(f"- {s}" for s in git("log", "--no-merges", "--format=%s", f"{onto}..HEAD",
                                                 cwd=clone).splitlines())
         body_file = Path(tmp) / "body.md"
@@ -246,4 +258,6 @@ def land(gh, branch: str, task: str, title: str, issue: int, *, base: Path | Non
                 "--body-file", str(body_file)])
     number = int(gh.json(f"repos/{repo}/pulls?state=open&head={repo.split('/')[0]}:{branch}")[0]["number"])
     out(f"{branch}: opened #{number}")
+    if said := size.note(gh, repo, issue, number, change):
+        out(said)
     return merge_pr(gh, repo, number, base=base, out=out, **merge_options)

@@ -11,8 +11,10 @@ from hermes_cli.work import ledger
 from hermes_cli.work.common import Lock, iso, load_json, now, paths, save_json, warn
 from hermes_cli.work.evaluate import ALERT, evaluate, item_name
 from hermes_cli.work.kinds import TODO, kind_now
+from hermes_cli.work.links import KANBAN_REOPEN, kanban_read, kanban_state_word, link_label
 from hermes_cli.work.locale import status, t
 from hermes_cli.work.people import name
+from hermes_cli.work.store import CHECK_WORDS
 
 RECOMPUTE_OPS = {"note", "wait", "evidence", "done", "owner_done", "owner_undo", "drop", "reopen", "link", "unlink",
                  "edit", "wait_release", "wait_restore", "undo", "reply"}
@@ -65,6 +67,44 @@ def _evaluate_all(recs: dict, ids: list[str], ctx: dict, st: dict) -> dict:
     return out
 
 
+def closing_cards(r: dict) -> list[str]:
+    """The cards that closed this record now, or []: closed by the checker with marks from this very close
+    (``done_cards_at`` is its ``done_at``; an older one-card ``done_card`` record counts when its evidence is the
+    card's)."""
+    cards = r.get("done_cards") or ([r["done_card"]] if r.get("done_card") else [])
+    if r.get("state") != "done" or r.get("done_by") not in CHECK_WORDS or not cards:
+        return []
+    if "done_cards_at" in r:
+        return cards if r["done_cards_at"] == r.get("done_at") else []
+    return cards if str(r.get("done_evidence") or "").startswith("카드 끝남") else []  # the old record's word
+
+
+def reopen_by_card(ids: list[str]) -> list[str]:
+    """#249: a to-do its cards closed opens again when one of those cards reads planned, running, blocked or in review.
+    One reopen line with a note naming the cards that opened; a to-do closed any other way stays."""
+    recs, _ = ledger.read_all()
+    due = [i for i in ids if any(kanban_read(x) in KANBAN_REOPEN for x in closing_cards(recs[i]))]
+    if not due:
+        return []
+    out = []
+    with Lock():
+        cur, _ = ledger.read_all()
+        for i in due:
+            r = cur.get(i)
+            opened = [x for x in closing_cards(r or {}) if kanban_read(x) in KANBAN_REOPEN]
+            if not opened:
+                continue
+            note = t("다시 엶: {cards}", cards=", ".join(
+                t("{label} 카드가 다시 {state}", label=link_label(x), state=kanban_state_word(kanban_read(x)))
+                for x in opened))
+            r["state"] = "open"
+            r["notes"] = list(r.get("notes") or []) + [{"ts": now(), "by": "checker", "text": note}]
+            r["progress_at"] = now()
+            recs[i] = ledger.append(r, "reopen", "checker")
+            out.append(i)
+    return out
+
+
 def _close_passed(recs: dict, ids: list[str], out: dict, dry: bool):
     """A goal or to-do closes only on its own check: one ``done`` line for each item whose check passed. The check ran
     outside the lock, so an item another writer changed meanwhile (a new revision) is left for the next check."""
@@ -78,8 +118,10 @@ def _close_passed(recs: dict, ids: list[str], out: dict, dry: bool):
                 c, r = out[i], cur.get(i)
                 if (c.get("pass") and r and r.get("state") == "open" and not r.get("every")
                         and r.get("rev") == recs[i].get("rev") and kind_now(r["kind"]) in ("목표", TODO) and not dry):
-                    ledger.append(r, "done", "checker", state="done", done_at=now(), done_by=t("검사"),
-                                  done_evidence=(c.get("check") or {}).get("out", "")[:400])
+                    at = now()
+                    marks = {"done_cards": c["done_cards"], "done_cards_at": at} if c.get("done_cards") else {}
+                    ledger.append(r, "done", "checker", state="done", done_at=at, done_by=t("검사"),
+                                  done_evidence=(c.get("check") or {}).get("out", "")[:400], **marks)
                     cur[i] = dict(r, state="done")
                     closed.append(i)
                     c["status"], c["line"] = "done", t("검사 통과")
@@ -139,8 +181,14 @@ def check(ids: list[str] | None = None, *, dry: bool = False, notify: bool = Fal
     from hermes_cli.work.view import row_view
     from hermes_cli.work.waits import tell_released
     recs, order = ledger.read_all()
-    ids = [i.upper() for i in ids] if ids else [i for i in order if recs[i].get("state") == "open"]
-    ids = [i for i in ids if i in recs]
+    asked = [i.upper() for i in ids] if ids else None
+    ids = [i for i in (asked or [i for i in order if recs[i].get("state") == "open"]) if i in recs]
+    reopened = [] if dry else reopen_by_card(ids if asked else order)
+    if reopened:
+        recs, order = ledger.read_all()  # the reopen lines are now the record's latest state
+        ids += [i for i in reopened if i not in ids]
+    if reopened and not quiet:
+        print(t("다시 엶: {ids}", ids=" ".join(reopened)))
     ctx, st = build_ctx(recs)
     out = _evaluate_all(recs, ids, ctx, st)
     closed, released, cur = _close_passed(recs, ids, out, dry)

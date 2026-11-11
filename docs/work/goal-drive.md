@@ -59,23 +59,61 @@ Each rule acts at most once per action id.
 
 ### Parking
 
+Run-end notifications leave the primary scheduled goal card asleep until the drive has chosen its next action.
+Additional cards attached with `lina worker card` retain their normal run-end wake; the drive does not visit them.
+A follow-up
+or moved run retargets that wait to `WAIT_EVENT=omo-task:<task>/<run>`. The drive waits for that run's end and applies
+its rules before releasing the card, so another follow-up does not briefly expose a ready card.
+
+Hermes cannot schedule an already scheduled card. Instead of unblocking it first, the drive uses one
+`kanban edit --body` write to replace its `## Goal drive resume` section while preserving the scheduled status.
+That section contains the wait, action, and schedule generation, and tells a new session to reread the goal,
+to-dos, run-end comments, reports, and worker result or pull request. LINA does not manufacture Hermes's
+`goal_park` session record: actual same-session selection belongs to the external Hermes dispatcher.
+A later manual schedule invalidates the body's wait, and the drive relinquishes it. After a manual unblock,
+a successful new drive park clears that old ownership-release note.
+
+The goal ledger is the wait owner: `waits[card].items[todo]` stores each to-do's event, worker, action and whether
+the board write succeeded. Intent is saved before writing the board. The body and schedule marker identify the
+park and give the next session context; they are not the source of the card's complete wait set. A worker wait
+for one to-do cannot replace another to-do's check wait. All waits must settle and all drive rules must run before
+`release_ended` wakes the card. Run-end delivery consults this same ledger instead of interpreting the last body
+marker independently.
+
+At the start of each tick, one receipt reader recovers missing parks for `red-check`, `deliverable`, `usage-resume`,
+`resubmit` and `usage-move` from committed request keys, and `node-continued` from its committed ledger action.
+It chooses the latest target task and run per to-do even when the source task is no longer the newest task.
+Pending board writes are then retried before evaluating wakes. Recovery does not send or submit work again.
+Old single-wait ledger records are imported on their first owned-park read.
+
+With `worker.goal_drive: false`, ledger history remains on disk but no longer owns a run-end wake. Notifications
+fall back to the normal wake path, including every hub worker linked to that card so an older schedule or body
+marker cannot hide a moved or continued worker. The last worker's end wakes the card once; PR and timer rules are
+left for the card session while the drive is off. Re-enabling the drive reconciles the current board state before
+using its retained wait history.
+
 Which form a park takes depends on the board:
 
 | Board | Park | Woken by |
 |---|---|---|
 | LINA's own board (`card_link: {kind: lina}`) | `schedule_task` with the `wait_for` event | LINA's kanban dispatcher |
-| A Hermes whose `kanban schedule` has `--wait-for` | `hermes kanban schedule <card> --wait-for <event> -- <reason>` | that Hermes's dispatcher |
-| A Hermes without it (the installed Hermes) | `hermes kanban schedule <card> -- <reason> · WAIT_EVENT=<event> GOAL_ACTION=<action id>` | the hub's own tick |
+| Hermes, with or without native `--wait-for` support | `hermes kanban schedule <card> -- <reason> · WAIT_EVENT=<event> GOAL_ACTION=<action id>` | the hub's own tick |
 
-On a Hermes card the first park of a tick tries `--wait-for`. A Hermes that does not know the option exits 2 with
-argparse's "unrecognized arguments"; that park, and the others in the same tick, are then made as a plain `schedule`
-whose reason carries the event (`WAIT_EVENT=pr:<repo>#<n>`, `WAIT_EVENT=until:<ISO time>`) and the park's action id.
-The ledger's `waits` keeps each card parked that way.
+All new Hermes drive parks omit native `--wait-for`: the CLI has no option to atomically replace or clear a native
+scheduled-event payload while keeping the card scheduled. A body edit cannot change that payload. Plain schedule
+records no native wait in the first place, so an expired timer or settled PR cannot wake a later worker run.
+The ledger's `waits` keeps the marker event and action. A preexisting native wait is not silently converted: the
+drive refuses further work and records that an operator must unblock it first. LINA does not alter the external
+board database or use a non-atomic unblock/schedule sequence to migrate it.
 
-Such a card is woken by the hub, because the installed Hermes wakes a scheduled card only on the worker ids its reason
-names. On each tick the drive reads the card (`show --json`) and wakes it when its event happened: the pull request's
-required checks all have a conclusion (read as LINA's `pr:` wait reads them, kept 60 s like every check read), or the
-time passed. The wake is `hermes kanban unblock --judge-wake <run> --reason "goal drive: wait met: <event>"` (a bare
+Retargeted scheduled Hermes cards also use the hub-owned wait, regardless of `--wait-for` support. A usage reset
+continues the worker and replaces the timer with its new run wait; it does not wake the card session first.
+
+Such a card is managed by the hub, because the installed Hermes wakes a scheduled card only on the worker ids its reason
+names. On each tick the drive reads the card (`show --json`). Settled red checks go through the follow-up rule;
+settled non-red checks wake the card (read as LINA's `pr:` wait reads them, kept 60 s like every check read).
+Timers go through the usage or node rule before the next wait. The check wake is
+`hermes kanban unblock --judge-wake <run> --reason "goal drive: wait met: <event>"` (a bare
 `unblock --reason` on a Hermes without `--judge-wake`), once per park (`<rule>-wake`). The drive wakes only a card that
 is still `scheduled` and whose latest `scheduled` reason carries a `GOAL_ACTION` that is in its ledger: a card a
 person or another tool unblocked or parked again is let go and dropped from `waits`.

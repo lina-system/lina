@@ -1,4 +1,4 @@
-"""The delivery verbs of ``lina work`` (lina#63): ``next``, ``merge``, ``status`` and ``sprint current``.
+"""The delivery verbs of ``lina work`` (lina#63): ``next``, ``merge``, ``feedback``, ``status`` and ``sprint current``.
 
 ``hermes_cli/work/parser.py`` (lina#36) owns the one ``lina work`` parser and points these verbs here, as it points
 its own verbs at ``hermes_cli/work/cmd_*``. Each verb ends the process with its exit code (0 done or pass,
@@ -53,6 +53,18 @@ def _merge_code(args) -> int:
 
 def cmd_merge(args) -> None:
     raise SystemExit(_merge_code(args))
+
+
+def cmd_feedback(args) -> None:
+    from hermes_cli.delivery.feedback import feedback
+    from hermes_cli.delivery.github import Gh, GhError
+    try:
+        text = feedback(Gh(), args.repo, args.pr)
+    except GhError as exc:
+        print(f"lina work feedback: {exc}", file=sys.stderr)
+        raise SystemExit(1) from None
+    sys.stdout.write(text)
+    raise SystemExit(0)
 
 
 def cmd_status(args) -> None:
