@@ -16,8 +16,10 @@ What stops a move: a hold (a failed trial or node install, until ``sync clear``)
 question for a person, not a failure). A node with a run holding a slot, an unreachable node and a node without the
 verb are skipped that day and follow on a later one. ``--plan`` only shows what a run would do and writes nothing.
 
-Every run leaves ``runner-sync/YYYYMMDD.json`` and ``runner-sync/last.json``; one short English notice goes through
-``worker.notice.command`` when something moved, failed or waits. ``sync status --issues`` prints the lines the hub's
+Every run leaves ``runner-sync/YYYYMMDD.json`` and ``runner-sync/last.json``. It is quiet when fine (lina#531): a move,
+a follow and an applied route are in the record only, and the one short English notice through
+``worker.notice.command`` carries one line per thing a person should know -- a held tool, a failed probe, a lost
+sign-in, a major version that waits, a source that went back or a hub that cannot take the move. ``sync status --issues`` prints the lines the hub's
 daily check reads.
 """
 
@@ -141,12 +143,15 @@ class Run:
         self.root, self.env, self.plan = root, env, plan
         self.now = env.clock()
         self.record: dict = {"day": state.day(self.now), "started": self.now, "plan": plan, "runners": {},
-                             "nodes": {}, "events": [], "questions": []}
+                             "nodes": {}, "events": [], "alerts": [], "questions": []}
         self.nodes: list[NodeView] = []
         self.hub_questions: list[dict] = []
 
-    def event(self, line: str) -> None:
+    def event(self, line: str, *, alert: bool = True) -> None:
+        """One line of the record; an ``alert`` (anything but a success) also goes to the owner's notice."""
         self.record["events"].append(scrub(line))
+        if alert:
+            self.record["alerts"].append(scrub(line))
 
     def needed_platforms(self) -> set[str]:
         wanted = {node.platform for node in self.nodes if node.reachable and node.platform}
@@ -285,7 +290,7 @@ class Run:
             self.hold(name, "hub", moved.version, " ".join(said), "switch")
             return runner
         rec["hub"] = {"state": "moved", "from": previous, "to": moved.version}
-        self.event(f"{name} hub {previous} -> {moved.version}: moved")
+        self.event(f"{name} hub {previous} -> {moved.version}: moved", alert=False)
         return moved
 
 
@@ -326,7 +331,7 @@ class Run:
         if got["state"] == "failed":
             self.hold(name, node.name, pin.version, got.get("reason") or "install failed", "node")
         elif got["state"] == "switched":
-            self.event(f"{name} {node.name} {row.get('installed')} -> {pin.version}: followed")
+            self.event(f"{name} {node.name} {row.get('installed')} -> {pin.version}: followed", alert=False)
         return got
 
     def questions(self) -> list[dict]:
@@ -361,11 +366,25 @@ def _summarise_nodes(nodes: list[NodeView]) -> dict:
             for node in nodes}
 
 
+def lost_sign_ins(before: dict, nodes: list[NodeView]) -> list[str]:
+    """``<runner> on <node>: sign-in lost`` for each runner a node was signed in to at the last run and is not now."""
+    lines = []
+    for node in nodes:
+        was = ((before.get("nodes") or {}).get(node.name) or {}).get("runners") or {}
+        for name, row in sorted(node.rows.items()):
+            if row.get("sign_in") == "signed_out" and (was.get(name) or {}).get("sign_in") in lina_runners.SIGN_IN_OK:
+                lines.append(f"{name} on {node.name}: sign-in lost")
+    return lines
+
+
 def execute(root: Path, env: Env, *, plan: bool, only: list[str] | None) -> dict:
     run = Run(root, env, plan)
     selected = followed(root, only)
+    before = _last_record(root)
     run.nodes = (env.nodes or contact_nodes)(root)
     run.record["nodes"] = _summarise_nodes(run.nodes)
+    for line in lost_sign_ins(before, run.nodes):
+        run.event(line)
     for name, runner in selected.items():
         rec = run.record["runners"].setdefault(name, {"pin": runner.version})
         if state.held(root, name) or state.held(root, name, "hub"):
@@ -383,7 +402,7 @@ def execute(root: Path, env: Env, *, plan: bool, only: list[str] | None) -> dict
 
 
 def _notice_text(record: dict) -> str:
-    return "\n".join([f"runner sync {record['day']}:"] + [f"- {line}" for line in record["events"]]) + "\n"
+    return "\n".join([f"runner sync {record['day']}:"] + [f"- {line}" for line in record["alerts"]]) + "\n"
 
 
 def notify(root: Path, text: str) -> str:
@@ -416,7 +435,7 @@ def sync(root: Path | None = None, *, plan: bool = False, only: list[str] | None
                 retry = hub_view.retry_mark(record, state.last(root))
                 path = state.record_path(root, record["started"])
                 state.write_json(path, hub_view.day_record(path, record) if only else record)
-                if record["events"]:
+                if record["alerts"]:
                     record["notice"] = (env.notify or notify)(root, _notice_text(record))
                 _show(record, as_json, out)
             finally:

@@ -83,7 +83,7 @@ def route(run, name: str, pin: lina_runners.RunnerPin, rec: dict) -> tuple[dict 
         run.hold(name, "hub", pin.version, f"route applied but the probe failed: {probed['why']}", "route")
         return probed, False
     rec["route"] = {"state": "applied"}
-    run.event(f"{name} hub: route applied after a passing probe")
+    run.event(f"{name} hub: route applied after a passing probe", alert=False)
     return probed, True
 
 

@@ -134,7 +134,8 @@ def test_a_newer_version_is_tried_on_the_hub_then_the_nodes_follow_the_same_day(
     assert record["runners"]["grok"]["hub"]["state"] == "moved"
     assert {n: r["state"] for n, r in record["runners"]["grok"]["nodes"].items()} == {
         "build-a": "switched", "build-b": "switched"}
-    assert len(hub["notices"]) == 1 and "grok hub 1.0.70 -> 1.0.71: moved" in hub["notices"][0]
+    assert "grok hub 1.0.70 -> 1.0.71: moved" in record["events"]
+    assert hub["notices"] == [], "a move that went well is in the record only: quiet when fine (lina#531)"
     assert (root / state.HISTORY).read_text().count("\n") == 1, "the previous entry is kept for a way back"
 
 

@@ -99,7 +99,7 @@ def world(tmp_path, monkeypatch):
     env = Env(http=Text(), nodes=lambda root: [view], sign_in=lambda runner: "none",
               ocx_logs=lambda root: pytest.fail("the probe does not read OCX logs"),
               ocx_models=lambda root: ocx["models"], notify=lambda root, text: notices.append(text) or "kept")
-    return {"hub": hub, "node": node, "env": env, "ocx": ocx, "refreshed": refreshed, "notices": notices}
+    return {"hub": hub, "node": node, "env": env, "ocx": ocx, "refreshed": refreshed, "notices": notices, "row": row}
 
 
 def sync(world) -> dict:
@@ -151,3 +151,36 @@ def test_a_route_check_that_fails_holds_the_runner(world):
     assert rec["route"]["state"] == "failed" and ROUTE["applied"] == []
     hold = state.held(world["hub"], "faketool", "hub")
     assert hold and hold["kind"] == "route"
+
+
+@pytest.mark.platforms("posix")
+def test_a_day_where_everything_went_well_sends_no_notice(world):
+    rec = sync(world)
+    assert rec["route"] == {"state": "applied"} and rec["models"] == {"state": "refreshed"}
+    assert world["notices"] == [], "quiet when fine"
+
+
+@pytest.mark.platforms("posix")
+def test_a_failed_probe_on_a_node_is_one_line_to_the_owner(world):
+    entry = lina_runners.vendor_dir(world["node"], "faketool") / "1.0.0" / "faketool"
+    entry.write_bytes(tool("Authentication required"))
+    ROUTE["check"] = 0
+    rec = sync(world)
+    assert rec["probes"]["hub"]["state"] == "done" and rec["probes"]["build-a"]["state"] == "failed"
+    assert world["notices"] == ["runner sync " + rec_day(world) + ":\n"
+                                "- faketool on build-a: probe failed: did not answer OK: Authentication required\n"]
+
+
+@pytest.mark.platforms("posix")
+def test_a_sign_in_lost_since_the_last_run_is_one_line_to_the_owner(world):
+    ROUTE["check"] = 0
+    world["row"]["sign_in"] = "signed_in"
+    sync(world)
+    assert world["notices"] == []
+    world["row"]["sign_in"] = "signed_out"
+    sync(world)
+    assert len(world["notices"]) == 1 and world["notices"][0].splitlines()[1:] == ["- faketool on build-a: sign-in lost"]
+
+
+def rec_day(world) -> str:
+    return sorted(state.sync_dir(world["hub"]).glob("[0-9]" * 8 + ".json"))[-1].stem
