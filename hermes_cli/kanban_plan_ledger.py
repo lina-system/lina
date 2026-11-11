@@ -105,8 +105,9 @@ def _new_todo_args(card: WorkCard, goal: str, todo: NewTodo, link: str):
 
 
 def _check_existing(card: WorkCard, todo_id: str, goal: str, recs: dict) -> None:
+    from hermes_cli.work.kinds import TODO, kind_now
     r = recs.get(todo_id)
-    if not r or r.get("kind") != "할 일" or r.get("state") != "open" or r.get("parent") != goal:
+    if not r or kind_now(r.get("kind")) != TODO or r.get("state") != "open" or r.get("parent") != goal:
         raise PlanError(f"card {card.key!r}: ledger_todos {todo_id} is not an open to-do under {goal} "
                         "in the work record")
 
@@ -153,9 +154,10 @@ def _carried(card_ref: str) -> list[str]:
     """Every record to-do carrying the card's ``kanban:`` link, open or closed: what the card already has."""
     from hermes_cli.work import ledger
     from hermes_cli.work.cards import card_link
+    from hermes_cli.work.kinds import TODO, kind_now
     link = card_link(card_ref)
     recs, order = ledger.read_all()
-    return [i for i in order if recs[i]["kind"] == "할 일" and link in (recs[i].get("links") or [])]
+    return [i for i in order if kind_now(recs[i]["kind"]) == TODO and link in (recs[i].get("links") or [])]
 
 
 def _card_todos(card: WorkCard, card_ref: str, goal: str) -> tuple[list[str], list[str]]:

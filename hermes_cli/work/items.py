@@ -27,7 +27,7 @@ def get(recs: dict, i: str) -> dict:
 
 
 def next_id(recs: dict, kind: str) -> str:
-    pre = KINDS[kind]
+    pre = KINDS[kind_now(kind)]
     nums = [int(re.sub(r"\D", "", i) or 0) for i in recs if i and i.startswith(pre)]
     return pre + str(1 + max(nums or [0]))
 

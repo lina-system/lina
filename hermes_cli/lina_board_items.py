@@ -17,8 +17,9 @@ from pathlib import Path
 from typing import Callable
 
 from hermes_cli.lina_board import _WORK_LOCK, API_VERSION, _root, _source
+from hermes_cli.work.kinds import TODO, kind_now
 
-KINDS = {"목표": "goal", "할 일": "todo"}
+KINDS = {"목표": "goal", TODO: "todo"}
 CLOSED_WINDOW_S = 3 * 86400
 REPLY_RESULTS = {"반영함": "applied", "답변 필요": "needs_answer", "반영 안 함": "not_applied"}
 UNKNOWN_WRITERS = ("", "?", "unknown")
@@ -135,12 +136,12 @@ class _Record:
             self.todo_runs.setdefault(row["todo_id"], []).append(row["run_id"])
         self.kids: dict[str, list[str]] = {}
         for i in order:
-            if recs[i].get("kind") == "할 일" and recs[i].get("state") != "dropped" and recs[i].get("parent"):
+            if kind_now(recs[i].get("kind")) == TODO and recs[i].get("state") != "dropped" and recs[i].get("parent"):
                 self.kids.setdefault(recs[i]["parent"], []).append(i)
 
     def served(self, i: str) -> dict | None:
         r = self.recs.get(i)
-        return r if r and r.get("kind") in KINDS and r.get("state") != "dropped" else None
+        return r if r and kind_now(r.get("kind")) in KINDS and r.get("state") != "dropped" else None
 
     def goal_of(self, r: dict) -> dict | None:
         if r["kind"] == "목표":
@@ -149,7 +150,7 @@ class _Record:
         return parent if parent and parent.get("kind") == "목표" else None
 
     def runs(self, i: str) -> list[dict]:
-        if self.recs[i]["kind"] == "할 일":
+        if kind_now(self.recs[i]["kind"]) == TODO:
             ids = set(self.todo_runs.get(i, []))
         else:
             ids = {run for kid in self.kids.get(i, []) for run in self.todo_runs.get(kid, [])}
@@ -200,7 +201,7 @@ class _Record:
         top = self.goal_of(r)
         area = self.recs.get((top or {}).get("parent") or "")
         return {
-            "id": i, "kind": KINDS[r["kind"]], "parent": r.get("parent") or None, "title": item_name(r),
+            "id": i, "kind": KINDS[kind_now(r["kind"])], "parent": r.get("parent") or None, "title": item_name(r),
             "agent": agent_of(r, self.recs) or None,
             "addedBy": None if view["created_by"] in UNKNOWN_WRITERS else view["created_by"],
             "mine": r.get("by") == self.env.owner, "state": view["status"], "reason": None if goal else view["reason"],

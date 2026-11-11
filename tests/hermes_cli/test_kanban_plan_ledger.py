@@ -17,6 +17,7 @@ from hermes_cli import kanban_db as kb
 from hermes_cli import kanban_db_connect as kbc
 from hermes_cli.kanban import kanban_command
 from hermes_cli.kanban_parser import build_parser
+from hermes_cli.work.kinds import TODO, kind_now
 from tests.hermes_cli._work_env import WorkEnv
 
 NEW_OWN = {"title": "기기 2 점검", "why": "작업이 멈추지 않게", "done": "기기가 답한다", "check": "false"}
@@ -102,7 +103,7 @@ def test_plan_links_goal_and_writes_card_todos(work, capsys):
     for key, todo_id, by, title in (("own", own[0], "alpha", NEW_OWN["title"]),
                                     ("other", other[1], "beta", NEW_OTHER["title"])):
         r = recs[todo_id]
-        assert (r["kind"], r["by"], r["parent"], r["title"]) == ("할 일", by, "G1", title)
+        assert (kind_now(r["kind"]), r["by"], r["parent"], r["title"]) == (TODO, by, "G1", title)
         assert f"kanban:{ids[key]}" in r["links"]
     assert f"kanban:{ids['other']}" in recs["T1"]["links"]
     assert any(", ".join(other) in body for body in _comments(ids["other"]))
@@ -197,7 +198,7 @@ def test_failed_record_step_names_it_and_a_rerun_finishes_it(work, capsys, monke
     desc = _plan(work, capsys)
 
     assert _tasks().keys() == tasks.keys()
-    titles = [r["title"] for r in _record().values() if r["kind"] == "할 일"]
+    titles = [r["title"] for r in _record().values() if kind_now(r["kind"]) == TODO]
     assert sorted(titles) == sorted(["기기 1 점검", NEW_OWN["title"], NEW_OTHER["title"]])
     assert len(desc["cards"][1]["ledger_todos"]) == 2
     assert len(work.notices("beta").splitlines()) == 1
@@ -225,7 +226,7 @@ def test_rerun_does_not_recreate_a_finished_todo(work, capsys, close, closed):
 
     assert _record()[created]["state"] == closed
     assert len(_record()) == count and again["notices"] == [] and work.notices("beta") == beta
-    assert [r["title"] for r in _record().values() if r["kind"] == "할 일"].count(NEW_OTHER["title"]) == 1
+    assert [r["title"] for r in _record().values() if kind_now(r["kind"]) == TODO].count(NEW_OTHER["title"]) == 1
 
 
 def _fail_once(monkeypatch, module, name, should_fail):
@@ -273,6 +274,6 @@ def test_add_then_link_failure_still_tells_once(work, capsys, monkeypatch):
 
     other = desc["cards"][1]
     assert len(other["ledger_todos"]) == 1
-    assert [r["title"] for r in _record().values() if r["kind"] == "할 일"].count(NEW_OTHER["title"]) == 1
+    assert [r["title"] for r in _record().values() if kind_now(r["kind"]) == TODO].count(NEW_OTHER["title"]) == 1
     assert work.notices("beta").splitlines()[0].endswith(f"할 일 {other['ledger_todos'][0]}")
     assert len(work.notices("beta").splitlines()) == 1

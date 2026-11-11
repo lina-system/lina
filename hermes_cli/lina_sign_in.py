@@ -438,6 +438,7 @@ def ask_person(base: Path, node: str, runner: str, need: str) -> str:
     from hermes_cli.work import env, ledger
     from hermes_cli.work.common import Lock, now
     from hermes_cli.work.items import next_id
+    from hermes_cli.work.kinds import TODO
     with _WORK_LOCK:
         bound = env.bind(env.load(base))
         try:
@@ -447,7 +448,7 @@ def ask_person(base: Path, node: str, runner: str, need: str) -> str:
                     mark = recs[i].get("sign_in") or {}
                     if recs[i].get("state") == "open" and (mark.get("node"), mark.get("runner")) == (node, runner):
                         return i
-                rec = {"id": next_id(recs, "할 일"), "kind": "할 일", "by": bound.owner,
+                rec = {"id": next_id(recs, TODO), "kind": TODO, "by": bound.owner,
                        "title": f"Sign in to {runner} on {node}", "basis": [], "promise": False,
                        "done": f"`lina devices sign-in {node} {runner}` ends signed_in", "check": "",
                        "decide": f"Sign in to {runner} on {node}: {NEEDS[need]}. Finish it in the hub's browser?",
