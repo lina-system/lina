@@ -57,7 +57,8 @@ def sync_verb(node, data: bytes) -> tuple[int, dict]:
 def test_only_the_runners_follow_and_each_source_names_the_pinned_artifacts(tmp_path):
     table = lina_runners.pins(root=tmp_path, moved=False)
     followed = {name for name, pin in table.items() if pin.follow}
-    assert followed == {"codex", "claude", "dsh", "grok", "cursor-agent", "agy"}, "omo, OCX and ACP keep LINA's pins"
+    assert followed == {"omo", "codex", "claude", "dsh", "grok", "cursor-agent", "agy"}, \
+        "OCX and the ACP adapters keep LINA's pins; omo follows like every tool (lina#531)"
     assert table["claude"].follow == {"npm": "stable"}
     for name in followed:
         pin = table[name]

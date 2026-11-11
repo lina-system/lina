@@ -59,4 +59,5 @@ def day_record(path: Path, record: dict) -> dict:
         return record
     questions = {ask["runner"]: ask for ask in [*(earlier.get("questions") or []), *record["questions"]]}
     return {**record, "runners": {**earlier["runners"], **record["runners"]},
-            "events": [*(earlier.get("events") or []), *record["events"]], "questions": list(questions.values())}
+            "events": [*(earlier.get("events") or []), *record["events"]],
+            "alerts": [*(earlier.get("alerts") or []), *record.get("alerts", [])], "questions": list(questions.values())}

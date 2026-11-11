@@ -13,6 +13,13 @@ runner's ``env`` from the pin (``DISABLE_AUTOUPDATER=1`` for Claude Code), so au
 runner documents a switch. Nothing is installed globally, and a runner the person installed (``~/.local/bin``, a
 global npm) is only read: its path and ``--version`` are shown as ``person_installed``.
 
+One runner is one block (lina#531), the same for every tool, omo included: the repo describes the built-in tools in
+``pm/lina-deps.json`` ``runners.<name>``, and ``worker.runners.<name>`` in the LINA root's config adds or overrides a
+tool with ``install`` (the pin fields below), ``sign_in``, ``models`` (where its model list comes from and how it is
+refreshed), ``route`` (a route source such as ``ocx-omo``) and ``probe`` (the one real call, ``trial``). A block may
+keep its install outside ``vendor/runners`` (``home``, ``shim``) and run an npm package's script on the pinned Node
+(``entry``), which is how omo keeps ``vendor/omo`` and ``bin/omo``.
+
 Sign-in is checked read-only, one way per runner (owner, 11-06): Claude and Codex (and their ACP adapters) through
 OCX -- LINA's own service, or the operator's external OCX (``ocx.external``) when it answers ``/healthz`` (lina#452)
 -- Grok and Antigravity through their own CLI's credential file (existence only, never its content), Cursor with
@@ -46,7 +53,8 @@ OcxError = lina_ocx.OcxError
 PROBE_TIMEOUT_S = 10.0
 HELLO_TIMEOUT_S = 20.0
 _VERSION = re.compile(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.\-]+)?")
-SIGN_IN_OK = ("signed_in", "api_key", "ocx")
+SIGN_IN_OK = ("signed_in", "api_key", "ocx", "none")
+BLOCK_KEYS = ("sign_in", "models", "route", "probe")  # a config block's parts beside ``install`` (lina#531)
 SERVICE_ACTIONS = {"ocx": ("status", "restart"), "worker": ("status", "stop", "restart")}
 # downloads.cursor.com answers 403 to urllib's default ``Python-urllib`` agent.
 USER_AGENT = "lina-runners"
@@ -70,7 +78,7 @@ class RunnerPin:
     installer: str
     version: str
     bin: str
-    sign_in: str
+    sign_in: str | dict
     package: str = ""
     integrity: str = ""
     entry: str = ""
@@ -79,17 +87,50 @@ class RunnerPin:
     env: dict = field(default_factory=dict)
     artifacts: dict = field(default_factory=dict)
     follow: dict = field(default_factory=dict)  # where the daily sync reads the newest version (lina#238)
-    trial: dict = field(default_factory=dict)  # the one real request the hub trial sends (lina#238)
+    trial: dict = field(default_factory=dict)  # the probe: the one real request (lina#238, lina#531)
+    models: dict = field(default_factory=dict)  # {file, refresh: {ocx_client}}: the model list and its refresh
+    route: dict = field(default_factory=dict)  # {source}: the route source that maps models for this runner
+    home: str = ""  # the install's folder under the LINA root; "" = vendor/runners/<name>
+    shim: str = ""  # the shim under the LINA root; "" = bin/runners/<name>
+
+    @property
+    def probe(self) -> dict:
+        return self.trial
+
+
+_FIELDS = frozenset(RunnerPin.__dataclass_fields__) - {"name"}
+
+
+def _pin(name: str, spec: dict) -> RunnerPin:
+    spec = dict(spec)
+    if "probe" in spec:
+        spec["trial"] = spec.pop("probe")
+    return RunnerPin(name=name, **{key: value for key, value in spec.items() if key in _FIELDS})
+
+
+def config_blocks(root: Path) -> dict[str, dict]:
+    """``worker.runners.<name>`` entries that carry an ``install`` block, as pin specs (lina#531): a tool added or
+    re-described by settings alone."""
+    from hermes_cli.worker import settings
+    configured = settings.section(root).get("runners")
+    blocks = {}
+    for name, item in (configured.items() if isinstance(configured, dict) else ()):
+        if isinstance(item, dict) and isinstance(item.get("install"), dict):
+            blocks[str(name)] = {**item["install"], **{key: item[key] for key in BLOCK_KEYS if key in item}}
+    return blocks
 
 
 def pins(path: Path = lina_ocx.PIN_FILE, root: Path | None = None, *, moved: bool = True) -> dict[str, RunnerPin]:
-    """The repo pins, with the daily sync's moves (``<root>/runner-pins.json``, lina#238) laid over them; a move
-    below the repo pin is ignored, the repo pin is the floor."""
+    """The repo pins, each config block laid over its name (lina#531), with the daily sync's moves
+    (``<root>/runner-pins.json``, lina#238) on top; a move below the pin is ignored, the pin is the floor."""
+    root = root or lina_ocx.lina_root()
     table = json.loads(path.read_text(encoding="utf-8-sig")).get("runners", {})
+    for name, block in config_blocks(root).items():
+        table[name] = {**table.get(name, {}), **block}
     if moved:
         from hermes_cli import lina_runner_sync_state as sync_state
-        table = sync_state.merged(table, root or lina_ocx.lina_root())
-    return {name: RunnerPin(name=name, **spec) for name, spec in table.items()}
+        table = sync_state.merged(table, root)
+    return {name: _pin(name, spec) for name, spec in table.items()}
 
 
 def pin(name: str) -> RunnerPin:
@@ -99,25 +140,41 @@ def pin(name: str) -> RunnerPin:
     return table[name]
 
 
-def vendor_dir(root: Path, name: str) -> Path:
-    return root / "vendor" / "runners" / name
+def vendor_dir(root: Path, runner: RunnerPin | str) -> Path:
+    if isinstance(runner, str):
+        return root / "vendor" / "runners" / runner
+    return root / runner.home if runner.home else root / "vendor" / "runners" / runner.name
 
 
-def shim_path(root: Path, name: str) -> Path:
-    return root / "bin" / "runners" / name
+def shim_path(root: Path, runner: RunnerPin | str) -> Path:
+    if isinstance(runner, str):
+        return root / "bin" / "runners" / runner
+    return root / runner.shim if runner.shim else root / "bin" / "runners" / runner.name
 
 
 def current_version(root: Path, runner: RunnerPin) -> str | None:
-    return lina_ocx.current_version(root, vendor_dir(root, runner.name))
+    return lina_ocx.current_version(root, vendor_dir(root, runner))
 
 
 def entry_path(root: Path, runner: RunnerPin, version: str = "current") -> Path:
-    base = vendor_dir(root, runner.name) / version
-    return base / "node_modules" / ".bin" / runner.bin if runner.installer == "npm" else base / runner.entry
+    base = vendor_dir(root, runner) / version
+    if runner.installer != "npm":
+        return base / runner.entry
+    if runner.entry:  # a script of the package, run on the pinned Node
+        return base / "node_modules" / runner.package / runner.entry
+    return base / "node_modules" / ".bin" / runner.bin
+
+
+def command(root: Path, runner: RunnerPin, version: str = "current") -> list[str]:
+    """How LINA starts *version* of *runner*: its entry, or the pinned Node with the package's script."""
+    entry = entry_path(root, runner, version)
+    node = _node(root, runner)
+    return [str(node / "bin" / "node"), str(entry)] if runner.installer == "npm" and runner.entry and node else \
+        [str(entry)]
 
 
 def installed_versions(root: Path, runner: RunnerPin) -> list[str]:
-    base = vendor_dir(root, runner.name)
+    base = vendor_dir(root, runner)
     if not base.is_dir():
         return []
     return sorted(path.name for path in base.iterdir() if path.is_dir() and not path.is_symlink()
@@ -138,16 +195,16 @@ def run_env(root: Path, runner: RunnerPin) -> dict[str, str]:
 
 
 def write_shim(root: Path, runner: RunnerPin) -> Path:
-    shim = shim_path(root, runner.name)
+    shim = shim_path(root, runner)
     shim.parent.mkdir(parents=True, exist_ok=True)
-    lines = ["#!/bin/sh", f"# LINA's pinned {runner.name} (lina#222), written by `lina runners install`: "
-             f"vendor/runners/{runner.name}/current."]
+    lines = ["#!/bin/sh", f"# LINA's pinned {runner.name} (lina#222, lina#531), written by `lina runners install`: "
+             f"{vendor_dir(root, runner).relative_to(root).as_posix()}/current."]
     lines += [f"export {key}={shlex.quote(value)}" for key, value in runner.env.items()]
     node = _node(root, runner)
     if node is not None:
         lines.append(f"PATH={shlex.quote(str(node / 'bin'))}:\"$PATH\"; export PATH")
-    lines.append(f"exec {shlex.quote(str(entry_path(root, runner)))} \"$@\"")
-    tmp = shim.with_name(f".{runner.name}.tmp")
+    lines.append(f"exec {shlex.join(command(root, runner))} \"$@\"")
+    tmp = shim.with_name(f".{shim.name}.tmp")
     tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
     tmp.chmod(0o755)
     os.replace(tmp, shim)
@@ -175,12 +232,12 @@ def reported_version(root: Path, runner: RunnerPin, version: str,
     """The trial: what an installed *version* says it is. ACP adapters (``check: package``) start a server instead of
     answering ``--version``, so their installed ``package.json`` speaks for them (npm ci already checked its bytes)."""
     if runner.check == "package":
-        manifest = vendor_dir(root, runner.name) / version / "node_modules" / runner.package / "package.json"
+        manifest = vendor_dir(root, runner) / version / "node_modules" / runner.package / "package.json"
         try:
             return json.loads(manifest.read_text(encoding="utf-8-sig")).get("version")
         except (OSError, ValueError):
             return None
-    return ask_version([str(entry_path(root, runner, version))], run_env(root, runner), run, timeout=60)
+    return ask_version(command(root, runner, version), run_env(root, runner), run, timeout=60)
 
 
 def download(url: str, dest: Path) -> None:
@@ -217,7 +274,7 @@ def _unpack(runner: RunnerPin, blob: Path, dest: Path) -> None:
 
 def install_artifact(root: Path, runner: RunnerPin, fetch: Callable[[str, Path], None] = download) -> Path:
     """The pinned artifact of this platform into ``vendor/runners/<name>/<version>``; checked before it is kept."""
-    vendor = vendor_dir(root, runner.name)
+    vendor = vendor_dir(root, runner)
     dest = vendor / runner.version
     if (dest / runner.entry).exists():
         return dest
@@ -251,7 +308,7 @@ def _install_version(root: Path, runner: RunnerPin, version: str, integrity: str
     """*version* beside the others with the installer that owns the binary; it must report *version* (the trial)."""
     if runner.installer == "npm":
         node = lina_ocx.install_node(root, lina_ocx.pins(), fetch)
-        lina_ocx.npm_install(root, node, vendor_dir(root, runner.name), runner.package, version, integrity, run)
+        lina_ocx.npm_install(root, node, vendor_dir(root, runner), runner.package, version, integrity, run)
     else:
         install_artifact(root, runner, fetch)
     got = reported_version(root, runner, version, run)
@@ -271,32 +328,39 @@ def install(name: str | None = None, root: Path | None = None, *,
     code = 0
     for runner in _selected(name):
         try:
-            _install_version(root, runner, runner.version, runner.integrity, fetch, run)
+            install_pin(root, runner, fetch=fetch, run=run, out=out)
         except OcxError as exc:
             out(f"{runner.name}: {exc}")
             code = 1
-            continue
-        active = current_version(root, runner)
-        if active is None:
-            lina_ocx.set_current(root, runner.version, vendor_dir(root, runner.name))
-            active = runner.version
-        note = "" if active == runner.version else f"; current stays {active} (`lina runners upgrade {runner.name}`)"
-        out(f"✓ {runner.name} {runner.version}: {write_shim(root, runner)}{note}")
     return code
 
 
+def install_pin(root: Path, runner: RunnerPin, *, fetch: Callable[[str, Path], None] = download,
+                run: Callable[..., subprocess.CompletedProcess] = subprocess.run, out=print) -> str:
+    """The pinned version of one block beside the others, ``current`` when there was none, and its shim; returns the
+    active version. Raises ``OcxError`` when the install or its ``--version`` trial fails."""
+    _install_version(root, runner, runner.version, runner.integrity, fetch, run)
+    active = current_version(root, runner)
+    if active is None:
+        lina_ocx.set_current(root, runner.version, vendor_dir(root, runner))
+        active = runner.version
+    note = "" if active == runner.version else f"; current stays {active} (`lina runners upgrade {runner.name}`)"
+    out(f"✓ {runner.name} {runner.version}: {write_shim(root, runner)}{note}")
+    return active
+
+
 def _previous_file(root: Path, runner: RunnerPin) -> Path:
-    return vendor_dir(root, runner.name) / "previous"
+    return vendor_dir(root, runner) / "previous"
 
 
 def _through_shim(root: Path, runner: RunnerPin, run) -> str | None:
     if runner.check == "package":
         return reported_version(root, runner, "current", run)
-    return ask_version([str(shim_path(root, runner.name))], dict(os.environ), run, timeout=60)
+    return ask_version([str(shim_path(root, runner))], dict(os.environ), run, timeout=60)
 
 
 def _switch(root: Path, runner: RunnerPin, previous: str, version: str, run, out) -> int:
-    vendor = vendor_dir(root, runner.name)
+    vendor = vendor_dir(root, runner)
     _previous_file(root, runner).write_text(previous + "\n", encoding="utf-8")
     lina_ocx.set_current(root, version, vendor)
     write_shim(root, runner)
@@ -316,7 +380,14 @@ def upgrade(name: str, root: Path | None = None, version: str | None = None, int
     """Install *version* beside the current one, trial it, switch ``current``, and switch back when the switched
     shim does not answer with *version*. Moving a pin across nodes is #238; this upgrades one node."""
     root = root or lina_ocx.lina_root()
-    runner = pin(name)
+    return upgrade_pin(root, pin(name), version, integrity, fetch=fetch, run=run, out=out)
+
+
+def upgrade_pin(root: Path, runner: RunnerPin, version: str | None = None, integrity: str | None = None, *,
+                fetch: Callable[[str, Path], None] = download,
+                run: Callable[..., subprocess.CompletedProcess] = subprocess.run, out=print) -> int:
+    """``upgrade`` of one block (the same code for every runner, omo included)."""
+    name = runner.name
     version = version or runner.version
     if version != runner.version and (runner.installer != "npm" or not integrity):
         out(f"{name} {version} is not the pinned version ({runner.version}): "
@@ -339,15 +410,18 @@ def upgrade(name: str, root: Path | None = None, version: str | None = None, int
 
 
 def rollback(name: str, root: Path | None = None, *, out=print) -> int:
-    root = root or lina_ocx.lina_root()
-    runner = pin(name)
+    return rollback_pin(root or lina_ocx.lina_root(), pin(name), out=out)
+
+
+def rollback_pin(root: Path, runner: RunnerPin, *, out=print) -> int:
+    name = runner.name
     record = _previous_file(root, runner)
     previous = record.read_text(encoding="utf-8-sig").strip() if record.exists() else ""
     if not previous or not entry_path(root, runner, previous).exists():
         out(f"Nothing to roll back to: no upgrade recorded a previous {name} version")
         return 1
     current = current_version(root, runner)
-    lina_ocx.set_current(root, previous, vendor_dir(root, runner.name))
+    lina_ocx.set_current(root, previous, vendor_dir(root, runner))
     write_shim(root, runner)
     record.unlink()
     out(f"✓ {name} current: {current} -> {previous}")
@@ -380,12 +454,17 @@ def _ocx_sign_in(root: Path) -> tuple[str, str | None]:
     return ("ocx", None) if state.startswith("running") else ("unknown", f"OCX is {state}")
 
 
+def _env_sign_in(name: str) -> tuple[str, str | None]:
+    return ("api_key", None) if os.environ.get(name) else ("signed_out", f"{name} is not set")
+
+
 def _cursor_sign_in(root: Path) -> tuple[str, str | None]:
-    return ("api_key", None) if os.environ.get("CURSOR_API_KEY") else ("signed_out", "CURSOR_API_KEY is not set")
+    return _env_sign_in("CURSOR_API_KEY")
 
 
 SIGN_IN: dict[str, Callable[[Path], tuple[str, str | None]]] = {
     "ocx": _ocx_sign_in,
+    "none": lambda root: ("none", None),
     "grok": lambda root: _file_sign_in(Path.home() / ".grok" / "auth.json"),
     "agy": lambda root: _file_sign_in(Path.home() / ".gemini" / "antigravity-cli" / "antigravity-oauth-token"),
     "cursor": _cursor_sign_in,
@@ -396,12 +475,30 @@ HOW_TO_SIGN_IN = {
     "grok": "run `lina devices sign-in {node} {runner}` on the hub",
     "agy": "run `lina devices sign-in {node} {runner}` on the hub",
     "cursor": "put CURSOR_API_KEY into the LINA .env on {node}",
+    "env": "put the runner's key into the LINA .env on {node}",
     "unknown": "sign in to {runner} on {node} by hand",
 }
 
 
 def how_to_sign_in(kind: str, runner: str, node: str) -> str:
     return HOW_TO_SIGN_IN.get(kind, HOW_TO_SIGN_IN["unknown"]).format(runner=runner, node=node)
+
+
+def sign_in_kind(runner: RunnerPin) -> str:
+    """The block's sign-in as one word: a named check, or ``file`` / ``env`` for a block that names its own."""
+    how = runner.sign_in
+    return next((key for key in ("file", "env") if key in how), "unknown") if isinstance(how, dict) else str(how)
+
+
+def read_sign_in(root: Path, runner: RunnerPin) -> tuple[str, str | None]:
+    """The block's sign-in, read-only: ``{file: <path>}`` (exists, never opened), ``{env: <NAME>}`` (set), or a
+    named check of ``SIGN_IN``."""
+    how = runner.sign_in
+    if isinstance(how, dict) and isinstance(how.get("file"), str):
+        return _file_sign_in(Path(how["file"]).expanduser())
+    if isinstance(how, dict) and isinstance(how.get("env"), str):
+        return _env_sign_in(how["env"])
+    return SIGN_IN.get(sign_in_kind(runner), SIGN_IN["unknown"])(root)
 
 
 def person_installed(root: Path, runner: RunnerPin, run: Callable[..., subprocess.CompletedProcess],
@@ -432,7 +529,7 @@ def active_version(root: Path, runner: RunnerPin,
     if runner.installer != "npm":
         version = ask_version([str(entry)], run_env(root, runner), run)
         return (version, None) if version else (None, f"{entry} --version gave no version")
-    manifest = vendor_dir(root, runner.name) / "current" / "node_modules" / runner.package / "package.json"
+    manifest = vendor_dir(root, runner) / "current" / "node_modules" / runner.package / "package.json"
     try:
         version = json.loads(manifest.read_text(encoding="utf-8-sig")).get("version")
     except (OSError, ValueError):
@@ -448,23 +545,27 @@ def _why(runner: RunnerPin, installed: str | None, sign_in: str) -> str | None:
         return "prepare"
     if installed != runner.version:
         return "update"
-    if sign_in in SIGN_IN_OK or runner.sign_in == "unknown":
+    if sign_in in SIGN_IN_OK or sign_in_kind(runner) == "unknown":
         return None
-    return "prepare" if runner.sign_in == "ocx" else "sign in"
+    return "prepare" if sign_in_kind(runner) == "ocx" else "sign in"
 
 
 def row(root: Path, runner: RunnerPin, *, run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
         path: str | None = None) -> dict:
     installed, installed_why = active_version(root, runner, run)
-    sign_in, sign_in_why = SIGN_IN.get(runner.sign_in, SIGN_IN["unknown"])(root)
+    sign_in, sign_in_why = read_sign_in(root, runner)
     why = _why(runner, installed, sign_in)
+    from hermes_cli import lina_runner_probe
     from hermes_cli import lina_runner_sync_state as sync_state
+    probed = lina_runner_probe.verdict(root, runner, installed)
+    if why is None and probed and probed.get("state") == "failed":
+        why = "probe failed"  # the static checks passed; the last real call of this version did not
     return {"name": runner.name, "pin": runner.name, "pinned": runner.version, "pin_from": sync_state.pin_from(root, runner.name),
             "current": current_version(root, runner),
             "installed": installed, "installed_why": installed_why, "versions": installed_versions(root, runner), "person_installed": person_installed(root, runner, run, path),
-            "sign_in": sign_in, "sign_in_by": runner.sign_in, "sign_in_why": sign_in_why,
-            "shim": str(shim_path(root, runner.name)) if shim_path(root, runner.name).exists() else None,
-            "ready": why is None, "why": why}
+            "sign_in": sign_in, "sign_in_by": sign_in_kind(runner), "sign_in_why": sign_in_why,
+            "shim": str(shim_path(root, runner)) if shim_path(root, runner).exists() else None,
+            "probe": probed, "ready": why is None, "why": why}
 
 
 def status(root: Path | None = None, *, run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> list[dict]:
@@ -479,8 +580,7 @@ def offered(worker: dict) -> list[tuple[str, str | None, RunnerPin | None]]:
     """The runners this node offers (``worker.runners``) with their type and the pin that serves each. An ``acp``
     runner is pinned by the command in its ``argv`` first and only then by name, so its row describes the adapter it
     actually runs (``claude-agent-acp``) rather than the CLI that shares its name (lina#452). Every other runner is
-    pinned by name, else by its argv's command. omo has its own pin and status (``lina omo status``), so it has none
-    here."""
+    pinned by name, else by its argv's command; omo is a block like any other (lina#531)."""
     from hermes_cli.worker import runners
     table = pins()
     by_bin = {runner.bin: runner for runner in table.values()}
@@ -489,9 +589,7 @@ def offered(worker: dict) -> list[tuple[str, str | None, RunnerPin | None]]:
         argv = spec.get("argv") if isinstance(spec.get("argv"), list) else []
         command = Path(str(argv[0])).name if argv else ""
         kind = spec.get("type")
-        if kind == "omo":
-            pin = None
-        elif kind == "acp":
+        if kind == "acp":
             pin = by_bin.get(command) or table.get(name)
         else:
             pin = table.get(name) or by_bin.get(command)
@@ -505,7 +603,7 @@ def _settled(future: Future, runner: RunnerPin, timeout: float) -> dict:
         return future.result()
     detail = f"no answer in {timeout:g}s" if not future.done() else f"probe failed: {future.exception()}"
     return {"pin": runner.name, "pinned": runner.version, "installed": None, "sign_in": None,
-            "sign_in_by": runner.sign_in, "ready": False, "why": "unknown", "why_detail": detail}
+            "sign_in_by": sign_in_kind(runner), "ready": False, "why": "unknown", "why_detail": detail}
 
 
 def node_report(worker_root: Path, *, run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
@@ -597,6 +695,12 @@ def node_service(worker_root: Path, service: str, action: str, instance_id: str 
     return {"service": "worker", **protocol.service_action(worker_root, action, instance_id)}
 
 
+def _probe_text(probed: dict | None) -> str:
+    if not probed:
+        return "-"
+    return probed["state"] if probed.get("state") == "done" else f"{probed.get('state')} ({probed.get('why')})"
+
+
 def render(rows: list[dict]) -> list[str]:
     lines = []
     for item in rows:
@@ -608,5 +712,6 @@ def render(rows: list[dict]) -> list[str]:
         sign = (item.get("sign_in") or "-") + (f" ({item['sign_in_why']})" if item.get("sign_in_why") else "")
         lines.append(f"{item['name']:<17} pinned {item['pinned']} · installed "
                      f"{item.get('installed') or '-'} · person {person.get('version') or ('-' if not person else '?')} · "
-                     f"sign-in {sign} · " + ("ready" if item["ready"] else f"not ready: {item['why']}"))
+                     f"sign-in {sign} · probe {_probe_text(item.get('probe'))} · "
+                     + ("ready" if item["ready"] else f"not ready: {item['why']}"))
     return lines

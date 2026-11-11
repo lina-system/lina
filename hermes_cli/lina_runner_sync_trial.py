@@ -40,8 +40,8 @@ def _one_line(text: str) -> str:
     return (lines[-1] if lines else "no output")[:160]
 
 
-def _argv_trial(entry: Path, spec: dict, env: dict, folder: Path, run) -> tuple[bool, str]:
-    argv = [str(entry), *(str(part).format(prompt=PROMPT, dir=folder) for part in spec["argv"])]
+def _argv_trial(entry: list[str], spec: dict, env: dict, folder: Path, run) -> tuple[bool, str]:
+    argv = [*entry, *(str(part).format(prompt=PROMPT, dir=folder) for part in spec["argv"])]
     try:
         done = run(argv, env=env, cwd=str(folder), stdin=subprocess.DEVNULL, capture_output=True, text=True,
                    encoding="utf-8", errors="replace", timeout=float(spec.get("timeout", TIMEOUT_S)), check=False)
@@ -54,11 +54,11 @@ def _argv_trial(entry: Path, spec: dict, env: dict, folder: Path, run) -> tuple[
     return (True, "answered OK") if said_ok(done.stdout) else (False, f"did not answer OK: {_one_line(done.stdout)}")
 
 
-def _acp_trial(entry: Path, spec: dict, env: dict, folder: Path, popen) -> tuple[bool, str]:
+def _acp_trial(entry: list[str], spec: dict, env: dict, folder: Path, popen) -> tuple[bool, str]:
     """initialize, session/new, one session/prompt; the agent's message chunks are the answer."""
     timeout = float(spec.get("timeout", TIMEOUT_S))
     try:
-        proc = popen([str(entry), *spec["acp"]], env=env, cwd=str(folder), stdin=subprocess.PIPE,
+        proc = popen([*entry, *spec["acp"]], env=env, cwd=str(folder), stdin=subprocess.PIPE,
                      stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     except OSError as exc:
         return False, f"could not start: {exc}"
@@ -193,7 +193,7 @@ def trial(root: Path, runner: lina_runners.RunnerPin, version: str, *,
             seen = request_ids(ocx_logs(root))
         except lina_runners.OcxError as exc:
             return False, f"OCX log could not be read before the trial: {exc}"
-    entry = lina_runners.entry_path(root, runner, version)
+    entry = lina_runners.command(root, runner, version)
     env = lina_runners.run_env(root, runner)
     began = clock()
     with tempfile.TemporaryDirectory(prefix=f"lina-trial-{runner.name}-") as folder:

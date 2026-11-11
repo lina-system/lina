@@ -61,7 +61,10 @@ DEVICE = {"host": _STR, "role": _STR, "cap": _INT, "named_cap": _INT, "last": "l
           "no_repo": _BOOL, "off": _BOOL, "auto": _BOOL, "lina": _STR, "kind": _STR, **FILE_DEVICE}
 RUNNER = {"type": _STR, "argv": _STRS, "follow_up_argv": _STRS, "model_args": _STRS, "on": _BOOL, "model": "model",
           "fallback_model": "model", "access": _STR, "access_args": "access_args", "bin": _STR, "node": _STR, "engine": _STR,
-          "flavor": _STR, "usage_limit": "regex"}
+          "flavor": _STR, "usage_limit": "regex", "install": "block", "sign_in": "block", "models": "block",
+          "route": "block", "probe": "block"}
+INSTALLERS = ("npm", "binary", "tarball")
+SIGN_IN_KINDS = ("none", "ocx", "grok", "agy", "cursor", "unknown")
 GOAL_LIMITS = {"workers": _INT, "attempts": _INT, "runs": _INT, "wall_h": _INT, "usage_move": _BOOL}
 ALIAS = {"provider": _STR, "id": _STR, "thinking": _STR}
 RULE = {"name": _STR, "when": "when", "runner": _STR}
@@ -493,7 +496,29 @@ def _runners(doc: dict, aliases: dict, errors: list[dict]) -> dict:
         for key in ("model", "fallback_model"):
             if key in entry and (why := _model_error(entry[key], aliases)):
                 errors.append({"path": f"{path}.{key}", "message": why})
+        _block(entry, path, errors)
     return runners
+
+
+def _block(entry: dict, path: str, errors: list[dict]) -> None:
+    """A runner block's management parts (lina#531): ``install`` (installer and version at least), ``sign_in`` (a
+    known check, ``{file: <path>}`` or ``{env: <NAME>}``), and ``models``/``route``/``probe`` as mappings."""
+    errors += [{"path": f"{path}.{key}", "message": "must be a mapping"}
+               for key in ("install", "models", "route", "probe") if key in entry and not isinstance(entry[key], dict)]
+    install = entry.get("install")
+    if isinstance(install, dict):
+        if install.get("installer") not in INSTALLERS:
+            errors.append({"path": f"{path}.install.installer", "message": f"one of {', '.join(INSTALLERS)}"})
+        if _type_error(_STR, install.get("version")):
+            errors.append({"path": f"{path}.install.version", "message": "the pinned version, a non-empty text"})
+    if "sign_in" in entry:
+        how = entry["sign_in"]
+        named = isinstance(how, str) and how in SIGN_IN_KINDS
+        own = isinstance(how, dict) and len(how) == 1 and any(isinstance(how.get(key), str) and how[key].strip()
+                                                              for key in ("file", "env"))
+        if not (named or own):
+            errors.append({"path": f"{path}.sign_in",
+                           "message": f"one of {', '.join(SIGN_IN_KINDS)}, {{file: <path>}} or {{env: <NAME>}}"})
 
 
 def _models(doc: dict, errors: list[dict]) -> dict:
