@@ -28,7 +28,7 @@ CALLER_KEY = r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
 
 # What defines a submit; --wait, --dry-notify and --note only change what the caller sees.
 SUBMIT_FIELDS = ("mode", "repo", "todo", "topic", "host", "runner", "model", "labels", "size", "card", "bot", "at",
-                 "every")
+                 "every", "base_branch")
 
 
 def new_key() -> str:
