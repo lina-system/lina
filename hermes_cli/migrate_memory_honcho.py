@@ -300,7 +300,7 @@ def migrate_honcho(copied_dump: Path, profile: str, agent: str, work_dir: Path, 
         for table, counts in report["counts"].items():
             counts["excluded"] = {reason: sum(row["table"] == table and row["reason"] == reason
                                               for row in excluded)
-                                  for reason in ("other_agent", "other_workspace", "runtime_lease")}
+                                  for reason in ("other_agent", "other_workspace", "runtime_lease", "source_gone")}
         report.update(source_revision=original_revision, destination_revision="l13_message_split",
                       embeddings=decisions, source_workspace=workspace, destination_workspace=agent,
                       source_peer=selected.ai_peer, destination_peer=agent, person_peer=selected.person_peer,

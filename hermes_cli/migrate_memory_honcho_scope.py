@@ -83,12 +83,16 @@ def scoped_graph(conn, schema: str, data: dict, selected: Selection) -> tuple[di
     result["message_embeddings"] = [r for r in data["message_embeddings"] if r["message_id"] in publics]
     session_ids = {r["id"] for r in result["sessions"]}
     result["queue"] = [r for r in data["queue"] if r["message_id"] in mids or r["session_id"] in session_ids]
-    dependencies = _close_dependencies(data, result)
+    dependencies, gone = _close_dependencies(data, result)
     excluded = []
     for table in TABLES:
         retained = {row_identity(table, row) for row in result[table]}
         for row in rows(conn, schema, table):
             if row_identity(table, row) in retained:
+                continue
+            if table == "document_sources" and row_identity(table, row) in gone:
+                excluded.append({"table": table, "native_id": [row["derived_id"], row["source_id"]],
+                                 "reason": "source_gone"})
                 continue
             owner = row.get("workspace_name", row.get("name") if table == "workspaces" else None)
             if table == "active_queue_sessions":
@@ -101,8 +105,14 @@ def scoped_graph(conn, schema: str, data: dict, selected: Selection) -> tuple[di
     return result, excluded, dependencies
 
 
-def _close_dependencies(data: dict, result: dict) -> list[dict]:
-    """Follow references outward, never expand a dependency's private sibling rows."""
+def _close_dependencies(data: dict, result: dict) -> tuple[list[dict], set[tuple]]:
+    """Follow references outward, never expand a dependency's private sibling rows.
+
+    A conclusion outlives the message it was drawn from: an edge to a source that is neither a document nor a
+    message any more is dropped (and returned) instead of refusing the whole graph."""
+    known = {r["id"] for r in data["documents"]} | {r["public_id"] for r in data["message_meta"]}
+    dangling = {row_identity("document_sources", r) for r in data["document_sources"] if r["source_id"] not in known}
+    gone = set()
     references = {
         "documents": (("sessions", ("name",), ("session_name",)),
                       ("collections", ("observer", "observed"), ("observer", "observed"))),
@@ -117,6 +127,9 @@ def _close_dependencies(data: dict, result: dict) -> list[dict]:
     }
     dependencies = []
     while True:
+        kept = [r for r in result["document_sources"] if row_identity("document_sources", r) not in dangling]
+        gone.update(row_identity("document_sources", r) for r in result["document_sources"] if r not in kept)
+        result["document_sources"] = kept
         required = metadata_references(result)
         for table, constraints in references.items():
             for row in result[table]:
@@ -151,13 +164,17 @@ def _close_dependencies(data: dict, result: dict) -> list[dict]:
         documents = {row["id"] for row in result["documents"]}
         for table, key in (("document_sources", "derived_id"), ("conclusion_source_messages", "conclusion_id")):
             for row in data[table]:
+                if table == "document_sources" and row_identity(table, row) in dangling:
+                    if row[key] in documents:
+                        gone.add(row_identity(table, row))
+                    continue
                 if row[key] in documents and row not in result[table]:
                     result[table].append(row)
                     dependencies.append({"table": table, "native_id": [row[key], row.get("source_id", row.get("message_id"))],
                                          "reason": "referenced_ancestor"})
                     changed = True
         if not changed:
-            return dependencies
+            return dependencies, gone
 
 
 def map_peer(data: dict, source: str, destination: str) -> dict:

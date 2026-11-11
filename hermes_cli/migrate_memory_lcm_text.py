@@ -41,11 +41,13 @@ def message_uid(row, text, ledger, source_digest: str) -> tuple[str, bool]:
     return uid, False
 
 
-def conversations(source, registry, agent: str) -> dict:
+def conversations(source, registry, agent: str, left_out: set = frozenset()) -> dict:
     columns = {r[1] for r in source.execute("PRAGMA table_info(messages)")}
     expr = "conversation_id" if "conversation_id" in columns else "''"
     result = {}
-    for session, conversation in source.execute(f"SELECT DISTINCT session_id,{expr} FROM messages"):
+    pairs = dict.fromkeys((session, conversation) for store_id, session, conversation in source.execute(
+        f"SELECT store_id,session_id,{expr} FROM messages ORDER BY store_id") if store_id not in left_out)
+    for session, conversation in pairs:
         keys = [("lcm_conversation", f"{agent}:{conversation}")] if conversation else []
         keys.append(("hermes_session", f"{agent}:{session}"))
         result[conversation or session] = _register(registry, "conversation", keys)
