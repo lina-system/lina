@@ -135,6 +135,16 @@ def test_nothing_is_refreshed_or_applied_again_while_nothing_moved_but_the_probe
 
 
 @pytest.mark.platforms("posix")
+def test_an_external_ocx_is_never_asked_to_write_a_model_list_and_is_not_an_alert(world, monkeypatch):
+    monkeypatch.setattr(lina_ocx, "external", lambda root=None: {"cli": "/opt/ocx"})
+    world["env"].ocx_models = lambda root: pytest.fail("an external OCX's list is not compared")
+    rec = sync(world)
+    assert rec["models"]["state"] == "external" and world["refreshed"] == []
+    assert not [line for line in world["notices"] if "model list" in line]
+    assert rec["probes"]["build-a"]["state"] == "done", "the probes still run"
+
+
+@pytest.mark.platforms("posix")
 def test_a_route_whose_hub_probe_fails_holds_the_runner_and_reaches_no_node(world, monkeypatch):
     monkeypatch.setenv("FAKETOOL_ANSWER", "Authentication required")
     rec = sync(world)

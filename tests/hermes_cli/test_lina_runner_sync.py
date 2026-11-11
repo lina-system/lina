@@ -433,6 +433,26 @@ def test_an_unreadable_ocx_log_before_the_trial_fails_without_a_trial(tmp_path):
     assert ok is False and why.startswith("OCX log could not be read before the trial")
 
 
+def _timing_out_trial(tmp_path, partial):
+    import subprocess
+    from hermes_cli import lina_runner_sync_trial as trials
+
+    def hang(argv, **kwargs):
+        raise subprocess.TimeoutExpired(argv, 300.0, output=partial)
+    return trials.trial(tmp_path, _ocx_runner(tmp_path, {"model_contains": "haiku"}), "2.0.0", run=hang,
+                        ocx_logs=lambda root: {"logs": []})
+
+
+@pytest.mark.parametrize("partial", [b"OK\n", "OK\n"])
+def test_a_trial_that_printed_ok_and_never_exited_says_so(tmp_path, partial):
+    assert _timing_out_trial(tmp_path, partial) == (False, "answered OK but did not exit in 300.0s")
+
+
+@pytest.mark.parametrize("partial", [None, b"", b"warming up\n"])
+def test_a_trial_that_printed_nothing_in_time_is_no_answer(tmp_path, partial):
+    assert _timing_out_trial(tmp_path, partial) == (False, "no answer in 300.0s")
+
+
 def test_a_second_run_waits_for_the_first(hub):
     with lina_runner_sync.run_lock(hub["root"]):
         code, lines = run(hub)

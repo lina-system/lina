@@ -45,8 +45,11 @@ def _argv_trial(entry: list[str], spec: dict, env: dict, folder: Path, run) -> t
     try:
         done = run(argv, env=env, cwd=str(folder), stdin=subprocess.DEVNULL, capture_output=True, text=True,
                    encoding="utf-8", errors="replace", timeout=float(spec.get("timeout", TIMEOUT_S)), check=False)
-    except subprocess.TimeoutExpired:
-        return False, f"no answer in {spec.get('timeout', TIMEOUT_S)}s"
+    except subprocess.TimeoutExpired as exc:
+        waited = spec.get("timeout", TIMEOUT_S)
+        if said_ok(exc.stdout.decode("utf-8", "replace") if isinstance(exc.stdout, bytes) else exc.stdout or ""):
+            return False, f"answered OK but did not exit in {waited}s"  # the call worked; the process stayed up
+        return False, f"no answer in {waited}s"
     except OSError as exc:
         return False, f"could not start: {exc}"
     if done.returncode != 0:
