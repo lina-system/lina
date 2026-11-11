@@ -7,6 +7,8 @@ import os
 import stat
 import subprocess
 
+import pytest
+
 from hermes_cli.worker import device
 from hermes_cli.worker.runners.base import Task
 from hermes_cli.worker.task import end_state, lock_inputs, verify, write_manifest
@@ -126,6 +128,34 @@ def test_the_push_block_stays_in_the_task_worktree(tmp_path):
     assert push_url(task.work) == "PUSH-BLOCKED-by-lina-worker"
     assert push_url(repo) == str(tmp_path / "remote.git")
     assert push_url(tmp_path / "sibling") == str(tmp_path / "remote.git")
+
+
+@pytest.mark.parametrize("local_branch", [False, True], ids=["only-on-origin", "stale-local"])
+def test_a_base_branch_starts_from_its_head_on_origin(tmp_path, local_branch):
+    """The repo cache is cloned once and then only fetched: a base branch that exists only on origin, or whose local
+    branch fell behind, starts the task from origin's head."""
+    origin, seed, repo = tmp_path / "origin.git", tmp_path / "seed", tmp_path / "repo"
+    _git("init", "-q", "--bare", "-b", "main", str(origin), cwd=tmp_path)
+    seed.mkdir()
+    _git("init", "-q", "-b", "main", cwd=seed)
+    (seed / "a.txt").write_text("a\n")
+    _git("add", "a.txt", cwd=seed)
+    _git("commit", "-q", "-m", "base", cwd=seed)
+    _git("push", "-q", str(origin), "main:refs/heads/main", "main:refs/heads/release", cwd=seed)
+    _git("clone", "-q", str(origin), str(repo), cwd=tmp_path)
+    if local_branch:
+        _git("branch", "release", "origin/release", cwd=repo)
+    (seed / "b.txt").write_text("b\n")
+    _git("add", "b.txt", cwd=seed)
+    _git("commit", "-q", "-m", "release moves on", cwd=seed)
+    _git("push", "-q", str(origin), "main:refs/heads/release", cwd=seed)
+    root, tid = tmp_path / "worker", "OT-SIO1102120004"
+    put(LocalTransport(root), tid, "job.json", json.dumps({"repo": str(repo), "branch": f"omo/{tid}",
+                                                          "base_branch": "release"}))
+    task = device.task_of(root, tid)
+    device.prepare(root, task)
+
+    assert _git("rev-parse", "HEAD", cwd=task.work).stdout == _git("rev-parse", "HEAD", cwd=seed).stdout
 
 
 def test_lock_inputs_without_inputs_records_nothing(tmp_path):

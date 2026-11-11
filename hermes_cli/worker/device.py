@@ -141,8 +141,11 @@ def _repo_source(worker_root: Path, repo: str) -> Path:
 def _prepare_repo(worker_root: Path, task: Task, job: dict) -> None:
     source = _repo_source(worker_root, job["repo"])
     _git("-C", str(source), "fetch", "-q", "origin", timeout=900)
-    base = job.get("base_branch") or _git("-C", str(source), "symbolic-ref", "-q", "--short",
-                                          "refs/remotes/origin/HEAD").stdout.strip() or "HEAD"
+    base = job.get("base_branch")
+    if base and _git("-C", str(source), "rev-parse", "-q", "--verify", f"refs/remotes/origin/{base}").returncode == 0:
+        base = f"origin/{base}"  # the cache is only fetched: its local branch of that name can be behind origin's
+    base = base or _git("-C", str(source), "symbolic-ref", "-q", "--short",
+                        "refs/remotes/origin/HEAD").stdout.strip() or "HEAD"
     _run_git("-C", str(source), "worktree", "add", "-q", "-b", job["branch"], str(task.work), base)
     # The block lives in this worktree's own config: in the shared config it would also block the person's
     # checkout and every sibling worktree, and stay after the task.

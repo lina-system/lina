@@ -30,7 +30,7 @@ def _submit(args) -> int:
             "inputs": args.input, "todo": args.todo,
             "host": args.host, "model": args.model, "topic": args.topic, "note": args.note, "at": args.at,
             "every": args.every, "dry_notify": args.dry_notify, "wait": args.wait, "runner": args.runner,
-            "card": _card(args), "size": args.size, "access": args.access,
+            "card": _card(args), "size": args.size, "access": args.access, "base_branch": args.base_branch,
             "labels": [x.strip() for x in args.labels.split(",") if x.strip()] if args.labels else None}
     if args.bot:
         opts["bot"] = args.bot
@@ -130,6 +130,8 @@ def _submit_parser(sub) -> None:
     p.add_argument("--access", choices=ACCESS, default="workspace-write", help="access mode within the agent's ceiling")
     p.add_argument("--repo", help="owner/name (cloned into the device's repo cache) or a path on the device; the "
                                   "task works in a fresh worktree on omo/<ID> with push blocked")
+    p.add_argument("--base", dest="base_branch", help="the branch the worktree starts from (origin's when it has "
+                                                     "it; default: the repository's default branch)")
     p.add_argument("--input", action="append", default=[], help="a file or folder copied read-only to input/")
     p.add_argument("--todo", help="the to-do this task works on (also its topic)")
     p.add_argument("--host", help="a device from devices.workers instead of bidding")
