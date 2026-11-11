@@ -24,6 +24,30 @@ import pytest
 from hermes_cli.observability.shared_metrics_consent import OFFER_VERSION
 from tests.gateway.fixtures.local_recovery_probe import Model
 from tests.gateway.test_normal_runtime_boot import control
+from tests.waiting import wait_until
+
+
+def wait_for_screen(screen, text, timeout=10):
+    """The pane once ``text`` is drawn on it. A reply's later lines are separate paints (classic
+    bare `/title` paints "Session ID", reads the DB, then paints "Title"), so an answer having
+    arrived does not mean the rest of it is on screen yet."""
+    def drawn():
+        current = screen()
+        return current if text in current else None
+    try:
+        return wait_until(drawn, timeout=timeout, interval=.1, what=repr(text))
+    except AssertionError as exc:
+        raise AssertionError((text, screen())) from exc
+
+
+def test_wait_for_screen_fails_when_the_line_never_draws():
+    with pytest.raises(AssertionError, match="Title: View Title"):
+        wait_for_screen(lambda: "Session ID: abc\n", "Title: View Title", timeout=.3)
+
+
+def test_wait_for_screen_returns_once_the_line_draws():
+    frames = iter(["Session ID: abc\n", "Session ID: abc\n", "Session ID: abc\nTitle: View Title\n"])
+    assert wait_for_screen(lambda: next(frames), "Title: View Title").endswith("Title: View Title\n")
 
 
 @contextlib.contextmanager
@@ -136,7 +160,7 @@ def test_classic_view_title_and_usage_match_main(tmp_path):
         send("second question", "RECOVERY_ACK_second question")
         send("/title View Title", "Session title set: View Title")
         sid = session_id()
-        assert "Title: View Title" in screen()
+        wait_for_screen(screen, "Title: View Title")
         assert db("SELECT title FROM sessions WHERE id=?", sid) == [("View Title",)]
         send("/usage", "Session Token Usage")
         active = [r[0] for r in db("SELECT msg_text(text_uid, 'content') FROM transcript_rows WHERE session_id=? AND active=1 AND role='user'", sid)]
@@ -150,7 +174,7 @@ def test_classic_view_retry_undo_new_match_main(tmp_path):
         send("second question", "RECOVERY_ACK_second question")
         sid = session_id()
         send("/retry", "RECOVERY_ACK_second question")
-        assert 'Retrying: "second question"' in screen()
+        wait_for_screen(screen, 'Retrying: "second question"')
         # Main confirms a destructive command; Enter takes "Approve Once".
         send("/undo", "destroys conversation state")
         send("", "Undid 1 turn")
