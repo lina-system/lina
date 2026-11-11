@@ -2,6 +2,6 @@
   "name": "lina-omo",
   "private": true,
   "dependencies": {
-    "omo-ai": "5.1.66"
+    "omo-ai": "5.1.69"
   }
 }
