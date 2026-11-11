@@ -8,7 +8,8 @@ from pathlib import Path
 from hermes_cli.migrate_memory_agent import _readonly
 from hermes_cli.migrate_memory_agent_stream import scratch, finish_report
 from hermes_cli.migrate_memory_lcm_rows import (
-    CACHES, DURABLE, RECEIPT_KEY, VECTOR_META, VECTORS, digest, schema, source_rows, verify_references,
+    CACHES, DURABLE, LEFT_OUT, QUARANTINE, RECEIPT_KEY, VECTOR_META, VECTORS, digest, engine_bindings,
+    fork_quarantine, left_out, schema, source_rows, verify_references,
 )
 from hermes_cli.migrate_memory_lcm_text import conversations, index_host, message_uid
 from hermes_cli.migrate_memory_lcm_vectors import transfer_vectors
@@ -35,11 +36,17 @@ def _compare(conn, table, rows, mapping, ledger):
                             + ",".join("?" for _ in wanted) + ")", wanted)
     names = [column[0] for column in selected.description]
     actual = {values[0]: dict(zip(names, values)) for values in selected.fetchall()}
+    named = 0
     for native, expected in rows:
         current = actual.get(mapping[str(native)])
         if current is None:
             raise ValueError(f"missing imported LCM row: {table}/{native}")
         observed = {name: current[name] for name in expected}
+        # A tool row LCM stored without the name its matched host text keeps reads the host's name back.
+        if (table == "messages" and "tool_name" in expected and expected["tool_name"] is None
+                and observed["tool_name"] is not None and "lcm-import:" not in current["text_uid"]):
+            expected["tool_name"] = observed["tool_name"]
+            named += 1
         # PostgreSQL jsonb renders tool calls with different insignificant whitespace.
         for value in (expected, observed):
             if table == "messages" and value.get("tool_calls"):
@@ -50,15 +57,20 @@ def _compare(conn, table, rows, mapping, ledger):
         identity = f"{table}:{native}"
         ledger.execute("INSERT INTO source_manifest VALUES (?,?)", (identity, left))
         ledger.execute("INSERT INTO destination_manifest VALUES (?,?)", (identity, right))
+    return named
 
 
-def _transfer(conn, source, table, receipt, ledger, text, replay):
+def _transfer(conn, source, table, receipt, ledger, text, replay, quarantine):
     from hermes_cli.migrate_memory_agent_stream import batches
 
     mapping = receipt["ids"].setdefault(table, {})
-    matched_text = inserted_text = count = 0
+    matched_text = inserted_text = count = skipped = named = 0
     for batch in batches(source_rows(source, table)):
         conversation_uids = {}
+        count += len(batch)
+        kept = [(native, row) for native, row in batch if not left_out(table, row, quarantine)]
+        skipped += len(batch) - len(kept)
+        batch = kept
         for native, row in batch:
             if row.get("conversation_id"):
                 row["conversation_id"] = receipt["conversations"][row["conversation_id"]]
@@ -80,9 +92,14 @@ def _transfer(conn, source, table, receipt, ledger, text, replay):
             with text.write():
                 for conversation, uids in conversation_uids.items():
                     text.set_conversation(uids, conversation)
-        _compare(conn, table, batch, mapping, ledger)
-        count += len(batch)
-    return count, matched_text, inserted_text
+        if batch:
+            named += _compare(conn, table, batch, mapping, ledger)
+    copied = count - skipped
+    counts = {"source": count, "matched": copied if replay else 0, "inserted": 0 if replay else copied,
+              "skipped": skipped}
+    if skipped:
+        counts["reason"] = LEFT_OUT
+    return counts, matched_text, inserted_text, named
 
 
 def migrate_lcm(copied: Path | None, state: Path, destination: Path, agent: str, work: Path) -> dict:
@@ -98,7 +115,8 @@ def migrate_lcm(copied: Path | None, state: Path, destination: Path, agent: str,
                 closing(lcm_x_store.backend_for(target)()) as conn:
             tables = schema(source)
             references = verify_references(source, tables)
-            identities = conversations(source, registry, agent)
+            quarantine = fork_quarantine(source, tables)
+            identities = conversations(source, registry, agent, quarantine["store_ids"])
             index_host(state, ledger)
             for side in ("source", "destination"):
                 ledger.execute(f"CREATE TABLE {side}_manifest(native_id TEXT,sha256 TEXT)")
@@ -113,22 +131,26 @@ def migrate_lcm(copied: Path | None, state: Path, destination: Path, agent: str,
             receipt["conversations"] = identities
             if not replay and conn.execute("SELECT 1 FROM messages UNION ALL SELECT 1 FROM summary_nodes LIMIT 1").fetchone():
                 raise ValueError("LCM destination contains unreceipted rows")
-            counts, matched_text, inserted_text = {}, 0, 0
+            counts, matched_text, inserted_text, named = {}, 0, 0, 0
             for table in DURABLE:
                 if table not in tables:
                     continue
                 if table == "lcm_rollup_invalidations" and not replay:
                     conn.execute("DELETE FROM lcm_rollup_invalidations")
-                count, matched, added = _transfer(conn, source, table, receipt, ledger, text, replay)
-                counts[table] = {"source": count, "matched": count if replay else 0,
-                                 "inserted": 0 if replay else count, "skipped": 0}
+                counts[table], matched, added, filled = _transfer(
+                    conn, source, table, receipt, ledger, text, replay, quarantine)
                 matched_text += matched
                 inserted_text += added
-            vector_counts, skipped = transfer_vectors(conn, source, tables, receipt, ledger, replay)
+                named += filled
+            vector_counts, skipped = transfer_vectors(conn, source, tables, receipt, ledger, replay,
+                                                      quarantine["chunk_ids"])
             counts.update(vector_counts)
+            skipped.extend({"kind": table, "rows": row["skipped"], "reason": LEFT_OUT}
+                           for table, row in counts.items() if row.get("reason") == LEFT_OUT)
             for table in tables.keys() - set(DURABLE) - set(VECTORS):
                 count = source.execute(f'SELECT count(*) FROM "{table}"').fetchone()[0]
                 reason = CACHES.get(table, "vector_deferred_to_reembedding" if table in (*VECTORS, *VECTOR_META)
+                                    else "fork_quarantine_records_left_out" if table == QUARANTINE
                                     else "full_text_index_rebuilt_by_store")
                 counts[table] = {"source": count, "matched": 0, "inserted": 0, "skipped": count, "reason": reason}
                 skipped.append({"kind": table, "rows": count, "reason": reason})
@@ -148,8 +170,13 @@ def migrate_lcm(copied: Path | None, state: Path, destination: Path, agent: str,
             conn.commit()
             report.update(status="imported", counted=True, counts=counts, skipped_tables=skipped,
                           whole_source_rows=sum(row["source"] for row in counts.values()),
-                          matched_text=source.execute("SELECT count(*) FROM messages").fetchone()[0] if replay else matched_text,
+                          matched_text=source.execute("SELECT count(*) FROM messages").fetchone()[0]
+                          - len(quarantine["store_ids"]) if replay else matched_text,
                           inserted_text=inserted_text, references={"resolved": references, "unresolved": 0},
+                          tool_name_from_host=named, engine_uid_bindings=engine_bindings(source, tables),
+                          fork_quarantine={"records": quarantine["records"],
+                                           "left_out_messages": len(quarantine["store_ids"]),
+                                           "kept_cited_messages": quarantine["kept_cited"]},
                           conversation_ids=identities, identity_maps=receipt["ids"],
                           embeddings={"status": "deferred", "command": "lina store reembed --source memory"})
             return report
