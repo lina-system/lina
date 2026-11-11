@@ -10,7 +10,8 @@ With ``ocx.external: {cli, data_dir}`` the reads run that CLI (the caller's envi
 ``data_dir`` is given) and nothing is ever written to that OCX: an argv outside ``read_only`` raises before anything
 is spawned, the write verbs of ``lina models`` / ``lina services`` refuse (``lina_ocx.refuse_external``), and a read
 fails while ``ocx status --json`` says the proxy is not running. Each argv's output is kept for 60 s, so the app's
-polling does not multiply OCX calls (a call takes about 0.3 s, ``status`` 2.7 s). The gate uses the last
+polling does not multiply OCX calls (a call takes about 0.3 s, ``status`` 2.7 s); a ``fresh`` read (the runner
+trial's log reads, which compare the log before and after one request) always calls OCX and keeps its answer. The gate uses the last
 ``status --json``, refreshed in the background at most every 60 s (only the first read waits for one), so a stopped
 proxy is noticed on the first read after the next refresh; a refresh that fails is raised by the next read, and the
 read after that waits for a new ``status --json``.
@@ -120,7 +121,7 @@ def _call(argv: list[str], env: dict[str, str] | None, args: tuple[str, ...]) ->
     return result.stdout
 
 
-def _external(ext: dict[str, str], args: tuple[str, ...]) -> Any:
+def _external(ext: dict[str, str], args: tuple[str, ...], fresh: bool = False) -> Any:
     if not read_only(args):
         raise lina_ocx.OcxError(f"`ocx {' '.join(args)}` is not a read; ocx.external is read-only")
     key = (ext["cli"], ext.get("data_dir"), args)
@@ -128,7 +129,7 @@ def _external(ext: dict[str, str], args: tuple[str, ...]) -> Any:
         lock = _LOCKS.setdefault(key, threading.Lock())
     with lock:  # one call per argv at a time: a second reader waits for the first one's output
         hit = _CACHE.get(key)
-        if hit is None or _clock() - hit[0] >= CACHE_S:
+        if fresh or hit is None or _clock() - hit[0] >= CACHE_S:
             env = dict(os.environ)  # health: allow PS-P05 -- the operator's one OCX per host runs with the caller's env
             if ext.get("data_dir"):
                 env["OPENCODEX_HOME"] = ext["data_dir"]
@@ -180,7 +181,7 @@ def _own(root: Path, args: tuple[str, ...]) -> Any:
     return json.loads(_call(lina_ocx.ocx_argv(root, version, *args), lina_ocx.ocx_env(root), args))
 
 
-def _read(root: Path, ext: dict[str, str] | None, args: tuple[str, ...]) -> Any:
+def _read(root: Path, ext: dict[str, str] | None, args: tuple[str, ...], fresh: bool = False) -> Any:
     if ext is None:
         return _own(root, args)
     if not read_only(args):
@@ -190,13 +191,14 @@ def _read(root: Path, ext: dict[str, str] | None, args: tuple[str, ...]) -> Any:
         if not (isinstance(status, dict) and (status.get("proxy") or {}).get("running") is True):
             raise lina_ocx.OcxError(f"the OCX of ocx.external ({ext['cli']}) is not running: "
                                     "`ocx status --json` says proxy.running is not true")
-    return _external(ext, args)
+    return _external(ext, args, fresh)
 
 
-def run(args: tuple[str, ...], root: Path | None = None) -> Any:
-    """``ocx <args>``'s parsed JSON from LINA's own OCX, or from ``ocx.external`` when that is set."""
+def run(args: tuple[str, ...], root: Path | None = None, *, fresh: bool = False) -> Any:
+    """``ocx <args>``'s parsed JSON from LINA's own OCX, or from ``ocx.external`` when that is set; *fresh* skips the
+    external OCX's 60 s cache for this read."""
     root = root or lina_ocx.lina_root()
-    return _read(root, lina_ocx.external(root), tuple(args))
+    return _read(root, lina_ocx.external(root), tuple(args), fresh)
 
 
 def query(view: str, root: Path | None = None) -> Any:

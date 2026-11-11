@@ -154,7 +154,8 @@ nothing that day.
    and asked one real request (the pin's `trial`: "Reply with exactly OK and
    nothing else." must come back as a line `OK`; dsh is asked once over ACP).
    codex, claude and dsh also need a new `200` in the hub's OCX log
-   (`ocx logs --json`, read-only with `ocx.external`): a `requestId` that was
+   (`ocx logs --json`, read-only with `ocx.external`, asked of OCX itself before
+   and after the trial, never from the 60 s cache of `lina models`): a `requestId` that was
    not in the log read just before the trial, of the trial's kind (the pin's
    `trial.ocx_match`: `model_contains`, `model_endswith`, `protocol`). A pin with
    `ocx: true` and no `ocx_match`, or a log that cannot be read before the trial,
