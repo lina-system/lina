@@ -1,22 +1,28 @@
-"""Who may write the work settings through the client API (lina#256): the owner, from one of the owner's devices.
+"""Who may write the work settings through the client API (lina#256): the owner, from one of the owner's devices,
+and the owner's agent nodes (lina#574).
 
 A write passes only when all of these hold:
 
 1. the dashboard credential is valid (the dashboard's own auth gate, before any route runs);
-2. the peer's tailnet identity, from ``<tailscale> whois --json <peer ip>``, has the configured owner login and a
-   device name in the configured owner device list;
+2. the peer's tailnet identity, from ``<tailscale> whois --json <peer ip>``, has a device name in the configured
+   agents list (whatever its login: a tagged node such as the hub has no user login), or has the configured owner
+   login and a device name in the configured owner device list;
 3. that device made at most 30 writes in the last minute.
 
 ```yaml
 worker:
   settings:
-    owner: {login: <tailnet login>, devices: [<device name>, ...]}
+    owner:
+      login: <tailnet login>
+      devices: [<device name>, ...]   # the owner's own devices: need the owner login
+      agents: [<device name>, ...]    # nodes of the owner's fleet that run agents (the hub): any login
     tailscale: tailscale            # the command (a path or an argv list); default tailscale
 ```
 
-Any whois error refuses the write; reads never depend on it. With no owner login or no device configured nobody
-writes through the API (the settings view says ``writable: false``); the CLI on the hub always writes. These keys
-are not work settings, so the API can never change who may write.
+Any whois error refuses the write; reads never depend on it. With neither an owner login with devices nor an agent
+configured nobody writes through the API (the settings view says ``writable: false``); the CLI on the hub always
+writes, so a listed agent node gets no more than its own CLI already has. These keys are not work settings, so the
+API can never change who may write.
 """
 
 from __future__ import annotations
@@ -32,15 +38,19 @@ WINDOW_S = 60
 VIEWER_S = 60
 
 
-def _owner(base: Path | None) -> tuple[str, list[str], list[str]]:
+def _names(value) -> list[str]:
+    return [str(d).lower() for d in value if d] if isinstance(value, list) else []
+
+
+def _owner(base: Path | None) -> tuple[str, list[str], list[str], list[str]]:
+    """``(login, devices, agents, tailscale argv)``; device names lower-cased."""
     from hermes_cli.worker import settings
     conf = settings.section(base).get("settings")
     conf = conf if isinstance(conf, dict) else {}
     owner = conf.get("owner") if isinstance(conf.get("owner"), dict) else {}
-    devices = owner.get("devices") if isinstance(owner.get("devices"), list) else []
     tool = conf.get("tailscale") or "tailscale"
     argv = [str(part) for part in tool] if isinstance(tool, list) else [str(tool)]
-    return str(owner.get("login") or ""), [str(d).lower() for d in devices if d], argv
+    return str(owner.get("login") or ""), _names(owner.get("devices")), _names(owner.get("agents")), argv
 
 
 def whois(argv: list[str], ip: str) -> tuple[str, str] | None:
@@ -69,12 +79,13 @@ class Gate:
             self.seen.clear()
 
     def owner_device(self, ip: str, base: Path | None = None) -> tuple[str, str]:
-        """``(login, device)`` when *ip* is the owner on a listed device, else ``("", "")``."""
-        login, devices, argv = _owner(base)
-        if not login or not devices or not ip:
+        """``(login, device)`` when *ip* is a listed agent node (any login) or the owner on a listed device, else
+        ``("", "")``."""
+        login, devices, agents, argv = _owner(base)
+        if not ip or not (agents or (login and devices)):
             return "", ""
         who = whois(argv, ip)
-        if not who or who[0] != login or who[1] not in devices:
+        if not who or not (who[1] in agents or (login and who[0] == login and who[1] in devices)):
             return "", ""
         return who
 
@@ -96,7 +107,8 @@ class Gate:
         now = time.monotonic() if now is None else now
         login, device = self.owner_device(ip, base)
         if not device:
-            return None, 403, "settings are written only from the owner's devices (see worker.settings.owner)"
+            return None, 403, "settings are written only from the owner's devices and agent nodes " \
+                              "(see worker.settings.owner)"
         with self.lock:
             hits = [at for at in self.hits.get(device, []) if now - at < WINDOW_S]
             if len(hits) >= RATE:

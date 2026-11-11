@@ -89,9 +89,17 @@ a new revision, so a second rollback undoes the first. `lina devices add|remove`
 ## Who writes
 
 The CLI on the hub always writes (principal: the OS user, device `local`). Through the API a write needs the
-dashboard credential, and the peer's `tailscale whois` must give the owner login on one of the owner's devices, at
-most 30 writes a minute per device. Any whois error refuses the write; reads never depend on it. With no owner
+dashboard credential, and the peer's `tailscale whois` must give the owner login on one of the owner's devices
+(`owner.devices`), or a device in `owner.agents` with any login, at most 30 writes a minute per device. Any whois
+error refuses the write; reads never depend on it. With neither an owner login with devices nor an agent node
 configured nobody writes through the API (`writable: false`).
+
+`owner.agents` is for the nodes of the owner's own fleet that run agents, such as the hub, so those agents change
+the settings through the same page path. Such a node is often tagged and then has no user login (whois gives the
+node's own name), so a listed agent device passes whatever its login, and the revision's `by` records that login as
+the principal and the node as the device. Trusting a listed node adds nothing over the hub's CLI, which writes with
+no gate: list only nodes that already run the owner's agents. A device in `owner.devices` still needs the owner
+login, and a device in neither list is refused. With `agents` empty or absent the gate is as before.
 
 Behind the hub's own `tailscale serve` (to a loopback port) the direct peer is `127.0.0.1` or `::1`, which whois
 does not know; then the gate (the `writable` flag and the write, and its rate limit) judges the last
@@ -105,7 +113,10 @@ change them:
 ```yaml
 worker:
   settings:
-    owner: {login: <tailnet login>, devices: [<device name>]}
+    owner:
+      login: <tailnet login>
+      devices: [<device name>]         # the owner's own devices: need the owner login
+      agents: [<device name>]          # the owner's agent nodes (the hub): any login
     tailscale: tailscale               # command or argv list
 ```
 
