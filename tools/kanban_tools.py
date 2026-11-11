@@ -17,6 +17,7 @@ from typing import Any, Callable, Optional
 
 from agent.redact import redact_sensitive_text
 from hermes_cli.goals import judge_goal
+from hermes_cli.kanban_review_gate import review_handoff_contract
 from hermes_cli.kanban_db_verdicts import return_to_wait, verdict_wake_open
 from tools.registry import no_cache_check_fn, registry, tool_error
 from hermes_cli.config import cfg_get, load_config
@@ -503,6 +504,10 @@ def _goal_gate(tool_name: str, task, tid: str, evidence: str) -> None:
     A broken judge fails open (logged) so it cannot permanently wedge work."""
     if not task or not task.goal_mode or not _goal_judge_available():
         return
+    # A review request hands the card to a reviewer; it is not the card's final completion. Judge it
+    # against "ready for the reviewer" so a card that closes only after the reviewer's approval can
+    # still be handed to that reviewer (lina#460). ``kanban_complete`` keeps judging the whole card.
+    judge_kwargs = {"contract": review_handoff_contract()} if tool_name == "kanban_request_review" else {}
     try:
         # Headless gate runs outside any agent turn: bind the per-task relay-affinity scope
         # (mirrors kanban_specify) so the relay does not reject the judge call (#113669).
@@ -510,7 +515,8 @@ def _goal_gate(tool_name: str, task, tid: str, evidence: str) -> None:
         affinity_token = None if get_affinity_scope() else set_affinity_scope(f"kanban:{tid}")
         try:
             verdict, reason, _, _, transport_failed = judge_goal(
-                goal=f"{task.title}\n\n{task.body or ''}".strip(), last_response=evidence.strip())
+                goal=f"{task.title}\n\n{task.body or ''}".strip(), last_response=evidence.strip(),
+                **judge_kwargs)
         finally:
             if affinity_token is not None:
                 reset_affinity_scope(affinity_token)

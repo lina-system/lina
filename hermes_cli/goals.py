@@ -1749,6 +1749,31 @@ def _kanban_budget_end(park, block, task_id: str, turns_used: int, max_turns: in
     return "blocked_budget", "turn budget exhausted"
 
 
+def _kanban_context_end(park, task_id: str, tokens: int, bound: int, reason: str, log) -> tuple[str, str]:
+    """The session's context reached ``kanban.goal_context_bound_tokens`` (lina#346): hand off like a
+    spent turn budget, so the next run starts a new session from the card record (body, comments,
+    run ids, gate results) instead of carrying this context on. Compaction thresholds are untouched."""
+    handoff = (f"Handoff: the goal session's context reached {tokens} tokens (bound {bound}); the next run "
+               f"starts a new session from this card's record. Last judge verdict: {_truncate(reason, 300)}.")
+    if park("context bound reached; a new session resumes on the next dispatcher tick",
+            {"kind": "until", "at": int(time.time()), "handoff": "context_bound"}, handoff):
+        log(f"kanban goal loop: task {task_id} context {tokens} >= {bound} tokens; handed off to a new session")
+        return "handoff_context", "context bound reached, handed off"
+    return "stopped", "park refused"
+
+
+def _kanban_turn_end(park, block, task_id: str, turns_used: int, max_turns: int, reason: str, log,
+                     context_tokens, context_bound: int) -> Optional[tuple[str, str]]:
+    """``(outcome, reason)`` when the next turn must not run here (turn budget spent, or the context
+    past its bound with a park step to hand off through); None to run it."""
+    if turns_used >= max_turns:
+        return _kanban_budget_end(park, block, task_id, turns_used, max_turns, reason, log)
+    if park is None or context_tokens is None or context_bound <= 0:
+        return None
+    tokens = int(context_tokens() or 0)
+    return _kanban_context_end(park, task_id, tokens, context_bound, reason, log) if tokens >= context_bound else None
+
+
 def run_kanban_goal_loop(
     *,
     task_id: str,
@@ -1763,6 +1788,8 @@ def run_kanban_goal_loop(
     wait_fn=time.sleep,
     record_turn: Callable[[int], None] | None = None,
     park_fn: Callable[..., bool] | None = None,
+    context_tokens: Callable[[], int] | None = None,
+    context_bound: int = 0,
 ) -> dict[str, Any]:
     """Drive a kanban worker through a Ralph-style goal loop.
 
@@ -1778,6 +1805,8 @@ def run_kanban_goal_loop(
     park step WAIT is treated as CONTINUE and the budget end blocks the card.
     ``record_turn`` persists each continuation's 1-based ordinal before execution; the
     first turn is implicit. Persistence failure must not prevent model execution.
+    ``context_tokens`` (the session's last prompt size) at or past ``context_bound`` (> 0) ends the run
+    with a handoff before the next turn, through the same park step (lina#346).
     """
 
     def _log(msg: str) -> None:
@@ -1882,9 +1911,11 @@ def run_kanban_goal_loop(
             else:
                 prompt = KANBAN_GOAL_CONTINUATION_TEMPLATE.format(reason=_truncate(reason, 400))
 
-        # Budget check BEFORE spending another turn.
-        if turns_used >= max_turns:
-            return _result(*_kanban_budget_end(park, _block, task_id, turns_used, max_turns, reason, _log))
+        # Budget and context-bound checks BEFORE spending another turn.
+        ended = _kanban_turn_end(park, _block, task_id, turns_used, max_turns, reason, _log,
+                                 context_tokens, context_bound)
+        if ended:
+            return _result(*ended)
 
         _record_kanban_turn(record_turn, task_id, turns_used + 1)
         try:

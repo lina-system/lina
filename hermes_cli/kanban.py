@@ -853,7 +853,7 @@ def _worker_run_id_for(task_id: str) -> Optional[int]:
         return None
 
 
-def _goal_mode_handoff_rejection(task: Optional[kb.Task], evidence: str):
+def _goal_mode_handoff_rejection(task: Optional[kb.Task], evidence: str, *, review: bool = False):
     """Goal judge for every terminal worker handoff (including review).
 
     Returns ``(verdict, reason_or_None)``: ``"done"`` allows; ``"blocked"`` = judge ruled the goal
@@ -861,6 +861,9 @@ def _goal_mode_handoff_rejection(task: Optional[kb.Task], evidence: str):
     the handoff (logged).
 
     See #100954.
+    ``review=True`` (a ``request-review`` handoff) judges against "ready for the reviewer" via
+    ``review_handoff_contract()``, not the card's final completion: the same split as
+    ``tools.kanban_tools._goal_gate`` (lina#460).
     ``{"done", None}`` means the judge allows the handoff; anything else is a rejection whose verdict
     disambiguates the guidance the caller gives the worker (``continue`` = not done yet, ``blocked`` =
     judged unachievable — see #100954).
@@ -877,7 +880,9 @@ def _goal_mode_handoff_rejection(task: Optional[kb.Task], evidence: str):
         return ("done", None)
 
     from hermes_cli.goals import judge_goal
+    from hermes_cli.kanban_review_gate import review_handoff_contract
 
+    judge_kwargs = {"contract": review_handoff_contract()} if review else {}
     verdict, reason, transport_failed = "done", "", False
     try:
         # Headless handoff checks run outside any agent turn: bind the per-task relay-affinity
@@ -887,7 +892,7 @@ def _goal_mode_handoff_rejection(task: Optional[kb.Task], evidence: str):
         try:
             verdict, reason, _, _, transport_failed = judge_goal(
                 goal=f"{task.title}\n\n{task.body or ''}".strip(),
-                last_response=evidence.strip())
+                last_response=evidence.strip(), **judge_kwargs)
         finally:
             if affinity_token is not None:
                 reset_affinity_scope(affinity_token)
@@ -907,7 +912,7 @@ def _goal_mode_handoff_rejection(task: Optional[kb.Task], evidence: str):
 
 
 def _goal_gate_error(conn, tid: str, evidence: str, handoff: str, blocked_hint: str,
-                     continue_hint: str) -> Optional[str]:
+                     continue_hint: str, *, review: bool = False) -> Optional[str]:
     """Goal-mode judge gate shared by ``complete`` / ``request-review`` (mirrors tools/kanban_tools.py);
     applied to every terminal handoff so request-review can't bypass it. The card's own gates run
     first and do not depend on the judge. Returns the error line, or None to allow."""
@@ -917,7 +922,7 @@ def _goal_gate_error(conn, tid: str, evidence: str, handoff: str, blocked_hint: 
     failure = handoff_gate_failure(conn, task)
     if failure is not None:
         return f"kanban: goal {handoff} of {tid} refused: {failure.describe()}"
-    verdict, rejection = _goal_mode_handoff_rejection(task, evidence)
+    verdict, rejection = _goal_mode_handoff_rejection(task, evidence, review=review)
     if verdict == "blocked":
         return (f"kanban: goal {handoff} of {tid} rejected: judge ruled "
                 f"the goal unachievable — {rejection}. {blocked_hint}")
@@ -1114,7 +1119,7 @@ def _cmd_request_review(args: argparse.Namespace) -> int:
         gate_err = _goal_gate_error(
             conn, tid, summary or "", "review handoff",
             "Record the block with kanban block instead of requesting review.",
-            "Provide acceptance evidence matching the task.")
+            "Provide acceptance evidence matching the task.", review=True)
         if gate_err:
             return _err(gate_err)
         try:

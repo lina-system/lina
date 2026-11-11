@@ -261,8 +261,8 @@ def _hold_review_card(conn: sqlite3.Connection, task_id: str, reason: str) -> bo
 
 
 def park_turn_budget_end(conn: sqlite3.Connection, task_id: str, *, run_id: Optional[int], reason: str,
-                         handoff: str, author: str) -> bool:
-    """The goal loop's turn budget ran out: re-queue the card through ``schedule_task`` with an
+                         handoff: str, author: str, kind: str = "turn_budget") -> bool:
+    """The goal loop's turn budget ran out (or, ``kind`` ``context_bound``, its session's context did): re-queue the card through ``schedule_task`` with an
     immediate time wait marked ``handoff`` (the next dispatcher tick returns it to its phase), or,
     when this stop completes the streak, block it ``needs_input`` instead. The run's ``handoff``
     text is written as a comment either way. False = this run no longer owns the card."""
@@ -272,7 +272,7 @@ def park_turn_budget_end(conn: sqlite3.Connection, task_id: str, *, run_id: Opti
     if hold is not None:
         moved = kb.block_task(conn, task_id, reason=hold, kind="needs_input", expected_run_id=run_id)
     else:
-        wait_for = {"kind": "until", "at": int(time.time()), HANDOFF_KEY: "turn_budget"}
+        wait_for = {"kind": "until", "at": int(time.time()), HANDOFF_KEY: kind}
         moved = kb.schedule_task(conn, task_id, reason=reason, wait_for=wait_for, expected_run_id=run_id)
     if moved:
         kb.add_comment(conn, task_id, author, handoff, run_id=run_id)
