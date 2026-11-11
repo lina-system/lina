@@ -92,6 +92,7 @@ Hermes Agent upstream changes are not listed here; see the upstream history on t
 
 ### Changed
 
+- LINA pins omo-ai 5.1.69 (was 5.1.66): `lina omo install` and the omo runner use it with its engine `@code-yeongyu/senpi` 2026.11.10-2; the model assignment (`~/.omo/omo.jsonc`, the ocx-omo policy) is unchanged, and `lina omo upgrade` moves an installed device to it.
 - LINA pins omo-ai 5.1.66 (was 5.1.51): `lina omo install` and the omo runner use it with its engine `@code-yeongyu/senpi` 2026.11.9-2; the model assignment (`~/.omo/omo.jsonc`, the ocx-omo policy) is unchanged, and `lina omo upgrade` moves an installed device to it (lina#463).
 - The repo skill `omo-tasks` is renamed `lina-worker` (`.agents/skills/lina-worker/`), and `owner-intake` and `work-ledger` name it in `related_skills` (lina#434).
 
