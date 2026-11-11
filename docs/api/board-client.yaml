@@ -761,13 +761,17 @@ components:
     RunRecord:
       type: object
       additionalProperties: false
-      required: [id, at, model, settingsRevision, rounds, comments, errors]
+      required: [id, at, model, settingsRevision, cardId, rounds, comments, errors]
       properties:
         id:
           type: string
         at:
           type: number
           description: Snapshot time (left out of the ETag).
+        cardId:
+          type: string
+          nullable: true
+          description: The work card that started the run (its id as in /work/cards), null when no card did.
         model:
           $ref: "#/components/schemas/RunModel"
         settingsRevision:
