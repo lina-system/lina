@@ -61,6 +61,11 @@ def _delivery(sp) -> None:
     p.add_argument("--branch", help="land this lina worker branch: fetch it, merge dev into it, open the PR")
     p.add_argument("--task", help="the lina worker run id the branch comes from")
     p.set_defaults(fn=_delivery_fn("cmd_merge"), no_resume=True)
+    p = sp.add_parser("feedback", help="a pull request's unresolved P0/P1 findings and failed required check logs "
+                                         "on its head, as text for lina worker send (read-only)")
+    p.add_argument("repo", metavar="OWNER/NAME")
+    p.add_argument("pr", type=int)
+    p.set_defaults(fn=_delivery_fn("cmd_feedback"), no_resume=True)
     p = sp.add_parser("status", help="sprint progress per milestone, open pull requests and running jobs")
     p.add_argument("--repo", action="append", metavar="OWNER/NAME")
     p.set_defaults(fn=_delivery_fn("cmd_status"), no_resume=True)
