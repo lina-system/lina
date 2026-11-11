@@ -14,6 +14,7 @@ from tests.hermes_cli import test_worker_kanban_link_legacy as legacy_tests
 from tests.hermes_cli.test_worker_callers import _scheduled, _woke
 
 kanban, board, legacy = callers.kanban, callers.board, legacy_tests.legacy
+asking = callers.asking
 
 START = 1_800_000_000.0
 GAP_S, EXPIRE_S = 120, 24 * 3600  # the issue's contract: retried every 120 s at most, given up after 24 h
@@ -201,3 +202,25 @@ def test_an_end_noticed_on_a_card_is_never_tried_on_that_card_again(board, clock
     assert len(calls()) == seen
     assert len(_kinds(hub, run, "card_noticed")) == 1
     assert not _kinds(hub, run, "card_notice_waiting", "card_notice_failed")
+
+
+def test_question_wake_retries_failed_write_without_repeating_comment(asking, kanban, monkeypatch):
+    from hermes_cli.worker import kanban_link
+    hub, task, _, comments, calls = asking
+    _, show, _ = kanban
+    show("scheduled", [_scheduled(f"workers={task.id}")])
+    (task.work / "question.md").write_text("Which region?\n", encoding="utf-8")
+    original = kanban_link.unblock
+
+    def unavailable(*args, **kwargs):
+        raise kanban_link.CardLinkError("board unavailable")
+
+    monkeypatch.setattr(kanban_link, "unblock", unavailable)
+    hub.tick()
+    assert hub.store.load(task.id).get("card_pending")
+    assert _woke(calls) == 0
+    monkeypatch.setattr(kanban_link, "unblock", original)
+    for _ in range(10):
+        hub.tick()
+    assert _woke(calls) == 1 and len(comments()) == 1
+    assert not hub.store.load(task.id).get("card_pending")

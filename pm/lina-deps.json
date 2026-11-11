@@ -17,8 +17,8 @@
   },
   "omo": {
     "package": "omo-ai",
-    "version": "5.1.66",
-    "integrity": "sha512-cT5UIcTfMgk9xqKWQLSSisyGue0fAiaP5WKKRyWqbph3Nv6Ime2uJbE5lj5Vt4K4PNvNt3xyHfSISOVCDiJ7IA==",
+    "version": "5.1.69",
+    "integrity": "sha512-1FMNHIOVd6uj+M8ZEBHhUhdyOBStYiZoXf6mFbt4jlV1H8DtOiah1hMuSoY4eelbYgGLxzBpXdUZjkCYR/F+Jw==",
     "license": "Sustainable Use License 1.0, not open source: installed from npm onto the person's own machine at install time, never vendored, bundled or committed into this repo or a release artifact"
   },
   "runners": {
