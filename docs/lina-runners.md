@@ -1,8 +1,43 @@
 # LINA runners
 
-`lina runners` installs, pins and reports every runner a node offers besides omo
+`lina runners` installs, pins and reports every runner a node offers
 (lina#222). The pins live in `pm/lina-deps.json` under `runners`, next to the
-Node, OCX and omo pins.
+Node and OCX pins.
+
+## One block per runner (lina#531)
+
+Each runner, omo included, is one block: how it is installed and pinned, how its
+sign-in is read (`sign_in`: a named check, `{file: <path>}` or `{env: <NAME>}`),
+where its model list comes from and how it is refreshed
+(`models: {file, refresh: {ocx_client}}`), its route source (`route: {source}`,
+`ocx-omo` for omo) and its one-call probe (`trial`, `probe` in settings). The
+repo describes the built-in runners in `pm/lina-deps.json` `runners.<name>`;
+`worker.runners.<name>` in the LINA root's config adds or overrides one with
+`install` (the pin fields), `sign_in`, `models`, `route` and `probe`:
+
+```yaml
+worker:
+  runners:
+    mytool:
+      type: command
+      argv: [mytool, -p]
+      install: {installer: binary, version: 1.0.0, bin: mytool, entry: mytool,
+                artifacts: {linux-x64: {url: "https://...", sha256: "..."}},
+                follow: {channel: "https://...", artifact: "https://...-{version}-{platform}",
+                         platforms: {linux-x64: linux}}}
+      sign_in: {env: MYTOOL_API_KEY}
+      probe: {argv: [-p, "{prompt}"]}
+```
+
+omo keeps `vendor/omo` and `bin/omo` (`home`, `shim`) and runs its package
+script on the pinned Node (`entry: bin/omo.js`); `lina omo install|upgrade|rollback`
+are `lina runners`' install, upgrade and rollback of that block.
+
+The last real-call probe of the version a device runs (`runner-probes.json`,
+written by the `runner-probe` verb) is part of readiness: a runner whose static
+checks pass but whose probe failed is `not ready: probe failed` in
+`lina runners status` and `lina devices`, and the bid probe behind
+`lina worker hosts` refuses it.
 
 | Runner | Installer | Integrity | Sign-in (owner, 11-06) |
 |---|---|---|---|
@@ -93,8 +128,9 @@ restarted while the worker or gateway runs on it).
 ## Daily sync (lina#238)
 
 Each runner pin with `follow` moves once a day to its source's newest version,
-after a trial on the hub, and the nodes follow the same day. omo, OCX and the
-ACP adapters keep LINA's pins; `gh`, `opencode` and `pi` are not runners.
+after a trial on the hub, and the nodes follow the same day. OCX and the
+ACP adapters keep LINA's pins (omo follows npm `latest` like the others,
+lina#531); `gh`, `opencode` and `pi` are not runners.
 
 | Runner | Source (`follow`) | Hash |
 |---|---|---|
@@ -132,7 +168,14 @@ nothing that day.
    switches, and sends each node its `runner-sync` verb with the new pin. The
    node checks again that no run holds a slot, writes the same file in its own
    root, upgrades (`lina runners upgrade`: hash, `--version`, switch, shim
-   trial, back to `previous` on failure) and answers.
+   trial, back to `previous` on failure) and answers;
+4. then each block is cared for (lina#531): its model list is refreshed on the
+   hub and the nodes when OCX's model list or the runner's version changed; its
+   route source is checked and, when it differs, applied on the hub and probed
+   there once with a real task before the nodes apply it (a failed check, apply
+   or probe holds the runner, `kind: route`); then the hub and every node that
+   runs it probe it (`runner-probe`). A block that only the hub's settings
+   declare and that the hub has no copy of is installed at its pin first.
 
 `runner-pins.json` is laid over `pm/lina-deps.json` by `lina_runners.pins()`;
 the repo pin is the floor. Every change appends the previous entry to
@@ -166,8 +209,11 @@ A node with a run holding a slot, an unreachable node, a node without the
 Each run writes `runner-sync/YYYYMMDD.json` (sources, the hub's trial, each
 node's result, holds) and `runner-sync/last.json` (`started`, `finished`,
 `rc`), and sends one short English notice through `worker.notice.command` to
-`worker.runner_sync.notify` (default `default`) when something moved, failed
-or waits; a quiet day sends none. `--plan` installs, writes and sends nothing.
+`worker.runner_sync.notify` (default `default`) with one line per thing a
+person should know: a hold (a major version that waits included), a failed
+probe, a sign-in lost since the last run, a source that went back, or a hub
+that cannot take the move. A move, a follow and an applied route are in the
+record only; a day with nothing to say sends none (lina#531). `--plan` installs, writes and sends nothing.
 
 `lina runners sync status` shows the hub's pins, holds, the last run, issues
 and notes; `--issues` prints only the issue lines (`- none` when there are
