@@ -205,9 +205,26 @@ def _shown(row: dict, now: float) -> bool:
     return ended is not None and now - ended <= DONE_WINDOW_S
 
 
-def _listed_only(row: dict) -> dict:
-    """A done card outside the window as ``show`` would give it, from its ``list`` row alone (``detail: False``)."""
-    return {"task": row, "parents": [], "children": [], "comments": [], "events": [], "runs": [], "detail": False}
+def _listed_only(row: dict, links: dict[str, dict[str, list[str]]]) -> dict:
+    """A done card outside the window as ``show`` would give it, from its ``list`` row alone (``detail: False``). Its
+    links come from the shown cards' (*links*), so a goal and its work cards keep their places; a link between two
+    such cards is not known."""
+    raw = str(row["id"])
+    return {"task": row, "parents": links["parents"].get(raw, []), "children": links["children"].get(raw, []),
+            "comments": [], "events": [], "runs": [], "detail": False}
+
+
+def _links(shows: list[dict]) -> dict[str, dict[str, list[str]]]:
+    """The other side of each shown card's links: ``children[x]`` lists the shown cards that name *x* a parent,
+    ``parents[x]`` the shown cards that name *x* a child."""
+    links: dict[str, dict[str, list[str]]] = {"children": {}, "parents": {}}
+    for show in shows:
+        raw = str(show["task"]["id"])
+        for parent in show.get("parents") or []:
+            links["children"].setdefault(str(parent), []).append(raw)
+        for child in show.get("children") or []:
+            links["parents"].setdefault(str(child), []).append(raw)
+    return links
 
 
 def read_cards(src: Source, budget: _Budget) -> list[dict]:
@@ -220,7 +237,8 @@ def read_cards(src: Source, budget: _Budget) -> list[dict]:
         shows = dict(zip(wanted, pool.map(lambda raw: card_show(src, raw, budget), wanted)))
     finally:
         pool.shutdown(cancel_futures=True)
-    return [shows.get(str(row["id"])) or _listed_only(row) for row in rows]
+    links = _links(list(shows.values()))
+    return [shows.get(str(row["id"])) or _listed_only(row, links) for row in rows]
 
 
 def read_record(src: Source, budget: _Budget) -> dict:

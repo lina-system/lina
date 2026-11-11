@@ -481,3 +481,26 @@ def test_an_event_of_kanban_watch_starts_the_next_pass_before_the_timer(hermes):
     assert time.monotonic() - started < lina_board_hermes.PASS_EVERY_S
     assert ["kanban", "--board", BOARD, "watch", "--interval", "2"] in hermes.calls()
 
+
+def test_a_card_read_from_its_list_row_keeps_its_links_to_shown_cards(hermes, client):
+    """An open goal whose only work card ended outside the window: the work card's ``children`` come from the goal's
+    ``parents``, so the goal stays a goal (not a work card) with its work card, and no ``show`` is added for it."""
+    data = _canned()
+    old = dict(_done("t_oldw", time.time() - 3 * lina_board.DONE_WINDOW_S),
+               body="## To-dos\n- [x] all\n", title="Old work")
+    goal = dict(_task("t_g2", "Open goal", "todo", "alpha"))
+    data["list"] += [old, goal]
+    data["show"]["t_oldw"] = {"task": old, "parents": [], "children": ["t_g2"], "comments": [], "events": [],
+                              "runs": []}
+    data["show"]["t_g2"] = {"task": goal, "parents": ["t_oldw"], "children": [], "comments": [], "events": [],
+                            "runs": []}
+    hermes.canned(data)
+    hermes.on()
+    assert sorted(hermes.shows()) == sorted(["t_a1", "t_g1", "t_b1", "t_g2"])
+    goals = {g["id"]: g for g in _get(client, f"{WORK}/goals", "work-client.yaml", "GoalList")["goals"]}
+    assert [(c["id"], c.get("detail")) for c in goals["hermes:t_g2"]["workCards"]] == [("hermes:t_oldw", False)]
+    one = _get(client, f"{WORK}/goals/hermes:t_g2", "work-client.yaml", "WorkGoal")
+    assert one["title"] == "Open goal" and one.get("detail") is None
+    cards = [c["id"] for c in _get(client, f"{WORK}/cards", "work-client.yaml", "WorkCardList")["cards"]]
+    assert "hermes:t_g2" not in cards and "hermes:t_oldw" in cards
+    assert len(hermes.shows()) == 4
