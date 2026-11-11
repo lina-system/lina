@@ -179,17 +179,22 @@ def native_wait(view: dict) -> bool:
     return False
 
 
-def owns_wait(store, card: dict, view: dict) -> bool:
-    """Read drive ownership from its ledger; the body is only a projection of that record."""
+def wait_record(store, card: dict, view: dict) -> dict | None:
+    """The durable card wait, also used when notifications take over from a disabled drive."""
     import json
     goal = goal_of(view["task"].get("body"))
     if goal is None:
-        return False
+        return None
     path = store.root / "goals" / f"{_part(goal)}.json"
     if not path.is_file():
-        return False
+        return None
     ledger = json.loads(path.read_text(encoding="utf-8-sig"))
-    return card["task"] in ledger.get("waits", {})
+    return ledger.get("waits", {}).get(card["task"])
+
+
+def owns_wait(store, card: dict, view: dict, *, drive_enabled: bool = True) -> bool:
+    """A disabled drive retains its history but never owns a notification's wake."""
+    return drive_enabled and wait_record(store, card, view) is not None
 
 
 def checks_settled(receipt: dict) -> bool:
@@ -772,16 +777,10 @@ class Drive:
         self.act(aid, schedule)
 
     def recover_parks(self) -> None:
-        """Reconcile committed sends and pending board writes before any wait can wake a card."""
-        for task, usage in self.ledger["usage"].items():
-            job = self.hub.store.load(task)
-            if not job or not job.get("card"):
-                continue
-            card = self.entry["cards"].get(job["card"]["task"])
-            aid = action_id(self.goal, job["card"]["task"], task, int(usage["run"]), "usage-resume")
-            sent = self.hub.store.load_key(aid)
-            if card and sent and sent.get("action") and int(job.get("runs") or 1) > int(usage["run"]):
-                self.park_run(card, job, aid + "-park", task)
+        """Recover the latest committed worker action per to-do, then retry persisted board intents."""
+        for job, aid in self.committed_parks():
+            card = self.entry["cards"][job["card"]["task"]]
+            self.park_run(card, job, aid + "-park", job["id"])
         for task, wait in list(self.ledger["waits"].items()):
             card = self.entry["cards"].get(task)
             if card is None:
@@ -790,6 +789,32 @@ class Drive:
                 if not item["applied"]:
                     job = self.hub.store.load(item["job"])
                     self.park(card, job, item["aid"], item["event"], item["reason"])
+
+    def committed_parks(self) -> list[tuple[dict, str]]:
+        """One receipt reader for sends, submits and node continuation; never depend on _latest's source job."""
+        import json
+        rules = {"red-check", "deliverable", "usage-resume", "resubmit", "usage-move"}
+        receipts = [json.loads(path.read_text(encoding="utf-8-sig")) for path in self.hub.store.keys.glob("*.json")]
+        for aid in self.ledger["actions"]:
+            if aid.endswith(":node-continued"):
+                job = next(job for job in self.jobs() if action_id(
+                    self.goal, job["card"]["task"], job["id"], int(aid.split(":")[-2]), "node-continued") == aid)
+                receipts.append({"key": aid, "task": job["id"], "run": int(aid.split(":")[-2]), "action": "continued"})
+        latest = {}
+        for receipt in receipts:
+            aid = receipt["key"]
+            parts = aid.split(":")
+            if len(parts) != 5 or parts[0] != _part(self.goal) or parts[-1] not in rules | {"node-continued"} \
+                    or not receipt.get("action"):
+                continue
+            job = self.hub.store.load(receipt["task"])
+            if not job or not job.get("card") or job["card"]["task"] not in self.entry["cards"]:
+                continue
+            rank = (job["created"], int(receipt.get("run") or 1), int(parts[-2]))
+            todo = self._todo(job)
+            if todo not in latest or rank > latest[todo][0]:
+                latest[todo] = (rank, job, aid)
+        return [(job, aid) for _, job, aid in latest.values()]
 
     def wake_parked(self) -> None:
         """Wake each card of ``waits`` whose event happened (the pull request's required checks settled, or the time

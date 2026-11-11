@@ -231,3 +231,88 @@ def test_checks_finishing_first_do_not_wake_another_todos_worker(drive):
     _end(drive, second, "done", report=True)
     _tick(drive)
     assert json.loads((drive.cards / f"{WORK}.json").read_text())["status"] == "ready"
+
+
+@pytest.mark.parametrize("after_intent", [False, True])
+def test_resubmit_park_recovers_from_committed_receipt(drive, after_intent):
+    task = _submit(drive)
+    _lose_node(drive)
+    _outage(drive, False)
+    (drive.root / "tasks" / task / "rc.1").write_text("1\n")
+    (drive.root / "tasks" / task / "state").write_text("failed\n")
+    original_park, original_schedule = goal_drive.Drive.park_run, goal_drive.Board.schedule
+
+    def stop_before(self, card, job, aid, target):
+        if aid.endswith(":resubmit-park"):
+            raise OSError("stopped before intent")
+        return original_park(self, card, job, aid, target)
+
+    def stop_after(self, card, event, reason, status, aid):
+        if aid.endswith(":resubmit-park"):
+            raise OSError("stopped after intent")
+        return original_schedule(self, card, event, reason, status, aid)
+
+    drive.mp.setattr(goal_drive.Board, "schedule", stop_after if after_intent else original_schedule)
+    drive.mp.setattr(goal_drive.Drive, "park_run", original_park if after_intent else stop_before)
+    _tick(drive)
+    moved = _ledger(drive)["moved"][task]
+    drive.mp.setattr(goal_drive.Board, "schedule", original_schedule)
+    drive.mp.setattr(goal_drive.Drive, "park_run", original_park)
+    _tick(drive)
+    assert len(_hub(drive).store.all()) == 2
+    assert f"WAIT_EVENT=omo-task:{moved}/1" in json.loads((drive.cards / f"{WORK}.json").read_text())["body"]
+    _end(drive, moved, "done", report=True)
+    _tick(drive)
+    assert json.loads((drive.cards / f"{WORK}.json").read_text())["status"] == "ready"
+
+
+@pytest.mark.parametrize("two_workers", [False, True])
+def test_disabled_drive_releases_ledger_wait_on_worker_end(drive, two_workers):
+    tasks = [_submit(drive)]
+    if two_workers:
+        tasks.append(_submit(drive, todo="acme/app#2"))
+    for task in tasks:
+        _end(drive, task, "done")
+    _tick(drive)
+    assert all(_hub(drive).store.load(task)["runs"] == 2 for task in tasks)
+    drive.configure("  goal_drive: false\n")
+    for i, task in enumerate(tasks):
+        _end(drive, task, "done", report=True)
+        expected = "ready" if i == len(tasks) - 1 else "scheduled"
+        assert json.loads((drive.cards / f"{WORK}.json").read_text())["status"] == expected
+    _tick(drive)
+    assert len(support._writes(drive, "unblock", WORK)) == 1
+
+
+@pytest.mark.parametrize("rule", ["deliverable", "red-check", "usage-move", "node-continued"])
+def test_committed_worker_actions_share_park_recovery(drive, rule):
+    if rule == "usage-move":
+        drive.configure("  goal_limits: {usage_move: true}\n")
+    if rule == "red-check":
+        _red_check(drive)
+    task = _submit(drive, **({"repo": "acme/app"} if rule == "red-check" else {}))
+    if rule == "node-continued":
+        _lose_node(drive)
+        _outage(drive, False)
+        (drive.root / "tasks" / task / "state").write_text("running\n")
+    elif rule == "usage-move":
+        support._usage_end(drive, task)
+    else:
+        _end(drive, task, "done", report=rule == "red-check")
+    original = goal_drive.Drive.park_run
+
+    def stop(self, card, job, aid, target):
+        if aid.endswith(f":{rule}-park"):
+            raise OSError("stopped after committed action")
+        return original(self, card, job, aid, target)
+
+    drive.mp.setattr(goal_drive.Drive, "park_run", stop)
+    _tick(drive)
+    drive.mp.setattr(goal_drive.Drive, "park_run", original)
+    target = _ledger(drive)["moved"].get(task, task)
+    run = _hub(drive).store.load(target)["runs"]
+    _tick(drive)
+    body = json.loads((drive.cards / f"{WORK}.json").read_text())["body"]
+    assert f"WAIT_EVENT=omo-task:{target}/{run}" in body
+    _tick(drive)
+    assert _hub(drive).store.load(target)["runs"] == run

@@ -80,9 +80,17 @@ for one to-do cannot replace another to-do's check wait. All waits must settle a
 `release_ended` wakes the card. Run-end delivery consults this same ledger instead of interpreting the last body
 marker independently.
 
-At the start of each tick, committed usage-resume request-key receipts recover a missing park even when the job
-already holds the next run. Pending board writes are retried before evaluating wakes. Recovery never sends the
-resume message again. Old single-wait ledger records are imported on their first owned-park read.
+At the start of each tick, one receipt reader recovers missing parks for `red-check`, `deliverable`, `usage-resume`,
+`resubmit` and `usage-move` from committed request keys, and `node-continued` from its committed ledger action.
+It chooses the latest target task and run per to-do even when the source task is no longer the newest task.
+Pending board writes are then retried before evaluating wakes. Recovery does not send or submit work again.
+Old single-wait ledger records are imported on their first owned-park read.
+
+With `worker.goal_drive: false`, ledger history remains on disk but no longer owns a run-end wake. Notifications
+fall back to the normal wake path, including every hub worker linked to that card so an older schedule or body
+marker cannot hide a moved or continued worker. The last worker's end wakes the card once; PR and timer rules are
+left for the card session while the drive is off. Re-enabling the drive reconciles the current board state before
+using its retained wait history.
 
 Which form a park takes depends on the board:
 

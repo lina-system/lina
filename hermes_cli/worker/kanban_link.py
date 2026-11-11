@@ -75,7 +75,8 @@ def config(worker: dict) -> dict:
     if found and _in_lina_tree(found):
         raise CardLinkError(f"worker.card_link.command[0] {command[0]!r} is this LINA's own {found}; "
                             "set the Hermes Agent CLI by absolute path")
-    return {"kind": HERMES, "command": [found or command[0], *command[1:]]}
+    return {"kind": HERMES, "command": [found or command[0], *command[1:]],
+            "goal_drive": worker.get("goal_drive") is not False}
 
 
 def lina_trees() -> list[Path]:
@@ -527,12 +528,16 @@ def wake(store, card: dict, link: dict, run_id: str, judged: str | None = None, 
         except (ValueError, KeyError, TypeError) as exc:
             raise CardLinkError("kanban show did not return task.status") from exc
         keep_view(store, card, view["task"])
-        from hermes_cli.worker.goal_drive import goal_of, owns_wait
+        from hermes_cli.worker.goal_drive import goal_of, owns_wait, wait_record
         if drive and status == "scheduled" and goal_of(view["task"].get("body")):
             return None  # let the drive choose the next wait before a run-end unblock
-        if owns_wait(store, card, view):
+        drive_enabled = link.get("goal_drive", True)
+        if owns_wait(store, card, view, drive_enabled=drive_enabled):
             return None
         named, schedule = _last_schedule(view)
+        if not drive_enabled and wait_record(store, card, view) is not None:
+            # Resume ordinary run-end ownership, retaining all linked workers rather than only the last body marker.
+            named = list(dict.fromkeys([*named, *(job["id"] for job in store.all() if card in linked_cards(job))]))
         woken = store.root / "cards" / f"{card_key(card)}.woken"
         if run_id in named or (judged in named and judged != run_id):  # a batch member's end is its batch's end
             others = [other for other in named if other != run_id and _still_open(store, other)]
