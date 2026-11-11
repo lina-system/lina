@@ -107,6 +107,28 @@ def _ctx_header(lines: list[str], task: Task) -> None:
         lines.append("## Body")
         lines.append(_ctx_cap(task.body, _CTX_MAX_BODY_BYTES))
         lines.append("")
+    _ctx_goal_gates(lines, task)
+
+
+def _ctx_goal_gates(lines: list[str], task: Task) -> None:
+    """The card's goal gates with their last stored result and the run that produced it, so a new
+    session started from the card record knows where the gates stand (lina#346)."""
+    try:
+        gates = json.loads(task.goal_gates) if task.goal_gates else []
+    except (TypeError, ValueError):
+        return
+    if not gates:
+        return
+    lines.append("## Goal gates (last results)")
+    for gate in gates:
+        code = gate.get("last_exit_code")
+        state = "not run yet" if code is None else ("passed" if code == 0 else f"failed (exit {code})")
+        run = f", run {gate['run_id']}" if gate.get("run_id") is not None else ""
+        lines.append(f"- `{gate.get('command', '')}`: {state}{run}")
+        tail = (gate.get("last_output_tail") or "").strip()
+        if code not in (None, 0) and tail:
+            lines.append(_ctx_cap(tail, _CTX_MAX_COMMENT_BYTES))
+    lines.append("")
 
 
 def _ctx_attachments(lines: list[str], attachments: list[Attachment]) -> None:
@@ -142,7 +164,7 @@ def _ctx_prior_attempts(lines: list[str], conn: sqlite3.Connection, task_id: str
         profile = run.profile or "(unknown)"
         outcome = run.outcome or run.status
         lines.append(
-            f"### Attempt {first_shown_idx + offset} — {outcome} ({profile}, {_ctx_stamp(run.started_at, now)})"
+            f"### Attempt {first_shown_idx + offset} (run {run.id}) — {outcome} ({profile}, {_ctx_stamp(run.started_at, now)})"
         )
         if run.summary and run.summary.strip():
             lines.append(_ctx_cap(run.summary))

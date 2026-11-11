@@ -51,6 +51,14 @@ SERVICE_ACTIONS = {"ocx": ("status", "restart"), "worker": ("status", "stop", "r
 # downloads.cursor.com answers 403 to urllib's default ``Python-urllib`` agent.
 USER_AGENT = "lina-runners"
 
+# Complete ACP permission mediation, not merely support for escalation requests.
+# Re-observe each new pin before adding its version; unknown versions fail closed.
+# 0.2.1-rc.5: lina#451 native-tool writes sent no permission requests.
+# 0.2.2-rc.1: ACP bridges explicit escalation only; standing writes bypass it.
+ACP_PERMISSION_OBSERVATIONS: dict[str, dict[str, bool]] = {
+    "dsh": {"0.2.1-rc.5": False, "0.2.2-rc.1": False},
+}
+
 
 class RunnersError(OcxError):
     pass

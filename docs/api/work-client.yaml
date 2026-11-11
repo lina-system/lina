@@ -139,6 +139,24 @@ components:
       schema:
         type: string
   schemas:
+    ReadOnly:
+      type: boolean
+      description: >
+        Present and true on items of the read-only hermes source (lina#481): a card of the Hermes Agent board,
+        read through its CLI. Their ids start with "hermes:"; the answer route refuses them with 409.
+    SourceErrors:
+      type: array
+      description: >
+        Present only while the hermes source is set (lina#481), on replies for the default board: one entry per
+        source that failed to read; the rows of the other sources are served.
+      items:
+        type: object
+        required: [source, message]
+        properties:
+          source:
+            type: string
+          message:
+            type: string
     WorkState:
       type: string
       description: >
@@ -207,6 +225,8 @@ components:
       additionalProperties: false
       required: [id, title, agent, state, reason, elapsedSeconds, todoProgress, now, plain]
       properties:
+        readOnly:
+          $ref: "#/components/schemas/ReadOnly"
         id:
           type: string
         title:
@@ -236,6 +256,8 @@ components:
       additionalProperties: false
       required: [cards]
       properties:
+        errors:
+          $ref: "#/components/schemas/SourceErrors"
         cards:
           type: array
           items:
@@ -348,6 +370,8 @@ components:
       required: [id, title, agent, state, reason, elapsedSeconds, todoProgress, now, plain,
                  todos, workerRuns, runsAwaitingVerdict, gates, comments, runs]
       properties:
+        readOnly:
+          $ref: "#/components/schemas/ReadOnly"
         id:
           type: string
         title:
@@ -421,6 +445,8 @@ components:
       additionalProperties: false
       required: [id, title, agent, state, reason, elapsedSeconds, workCards, evidence]
       properties:
+        readOnly:
+          $ref: "#/components/schemas/ReadOnly"
         id:
           type: string
         title:
@@ -450,6 +476,8 @@ components:
       additionalProperties: false
       required: [goals]
       properties:
+        errors:
+          $ref: "#/components/schemas/SourceErrors"
         goals:
           type: array
           items:
@@ -459,6 +487,8 @@ components:
       additionalProperties: false
       required: [cardId, title, agent, state, reason, blockKind, blockReason]
       properties:
+        readOnly:
+          $ref: "#/components/schemas/ReadOnly"
         cardId:
           type: string
         title:
@@ -483,6 +513,8 @@ components:
       additionalProperties: false
       required: [cardId, title, agent, commentId, body, askedAt]
       properties:
+        readOnly:
+          $ref: "#/components/schemas/ReadOnly"
         cardId:
           type: string
         title:
@@ -502,6 +534,8 @@ components:
       additionalProperties: false
       required: [blocked, questions]
       properties:
+        errors:
+          $ref: "#/components/schemas/SourceErrors"
         blocked:
           type: array
           items:

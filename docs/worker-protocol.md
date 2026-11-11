@@ -179,6 +179,19 @@ Claude Code and Codex use the public `@zed-industries/claude-agent-acp` and
 `@zed-industries/codex-acp` adapters; provisioning and version pins are maintained separately.
 
 - The client advertises no file-system and no terminal capability (both false).
+- Before starting a restricted dsh run, `honours(mode)` reads the version of the same executable the run would
+  launch, including LINA's managed shim. `lina_runners.ACP_PERMISSION_OBSERVATIONS` records whether that adapter
+  version mediates native tools through ACP permission requests. The observed dsh versions `0.2.1-rc.5` and
+  `0.2.2-rc.1` do not: native writes can bypass requests (the latter requests approval for explicit escalation).
+  They refuse `read-only` and `workspace-write` with the agent, version and mode in the reason, before task
+  delivery. Unknown versions also refuse until observed; `full` keeps its existing path without this probe.
+  Recheck this observation whenever the pin changes; a newly verified version can be admitted without changing
+  the runner policy. This is a version observation, not a permanent ban on the dsh name. Initialization does not
+  advertise complete permission mediation, and the current profile dump contains runtime expressions rather
+  than a resolved per-mode guarantee, so neither is treated as evidence of enforcement.
+  Claude and Codex retain their existing ACP permission path, Grok retains its required blocking hook, and
+  other generic ACP adapters retain their existing protocol contract. Live access narrowing calls the same
+  `honours(mode)` gate before delivering input; a dsh `full` session cannot silently narrow to an unsupported mode.
 - Permission requests are answered by the runner, never a person. `read-only` allows `read`, `search`, `fetch`
   and `think`, and rejects writes and execution. `workspace-write` also answers `allow_once` for edits/deletions
   whose targets are all inside the worktree, and arbitrary commands with a known, nonempty cwd inside it.

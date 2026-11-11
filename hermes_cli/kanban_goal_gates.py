@@ -287,10 +287,11 @@ def loop_gate_check(task_id: str, goal_text: str, *, workspace: Optional[str] = 
             task = kb.get_task(conn, task_id)
             if task is None:
                 return False
-            if handoff:   # a spent turn budget: a planned stop (kanban_db_handoff)
-                from hermes_cli.kanban_db_handoff import park_turn_budget_end
+            if handoff:   # a spent turn budget or context bound: a planned stop (kanban_db_handoff)
+                from hermes_cli.kanban_db_handoff import HANDOFF_KEY, park_turn_budget_end
                 return park_turn_budget_end(conn, task_id, run_id=run_id, reason=reason, handoff=handoff,
-                                            author=task.assignee or "goal-loop")
+                                            author=task.assignee or "goal-loop",
+                                            kind=wait_for.get(HANDOFF_KEY) or "turn_budget")
             return kb.schedule_task(conn, task_id, reason=reason, wait_for=wait_for, expected_run_id=run_id)
 
     check.park = park
