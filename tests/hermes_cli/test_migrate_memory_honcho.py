@@ -89,16 +89,23 @@ def test_existing_workspace_collision_and_changed_rerun_are_refused(migration):
         migrate_honcho(**options)
 
 
-def test_dangling_document_source_refuses_atomic_merge(migration, tmp_path):
-    # Given: a permitted legacy polymorphic edge whose target does not exist.
+def test_conclusion_survives_a_source_message_that_is_gone(migration, tmp_path):
+    # Given: a conclusion whose polymorphic source edge points at a message that no longer exists.
     options, _ = migration
-    malformed = create_dump(options["destination_dsn"], tmp_path / "dangling.dump", tmp_path,
-                            dangling_source=True)
-    # When / Then: refuse instead of claiming an unresolved graph was migrated.
-    with pytest.raises(ValueError, match="unresolved document_sources"):
-        migrate_honcho(**{**options, "copied_dump": malformed})
+    dangling = {**options, "copied_dump": create_dump(options["destination_dsn"], tmp_path / "dangling.dump",
+                                                       tmp_path, dangling_source=True)}
+    # When: importing it, twice.
+    report = migrate_honcho(**dangling)
+    rerun = migrate_honcho(**dangling)
+    # Then: the conclusion and its live edge migrate; the dead edge is dropped and counted.
+    assert report["ok"] and rerun["inserted"] == 0
+    assert report["counts"]["document_sources"]["excluded"]["source_gone"] == 1
+    assert [row["table"] for row in report["excluded"] if row["reason"] == "source_gone"] == ["document_sources"]
+    assert report["document_sources"]["references"] == {"document": 1}
     with psycopg.connect(options["destination_dsn"]) as conn:
-        assert conn.execute("SELECT count(*) FROM ltm.workspaces WHERE name='alpha-copy'").fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM ltm.documents WHERE workspace_name='alpha-copy'").fetchone()[0] == 2
+        assert conn.execute("SELECT count(*) FROM ltm.document_sources "
+                            "WHERE workspace_name='alpha-copy'").fetchone()[0] == 1
 
 
 def test_invalid_archive_reports_safe_failure(migration, tmp_path):
