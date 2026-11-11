@@ -14,9 +14,11 @@ runner documents a switch. Nothing is installed globally, and a runner the perso
 global npm) is only read: its path and ``--version`` are shown as ``person_installed``.
 
 Sign-in is checked read-only, one way per runner (owner, 11-06): Claude and Codex (and their ACP adapters) through
-OCX, Grok and Antigravity through their own CLI's credential file (existence only, never its content), Cursor with
+OCX -- LINA's own service, or the operator's external OCX (``ocx.external``) when it answers ``/healthz`` (lina#452)
+-- Grok and Antigravity through their own CLI's credential file (existence only, never its content), Cursor with
 ``CURSOR_API_KEY``. The node only checks and reports; Grok and Antigravity are signed in from the hub's browser by
-``lina devices sign-in <node> <runner>`` (``lina_sign_in``, #230).
+``lina devices sign-in <node> <runner>`` (``lina_sign_in``, #230). A runner whose sign-in has no read-only check
+(``unknown``) is reported as unknown, never as a failure.
 """
 
 from __future__ import annotations
@@ -358,22 +360,36 @@ def _file_sign_in(path: Path) -> tuple[str, str | None]:
     return ("signed_in", None) if path.exists() else ("signed_out", f"no {shown}")
 
 
-def _ocx_sign_in() -> tuple[str, str | None]:
+def _ocx_sign_in(root: Path) -> tuple[str, str | None]:
+    """Signed in through the OCX *root* uses (lina#452): LINA's own service, or the operator's external OCX
+    (``ocx.external``) when it answers ``/healthz`` -- read the way ``lina_runner_sync_node.ocx_report`` reads it.
+    A node with no OCX at all stays ``unknown`` naming that."""
     from hermes_cli import lina_services
+    try:
+        external = lina_ocx.external(root) is not None
+    except lina_ocx.OcxError as exc:
+        return ("unknown", str(exc))
+    if external:
+        try:
+            port = lina_ocx.configured_port(root)
+        except (lina_ocx.OcxError, KeyError, ValueError, TypeError):
+            port = lina_ocx.DEFAULT_PORT
+        status, _ = lina_ocx.http_get(port, "/healthz", timeout=1)
+        return ("ocx", None) if status == 200 else ("unknown", f"the external OCX is not answering on port {port}")
     state = lina_services.state(lina_services.BY_NAME["ocx"])
     return ("ocx", None) if state.startswith("running") else ("unknown", f"OCX is {state}")
 
 
-def _cursor_sign_in() -> tuple[str, str | None]:
+def _cursor_sign_in(root: Path) -> tuple[str, str | None]:
     return ("api_key", None) if os.environ.get("CURSOR_API_KEY") else ("signed_out", "CURSOR_API_KEY is not set")
 
 
-SIGN_IN: dict[str, Callable[[], tuple[str, str | None]]] = {
+SIGN_IN: dict[str, Callable[[Path], tuple[str, str | None]]] = {
     "ocx": _ocx_sign_in,
-    "grok": lambda: _file_sign_in(Path.home() / ".grok" / "auth.json"),
-    "agy": lambda: _file_sign_in(Path.home() / ".gemini" / "antigravity-cli" / "antigravity-oauth-token"),
+    "grok": lambda root: _file_sign_in(Path.home() / ".grok" / "auth.json"),
+    "agy": lambda root: _file_sign_in(Path.home() / ".gemini" / "antigravity-cli" / "antigravity-oauth-token"),
     "cursor": _cursor_sign_in,
-    "unknown": lambda: ("unknown", "no read-only sign-in check is known for this runner"),
+    "unknown": lambda root: ("unknown", "no read-only sign-in check is known for this runner"),
 }
 HOW_TO_SIGN_IN = {
     "ocx": "sign in through LINA's OCX on {node} (`lina models status`)",
@@ -425,11 +441,14 @@ def active_version(root: Path, runner: RunnerPin,
 
 
 def _why(runner: RunnerPin, installed: str | None, sign_in: str) -> str | None:
+    """The one reason this runner cannot take work, or None. A sign-in the node cannot check at all (``unknown``:
+    no read-only check is known for the runner) is not a failure, so the row stays ready and shows the unknown
+    sign-in with its reason instead (lina#452)."""
     if installed is None:
         return "prepare"
     if installed != runner.version:
         return "update"
-    if sign_in in SIGN_IN_OK:
+    if sign_in in SIGN_IN_OK or runner.sign_in == "unknown":
         return None
     return "prepare" if runner.sign_in == "ocx" else "sign in"
 
@@ -437,7 +456,7 @@ def _why(runner: RunnerPin, installed: str | None, sign_in: str) -> str | None:
 def row(root: Path, runner: RunnerPin, *, run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
         path: str | None = None) -> dict:
     installed, installed_why = active_version(root, runner, run)
-    sign_in, sign_in_why = SIGN_IN.get(runner.sign_in, SIGN_IN["unknown"])()
+    sign_in, sign_in_why = SIGN_IN.get(runner.sign_in, SIGN_IN["unknown"])(root)
     why = _why(runner, installed, sign_in)
     from hermes_cli import lina_runner_sync_state as sync_state
     return {"name": runner.name, "pin": runner.name, "pinned": runner.version, "pin_from": sync_state.pin_from(root, runner.name),
@@ -457,8 +476,11 @@ def status(root: Path | None = None, *, run: Callable[..., subprocess.CompletedP
 
 
 def offered(worker: dict) -> list[tuple[str, str | None, RunnerPin | None]]:
-    """The runners this node offers (``worker.runners``) with their type and the pin that serves each: by name, else
-    by its argv's command. omo has its own pin and status (``lina omo status``), so it has none here."""
+    """The runners this node offers (``worker.runners``) with their type and the pin that serves each. An ``acp``
+    runner is pinned by the command in its ``argv`` first and only then by name, so its row describes the adapter it
+    actually runs (``claude-agent-acp``) rather than the CLI that shares its name (lina#452). Every other runner is
+    pinned by name, else by its argv's command. omo has its own pin and status (``lina omo status``), so it has none
+    here."""
     from hermes_cli.worker import runners
     table = pins()
     by_bin = {runner.bin: runner for runner in table.values()}
@@ -466,8 +488,14 @@ def offered(worker: dict) -> list[tuple[str, str | None, RunnerPin | None]]:
     for name, spec in runners.specs(worker).items():
         argv = spec.get("argv") if isinstance(spec.get("argv"), list) else []
         command = Path(str(argv[0])).name if argv else ""
-        pin = None if spec.get("type") == "omo" else table.get(name) or by_bin.get(command)
-        result.append((name, spec.get("type"), pin))
+        kind = spec.get("type")
+        if kind == "omo":
+            pin = None
+        elif kind == "acp":
+            pin = by_bin.get(command) or table.get(name)
+        else:
+            pin = table.get(name) or by_bin.get(command)
+        result.append((name, kind, pin))
     return result
 
 
