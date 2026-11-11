@@ -265,7 +265,8 @@ def end_cards(hub, job: dict, entry: dict, *, ticked: bool = False) -> str:
                     woke = end_step(step, hub.store, card, job, entry["run"],
                                     events.signed(entry["text"], entry.get("delivery")), config(hub.worker),
                                     Path(entry["report"]) if entry.get("report") else None,
-                                    drive=hub.worker.get("goal_drive") is not False and card == job.get("card"))
+                                    drive=hub.worker.get("goal_drive") is not False and card == job.get("card"),
+                                    question=entry["kind"] == "human")
                 else:
                     woke = None
                     if step == "comment":
@@ -325,14 +326,15 @@ def _kanban(command: list[str], card: dict, verb: str, *args: str) -> str:
     return _checked(*_run(command, card, verb, *args))
 
 
-def unblock(command: list[str], card: dict, run_id: str) -> str:
+def unblock(command: list[str], card: dict, run_id: str, reason: str | None = None) -> str:
     """Unblock the card for judging *run_id*; the form used, ``judge_wake`` or ``bare``.
 
     ``--judge-wake`` lands the card ``ready`` even behind an open parent, so it can judge the run. A Hermes without
     that option (argparse: exit 2, "unrecognized arguments") gets the bare ``unblock`` once."""
-    shown, done = _run(command, card, "unblock", options=("--judge-wake", run_id))
+    args = ("--reason", reason) if reason is not None else ()
+    shown, done = _run(command, card, "unblock", *args, options=("--judge-wake", run_id))
     if done.returncode == 2 and ("unrecognized arguments" in done.stderr or "--judge-wake" in done.stderr):
-        _kanban(command, card, "unblock")
+        _kanban(command, card, "unblock", *args)
         return "bare"
     _checked(shown, done)
     return "judge_wake"
@@ -369,7 +371,7 @@ END_STEPS = ("comment", "attach", "wake")
 
 
 def end_step(step: str, store, card: dict, job: dict, run: str, body: str, link: dict,
-             report: Path | None, *, drive: bool = False) -> str | None:
+             report: Path | None, *, drive: bool = False, question: bool = False) -> str | None:
     """One step of a run's end on a Hermes card; raises ``CardLinkError`` when it did not go through. The unblock
     form (``judge_wake`` / ``bare``) when ``wake`` woke the card."""
     if step == "comment":
@@ -379,7 +381,7 @@ def end_step(step: str, store, card: dict, job: dict, run: str, body: str, link:
                 "--author", AUTHOR)
     elif step == "wake":
         return wake(store, card, link, job["id"], judged=job.get("group") or job["id"],
-                    settled=settled(job, run), drive=drive)
+                    settled=settled(job, run), drive=drive, question=body if question else None)
     return None
 
 
@@ -506,7 +508,7 @@ def kept_view(store, card: dict) -> dict | None:
 
 
 def wake(store, card: dict, link: dict, run_id: str, judged: str | None = None, *,
-         settled: bool = False, drive: bool = False) -> str | None:
+         settled: bool = False, drive: bool = False, question: str | None = None) -> str | None:
     """Unblock the card once if it waits on *run_id*, for judging *judged* (the run, or its ``OG-`` batch); the
     unblock form (``judge_wake`` / ``bare``) when it was woken, else None.
 
@@ -528,6 +530,8 @@ def wake(store, card: dict, link: dict, run_id: str, judged: str | None = None, 
         except (ValueError, KeyError, TypeError) as exc:
             raise CardLinkError("kanban show did not return task.status") from exc
         keep_view(store, card, view["task"])
+        if question is not None:
+            return _wake_question(store, card, link, view, run_id, judged, question, parked)
         from hermes_cli.worker.goal_drive import goal_of, owns_wait, wait_record
         if drive and status == "scheduled" and goal_of(view["task"].get("body")):
             return None  # let the drive choose the next wait before a run-end unblock
@@ -565,3 +569,27 @@ def wake(store, card: dict, link: dict, run_id: str, judged: str | None = None, 
         with contextlib.suppress(FileNotFoundError):
             mark.unlink()
         return form
+
+
+def _wake_question(store, card: dict, link: dict, view: dict, run_id: str, judged: str | None,
+                   question: str, parked: list[str]) -> str | None:
+    """A question interrupts only its own scheduled worker wait, without waiting for the other workers to end."""
+    if view["task"]["status"] != "scheduled":
+        return None
+    from hermes_cli.worker.goal_drive import marker, resume_wait, wait_record
+    named, _ = _last_schedule(view)
+    wait = wait_record(store, card, view)
+    reasons = [str(event.get("payload", {}).get("reason") or "") for event in view.get("events") or []
+               if event.get("kind") == "scheduled"]
+    _, aid = marker(resume_wait(view) or (reasons[-1] if reasons else ""))
+    if wait is not None and aid == wait.get("aid"):
+        # The body only identifies this schedule; the ledger remains the source of every worker wait.
+        named = [item["event"].removeprefix("omo-task:").partition("/")[0]
+                 for item in wait.get("items", {}).values() if item["event"].startswith("omo-task:")]
+    elif not named:
+        named = parked
+    if run_id not in named and (judged is None or judged not in named):
+        return None
+    form = unblock(link["command"], card, judged or run_id, question)
+    _parked_path(store, card).unlink(missing_ok=True)
+    return form

@@ -237,7 +237,7 @@ are recorded as `permission_denied` or `permission_allowed` with tool, target an
 mode. Hub, device and runner answer paths reject permission-dialog replies, even
 if the text is `Allow once`. A larger grant requires a new task.
 
-Installed omo-ai 5.1.66 engine sources (`@code-yeongyu/senpi` 2026.11.9-2) under
+Installed omo-ai 5.1.69 engine sources (`@code-yeongyu/senpi` 2026.11.10-2) under
 `dist/core/extensions/builtin/permission-system/`: `config.js:4,8` defines the
 full-access default; `config.js:9-17` makes workspace ask by default and permits
 read/list/grep/edit/bash, but not eval. `parsers.js:180-196` always adds a separate
