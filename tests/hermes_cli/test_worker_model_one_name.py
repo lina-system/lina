@@ -1,6 +1,7 @@
 """One name for a model (lina#385): OCX's list names it ``<provider>/<id>``, omo reaches it as ``opencodex`` with the
 namespaced id. Both forms are the same model to the settings check, to ``decide``, to the omo runner's session open
-and to the run record. OCX is a fake with synthetic rows; omo is never run."""
+and to the run record, which show it in magpie's catalog form (lina#585: ``anthropic`` reads ``claude``). OCX is a
+fake with synthetic rows; omo is never run."""
 
 from __future__ import annotations
 
@@ -88,7 +89,7 @@ def test_decide_picks_the_same_model_and_the_same_fallback_for_both_forms(base, 
                                                                                model=through)
         assert record.served_model(one) == record.served_model(other)
         assert one["settings"]["ocx_check"] == other["settings"]["ocx_check"] != "unchecked"
-    for kind, named in (("off", "anthropic/m-off"), ("out", "zai/m-out")):
+    for kind, named in (("off", "claude/m-off"), ("out", "zai/m-out")):
         one, other = _job(base, tmp_path, runner=f"l-{kind}"), _job(base, tmp_path, runner=f"o-{kind}")
         assert one["model"]["source"].startswith("fallback:")
         assert (one["model"], one["settings"]) == (other["model"], other["settings"])
@@ -99,10 +100,10 @@ def test_the_run_record_shows_one_form_whichever_was_written(base, tmp_path):
     served = [record.served_model(_job(base, tmp_path, runner="alias", model=value))
               for value in ("anthropic/m-a:high", "opencodex/anthropic/m-a:high", "ocx-a")]
 
-    assert [(s["provider"], s["id"], s["thinking"]) for s in served] == [("anthropic", "m-a", "high")] * 3
+    assert [(s["provider"], s["id"], s["thinking"]) for s in served] == [("claude", "m-a", "high")] * 3
     labels = [models.label(_job(base, tmp_path, runner="alias", model=v)["model"])
               for v in ("anthropic/m-off:low", "opencodex/anthropic/m-off:low", "ocx-a")]
-    assert labels == ["anthropic/m-off:low", "anthropic/m-off:low", "ocx-a"]
+    assert labels == ["claude/m-off:low", "claude/m-off:low", "ocx-a"]
     assert models.label({"provider": "opencodex", "id": "anthropic/m-a", "alias": "ocx-a"}) == "ocx-a"
 
 

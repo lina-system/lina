@@ -1,0 +1,11 @@
+{
+  "namespaces": {
+    "anthropic": "claude",
+    "google": "antigravity",
+    "google-antigravity": "antigravity",
+    "xai": "grok"
+  },
+  "bare_prefixes": {
+    "gpt-": "codex"
+  }
+}
