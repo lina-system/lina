@@ -351,12 +351,18 @@ class _Reader:
             return self._cond.wait_for(lambda: self.passes >= passes, timeout)
 
     def stop(self) -> None:
+        """Stops the passes and ends ``kanban watch``. Only the first stop signals it, under the lock the watch thread
+        takes before it reaps the process, so no signal goes to a PID already reaped (stop runs from the server and
+        from the reader's own loop at once)."""
         self._stopped.set()
         self._wake.set()
         with self._cond:
-            proc = self._watch
-        if proc is not None and proc.poll() is None:
-            proc.terminate()
+            proc, self._watch = self._watch, None
+            if proc is not None and proc.poll() is None:
+                proc.terminate()
+            else:
+                proc = None
+        if proc is not None:
             try:
                 proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
@@ -426,9 +432,10 @@ class _Reader:
                 logger.warning("hermes board: %s did not start", shlex.join(argv), exc_info=True)
             else:
                 with self._cond:
-                    self._watch = proc
-                if self.stopped:
-                    proc.terminate()
+                    if self.stopped:  # a stop before this point never saw proc
+                        proc.terminate()
+                    else:
+                        self._watch = proc
                 if restart:
                     self.memo.name(None)
                 restart = True
@@ -436,6 +443,9 @@ class _Reader:
                     if line.strip() and not line.startswith("Watching "):
                         self.memo.name(event_card(line))
                         self._wake.set()
+                with self._cond:
+                    if self._watch is proc:
+                        self._watch = None
                 try:
                     proc.wait(timeout=5)
                 except subprocess.TimeoutExpired:
