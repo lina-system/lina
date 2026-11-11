@@ -8,7 +8,9 @@ import time
 
 from hermes_cli.work.common import ago, now
 from hermes_cli.work.kinds import TODO, kind_now
-from hermes_cli.work.links import gh_repo, kanban_read, kanban_state_word, link_label, refuse_reason, run_check
+from hermes_cli.work.links import (
+    card_key, gh_repo, kanban_ended, kanban_read, kanban_state_word, link_label, refuse_reason, run_check,
+)
 from hermes_cli.work.locale import t
 from hermes_cli.work.people import agent_name, owner
 from hermes_cli.work.sources import (
@@ -96,6 +98,10 @@ def _owner_item(r: dict, c: dict, ctx: dict) -> dict:
 class Scan:
     def __init__(self):
         self.active, self.unattended, self.stuck, self.finished, self.total = False, [], [], 0, 0
+        # a card is the to-do's runner: one it waits on, one that ended, and one nobody can read (#249)
+        self.card_wait: list[str] = []
+        self.card_closed: list[str] = []
+        self.card_unread: list[str] = []
 
 
 def _gh(link: str, td: dict, c: dict, ctx: dict, s: Scan) -> None:
@@ -153,15 +159,21 @@ def _session(link: str, td: dict, c: dict, ctx: dict, s: Scan) -> None:
 
 
 def _kanban(link: str, td: dict, c: dict, ctx: dict, s: Scan) -> None:
+    """A card is the to-do's runner, so its own state is the to-do's (#249): a live card is the work, a blocked card
+    (or one archived before it finished) is waited on, a card that ended asks for the confirmation, and a card nobody
+    can read is 모름 — never 끝남."""
     raw = kanban_read(link)
     td["state"] = kanban_state_word(raw)
     s.total += 1
     if raw == "running":
         s.active = td["active"] = True  # a live card is work nobody else has to take
-    elif raw == "blocked":
-        s.stuck.append(td["label"])
-    elif raw in ("done", "archived"):
+    elif raw == "blocked" or (raw == "archived" and not kanban_ended(link)):
+        s.card_wait.append(td["label"])
+    elif kanban_ended(link):
         s.finished += 1
+        s.card_closed.append(td["label"])
+    elif not raw:
+        s.card_unread.append(td["label"])
 
 
 def _omo(link: str, td: dict, c: dict, ctx: dict, s: Scan) -> None:
@@ -193,6 +205,23 @@ def _todoist(link: str, td: dict, c: dict, ctx: dict, s: Scan) -> None:
 def _path(link: str, td: dict, c: dict, ctx: dict, s: Scan) -> None:
     there = link_path_exists(link)
     td["state"] = t("모름") if there is None else (t("있음") if there else t("없음"))
+
+
+def card_decides(r: dict, ctx: dict) -> list[str]:
+    """#249: the kanban links whose end passes this to-do's check, or []. Only a to-do with no check of its own (empty
+    or evidence:), whose every card ended, and whose cards (compared as cards, ``card_key``) carry no other open or
+    done to-do."""
+    if kind_now(r["kind"]) != TODO or ((r.get("check") or "") and not r["check"].startswith("evidence:")):
+        return []
+    cards = [x for x in r.get("links") or [] if x.startswith("kanban:")]
+    if not cards or not all(kanban_ended(x) for x in cards):
+        return []
+    keys = {card_key(x) for x in cards}
+    for x in (ctx.get("recs") or {}).values():
+        if x["id"] != r["id"] and x.get("state") in ("open", "done") and keys & {
+                card_key(y) for y in x.get("links") or [] if y.startswith("kanban:")}:
+            return []
+    return cards
 
 
 SCANNERS = {"gh": _gh, "ms": _ms, "session": _session, "kanban": _kanban, "omo": _omo, "todoist": _todoist,
@@ -284,16 +313,54 @@ def _reasons(r: dict, c: dict, s: Scan, ms_code, warn: list[str], at: int) -> li
     return reasons
 
 
+def wait_live(w: dict, ctx: dict, at: int) -> bool:
+    """A wait in force now: on another open item, or until a date still ahead."""
+    return bool(item_waits(w, ctx) or (w.get("next") and w["next"] > at))
+
+
+def wait_after_evidence(r: dict, w: dict, waiting: bool) -> bool:
+    """A live wait counts after ``evidence_wait`` when it was set after the newest evidence: the agent read the
+    evidence, found it short of the done condition and said what it now waits for, so the confirm nudge would only cost
+    a turn. Only a strictly newer wait counts, so evidence attached after the wait brings ``evidence_wait`` back."""
+    if not waiting:
+        return False
+    newest = max((int(e.get("ts") or 0) for e in r.get("evidence") or []), default=0)
+    return int(w.get("since") or 0) > newest
+
+
 def _waiting(r: dict, c: dict, ctx: dict, warn: list[str], at: int):
     w = r.get("wait") or {}
+    if not wait_live(w, ctx, at):
+        return None
     on_item = item_waits(w, ctx)
     if on_item:
         return c.update(status="waiting", line=t("기다림: 주인 할 일 {name}", name=item_name(on_item)),
                         reasons=warn) or c
-    if w.get("next") and w["next"] > at:
-        return c.update(status="waiting", line=t("기다림: {on} ({day}까지)", on=w.get("on", ""),
-                                                  day=time.strftime("%m-%d", time.localtime(w["next"]))),
-                        reasons=warn) or c
+    return c.update(status="waiting", line=t("기다림: {on} ({day}까지)", on=w.get("on", ""),
+                                              day=time.strftime("%m-%d", time.localtime(w["next"]))),
+                    reasons=warn) or c
+
+
+def _cards(r: dict, c: dict, s: Scan):
+    """The card's own state is the to-do's (#249): a card it waits on outranks everything and raises no alert; then a
+    stopped run; then a card that ended, which leaves the check or asks for a confirmation when the to-do has no
+    command check of its own; then a card nobody can read, which is 모름. A live card outranks all four."""
+    if s.active:
+        return None
+    if s.card_wait:
+        return c.update(status="waiting", line=t("카드 기다림: {label}", label=s.card_wait[0]), reasons=[]) or c
+    if s.stuck:
+        return None  # a stopped run is what the to-do needs to hear about, not its card
+    chk = r.get("check") or ""
+    if s.card_closed and chk and not chk.startswith("evidence:"):
+        return c.update(status="check_left", line=t("{label} 끝남, 검사가 안 통과", label=s.card_closed[0]),
+                        reasons=[t("검사 남음")]) or c
+    if s.card_closed:
+        return c.update(status="evidence_wait", line=t("{label} 끝남 — 확인 필요", label=s.card_closed[0]),
+                        reasons=[]) or c
+    if s.card_unread:
+        return c.update(status="unknown", line=t("카드 상태 모름 — {label}", label=s.card_unread[0]),
+                        reasons=[]) or c
     return None
 
 
@@ -306,11 +373,15 @@ def _decide(r: dict, c: dict, ctx: dict, s: Scan, ms_code, res, at: int) -> dict
         done = _goal_kids(r, c, ctx, s)
         if done is not None:
             return done
-    if res and res.get("evidence_wait"):
+    w = r.get("wait") or {}
+    if res and res.get("evidence_wait") and not wait_after_evidence(r, w, wait_live(w, ctx, at)):
         return c.update(status="evidence_wait", line=t("증거 붙음 — 확인 필요"), reasons=[]) or c
     waited = _waiting(r, c, ctx, warn, at)
     if waited is not None:
         return waited
+    cards = _cards(r, c, s)
+    if cards is not None:
+        return cards
     if res and res.get("rc") not in (0, None):
         head = t("검사 못 함: ") if res.get("rc") in (124, 126, 127) else t("검사 미통과: ")
         c["check_line"] = head + (res.get("out") or "")[-120:]
@@ -345,6 +416,12 @@ def evaluate(r: dict, ctx: dict, run_checks: bool = True) -> dict:
     if _closed(r, c) is not None:
         return c
     res = check_result(r, ctx, run_checks, at)
+    # #249: the cards that carry only this to-do ended, and the to-do has no check of its own: that is the check.
+    done_cards = [] if (res and res.get("rc") == 0) else card_decides(r, ctx)
+    if done_cards:
+        res = {"rc": 0, "out": t("카드 끝남: {cards}", cards=", ".join(link_label(x) for x in done_cards)),
+               "secs": 0, "at": at}
+        c["done_cards"] = done_cards
     c["check"] = res
     passed = bool(res and res.get("rc") == 0)
     if r["kind"] == "영역":
