@@ -185,6 +185,12 @@ MESSAGES = {
         "{label} contains forbidden characters or item numbers",
     "{label}의 길이나 단어 수가 맞지 않는다":
         "{label} has the wrong length or word count",
+    "{label} 끝남 — 확인 필요":
+        "{label} ended — needs confirmation",
+    "{label} 끝남, 검사가 안 통과":
+        "{label} ended, the check isn't passing",
+    "{label} 카드가 다시 {state}":
+        "Card {label} reads {state} again",
     "{name} — {where} · {required} · {max}자까지 · 걸리면 {check}":
         "{name} — {where} · {required} · up to {max} chars · if it fails: {check}",
     "{name}({id}): {reason} — 다음: {cmd}":
@@ -353,6 +359,10 @@ MESSAGES = {
         "Please retry: pick up where the last attempt stopped and leave the result",
     "다시 엶":
         "Reopened",
+    "다시 엶: {cards}":
+        "Reopened: {cards}",
+    "다시 엶: {ids}":
+        "Reopened: {ids}",
     "다시 엶: {why}":
         "Reopened: {why}",
     "다음: {cmd}":
@@ -647,6 +657,12 @@ MESSAGES = {
         "Canceled {ago} ago",
     "카드 {card}":
         "Card {card}",
+    "카드 기다림: {label}":
+        "Waiting on the card: {label}",
+    "카드 끝남: {cards}":
+        "Card ended: {cards}",
+    "카드 상태 모름 — {label}":
+        "Card state unknown — {label}",
     "카드에 적지 못했다({kind}) — 기록에는 붙였다":
         "Couldn't write to the card ({kind}) — added to the record instead",
     "칸 | 길이 | 모양 | 들어갈 것":

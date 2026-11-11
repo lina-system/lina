@@ -122,7 +122,11 @@ def link_label(link: str) -> str:
 
 
 # ---------------------------------------------------------------- kanban cards
-_KANBAN_CACHE: dict[str, str] = {}
+# One card is one work session, so the card's own state is the to-do's: a live card is the work, a card that ended
+# asks for the confirmation attached evidence asks for, and a card nobody can read is 모름 — never 끝남 (#249).
+_KANBAN_CACHE: dict[str, tuple[str, int, str]] = {}  # link -> (status, completed_at, the board it was found on)
+# A card a closed to-do waits on again (#249): it is planned, running, blocked or in review.
+KANBAN_REOPEN = {"todo", "ready", "running", "blocked", "triage", "scheduled", "review"}
 
 
 def kanban_parts(link: str) -> tuple[str, str]:
@@ -130,29 +134,63 @@ def kanban_parts(link: str) -> tuple[str, str]:
     return ((m.group("board") or "").lower(), m.group("card")) if m else ("", "")
 
 
-def _kanban_db_status(board: str, card: str) -> str | None:
-    """The card's status from its board's kanban.db, opened read-only, or None when it cannot be read."""
-    from hermes_cli.kanban_db import kanban_db_path
+def _kanban_db_card(path: Path, card: str) -> tuple[str, int] | None:
+    """(status, completed_at) of the card in one board file, opened read-only, or None when it is not there."""
     try:
-        path = Path(kanban_db_path(board=board or None))
         if not path.is_file():
             return None
         with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=5)) as db:
+            db.row_factory = sqlite3.Row
             for ident in dict.fromkeys((card, card.lower())):
-                row = db.execute("SELECT status FROM tasks WHERE id = ?", (ident,)).fetchone()
-                if row and row[0] is not None:
-                    return str(row[0]).strip().lower()
+                row = db.execute("SELECT * FROM tasks WHERE id = ?", (ident,)).fetchone()
+                if row and row["status"] is not None:
+                    done_at = row["completed_at"] if "completed_at" in row.keys() else None
+                    return str(row["status"]).strip().lower(), int(done_at or 0)
     except (OSError, ValueError, sqlite3.Error):
         return None
     return None
 
 
-def kanban_read(link: str) -> str:
-    """The card's raw kanban status, or '' when the card cannot be read. A missing store is never done."""
+def _kanban_db_status(board: str, card: str) -> tuple[str, int, str] | None:
+    """(status, completed_at, board) of the card. A named board reads its own file; a bare card id reads the default
+    board, and when the card is not there, the one other board under the kanban root that has it (several: unread,
+    #249). A pinned store is the only file read."""
+    from hermes_cli.kanban_db import kanban_db_path
+    found = _kanban_db_card(Path(kanban_db_path(board=board or None)), card)
+    if found or board not in ("", "default") or os.environ.get("HERMES_KANBAN_DB"):
+        return (*found, board or "default") if found else None
+    from hermes_cli.kanban_db_paths import boards_root
+    hits = [(*hit, path.parent.name.lower()) for path in sorted(boards_root().glob("*/kanban.db"))
+            if (hit := _kanban_db_card(path, card))]
+    if len(hits) > 1:
+        return None  # the same id on several boards: never guessed
+    return hits[0] if hits else None
+
+
+def kanban_card(link: str) -> tuple[str, int, str]:
+    """(status, completed_at, board) of the card; ('', 0, '') when it cannot be read. A missing store is never done."""
     if link not in _KANBAN_CACHE:
         board, card = kanban_parts(link)
-        _KANBAN_CACHE[link] = (_kanban_db_status(board, card) if card else None) or ""
+        _KANBAN_CACHE[link] = (_kanban_db_status(board, card) if card else None) or ("", 0, "")
     return _KANBAN_CACHE[link]
+
+
+def kanban_read(link: str) -> str:
+    """The card's raw kanban status, or '' when the card cannot be read."""
+    return kanban_card(link)[0]
+
+
+def kanban_ended(link: str) -> bool:
+    """Done, or archived with a completion time (#249). Archived without one never finished."""
+    status, done_at, _ = kanban_card(link)
+    return status == "done" or (status == "archived" and bool(done_at))
+
+
+def card_key(link: str) -> tuple[str, str]:
+    """(board, card id) of a kanban link as the store answers it: a bare link is the board the card was found on, so
+    kanban:t_x and kanban:work/t_x are one card when it lives on work. A card nobody can read is ('', id)."""
+    board, card = kanban_parts(link)
+    return ((board or kanban_card(link)[2]) if kanban_read(link) else board, card.lower())
 
 
 def kanban_state_word(status: str) -> str:
