@@ -2,7 +2,8 @@
 
 The four reads (the work record, ``lina worker``'s runs, the devices, the quota) mostly wait on ssh and OCX, so the
 snapshot takes as long as the slowest of them, not their sum; a request that comes while an outside read runs waits for
-that read instead of starting its own, and its answer serves every request for ``READ_TTL_S`` seconds. The read marks
+that read instead of starting its own, and its answer serves every request for ``READ_TTL_S`` seconds (then, stale, while
+one background read replaces it: lina#584, ``test_lina_board_stale.py``). The read marks
 are not part of that answer: a mark written now shows in the next snapshot.
 """
 
@@ -125,7 +126,7 @@ def test_overlapping_requests_share_one_outside_read_until_it_expires(work, fake
     assert count == {"meta": 1, "contact": 2, "quota": 1}
     work.clock[0] += 1
     lina_board.board()
-    assert count == {"meta": 2, "contact": 4, "quota": 2}
+    wait_until(lambda: count == {"meta": 2, "contact": 4, "quota": 2}, timeout=10)
 
 
 def test_a_shared_read_keeps_the_time_it_was_read(work, fakes):

@@ -23,6 +23,9 @@ DONE_WINDOW_S = 86400
 # The app polls /board, /devices and /quota together and each outside read is seconds of ssh and OCX calls, so one read
 # answers every request for this long.
 READ_TTL_S = 5
+# A finished good read older than READ_TTL_S still answers at once for this long while one background read replaces
+# it (lina#584); older than this, a request waits for a new read.
+STALE_MAX_S = 60
 _WORK_LOCK = threading.Lock()
 logger = logging.getLogger(__name__)
 
@@ -44,32 +47,46 @@ class _Read:
 
 
 class _SharedReads:
-    """The outside reads (the running runs' live view, the nodes' ``hello`` and ``probe``, the quota) by key: a
-    request that comes while a read runs waits for it instead of starting its own, and the read answers every request
-    for ``READ_TTL_S`` seconds after it ends, a failed one too, so a device that times out is not asked again by every
-    request in that window. Expired reads are dropped when a new one starts (a key names a set of running runs)."""
+    """The outside reads (the running runs' live view, the nodes' ``hello`` and ``probe``, the quota) by key, served
+    stale while they revalidate (lina#584). A finished read answers every request for ``ttl`` seconds after it ends,
+    a failed one too, so a device that times out is not asked again by every request in that window. A good read
+    older than that answers at once for up to ``stale_max`` seconds while one background read (one per key) replaces
+    it; it keeps the time it was read (``_Read.at``), never the time it is served. A request waits only when there is
+    no read to serve: none yet, a failed one past ``ttl`` (a failure is never served as if it were current), or one
+    past ``stale_max``; it then waits on the read already running for the key instead of starting its own. Reads past
+    ``stale_max`` are dropped when a new one starts (a key names a set of running runs)."""
 
-    def __init__(self, ttl: float):
-        self.ttl = ttl
+    def __init__(self, ttl: float, stale_max: float):
+        self.ttl, self.stale_max = ttl, stale_max
         self._lock = threading.Lock()
-        self._reads: dict[tuple, _Read] = {}
+        self._done: dict[tuple, _Read] = {}
+        self._running: dict[tuple, _Read] = {}
 
     def get(self, key: tuple, read: Callable[[list[dict]], Any]) -> _Read:
-        from hermes_cli.config_backend import ConfigBackendUnavailable
+        started = None
         with self._lock:
-            got = self._reads.get(key)
-            running = got is not None and got.ended is None
-            if running:
-                got.waiting += 1
-            elif got is not None and self._fresh(got):
-                return got
-            else:
-                for old in [k for k, r in self._reads.items() if r.ended is not None and not self._fresh(r)]:
-                    del self._reads[old]
-                got = self._reads[key] = _Read(at=time.time())
-        if running:
-            got.done.wait()
-            return got
+            done, running = self._done.get(key), self._running.get(key)
+            if done is not None and self._age(done) < self.ttl:
+                return done
+            stale = done is not None and done.failure is None and self._age(done) < self.stale_max
+            if running is None:
+                for old in [k for k, r in self._done.items() if self._age(r) >= self.stale_max]:
+                    del self._done[old]
+                started = running = self._running[key] = _Read(at=time.time())
+            elif not stale:
+                running.waiting += 1
+        if stale:
+            if started is not None:
+                threading.Thread(target=contextvars.copy_context().run, args=(self._run, key, started, read),
+                                 name=f"lina-board-{key[0]}", daemon=True).start()
+            return done
+        if started is not None:
+            return self._run(key, started, read)
+        running.done.wait()
+        return running
+
+    def _run(self, key: tuple, got: _Read, read: Callable[[list[dict]], Any]) -> _Read:
+        from hermes_cli.config_backend import ConfigBackendUnavailable
         try:
             got.value = read(got.errors)
         except (Exception, ConfigBackendUnavailable) as exc:  # health: allow BLE001 -- kept for every request it answers: _Read.result re-raises it into _source, which logs the traceback
@@ -77,19 +94,44 @@ class _SharedReads:
         finally:
             with self._lock:
                 got.ended = time.time()
+                self._done[key] = got
+                if self._running.get(key) is got:
+                    del self._running[key]
             got.done.set()
         return got
 
-    def _fresh(self, read: _Read) -> bool:
-        return 0 <= time.time() - read.ended < self.ttl
+    @staticmethod
+    def _age(read: _Read) -> float:
+        age = time.time() - read.ended
+        return age if age >= 0 else float("inf")
 
     def waiting(self, name: str) -> int:
         """How many requests wait on the running *name* read now."""
         with self._lock:
-            return sum(read.waiting for key, read in self._reads.items() if key[0] == name and read.ended is None)
+            return sum(read.waiting for key, read in self._running.items() if key[0] == name)
+
+    def running(self, name: str) -> int:
+        """How many *name* reads run now, in a request or in the background."""
+        with self._lock:
+            return sum(1 for key in self._running if key[0] == name)
 
 
-READS = _SharedReads(READ_TTL_S)
+READS = _SharedReads(READ_TTL_S, STALE_MAX_S)
+
+
+def warm() -> threading.Thread:
+    """One board read in the background when the web server starts (lina#584), so the first sign-in finds the shared
+    reads already there. It never holds up the start, and a read that fails only logs a warning."""
+    from hermes_cli.config_backend import ConfigBackendUnavailable
+
+    def run():
+        try:
+            board()
+        except (Exception, ConfigBackendUnavailable):
+            logger.warning("board: the read at server start failed", exc_info=True)
+    thread = threading.Thread(target=contextvars.copy_context().run, args=(run,), name="lina-board-warm", daemon=True)
+    thread.start()
+    return thread
 
 
 def _root() -> Path:

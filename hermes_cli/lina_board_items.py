@@ -46,26 +46,45 @@ def _int(value) -> int | None:
     return int(value) if value not in (None, "") else None
 
 
-def _q(db, cols: tuple[str, ...], sql: str) -> list[dict]:
-    return [dict(zip(cols, row)) for row in db.execute(sql.format(cols=", ".join(cols))).fetchall()]
+# The store reads behind the items: (name, columns, query, ORDER BY). ``{cols}`` is the columns.
+_STORE_READS: tuple[tuple[str, tuple[str, ...], str, str], ...] = (
+    ("todo", ("id", "status", "reason", "run_count", "last_activity_at", "created_by", "created_at", "closed_at"),
+     "SELECT {cols} FROM v_todo", ""),
+    ("goal", ("id", "status", "todos_done", "todos_total", "created_by", "created_at", "closed_at"),
+     "SELECT {cols} FROM v_goal", ""),
+    ("runs", ("id", "title", "status", "reason", "goal_id", "created_at", "started_at", "last_activity_at",
+              "ended_at"), "SELECT {cols} FROM v_run WHERE status <> 'dropped'", "created_at, id"),
+    ("run_todo", ("run_id", "todo_id"), "SELECT {cols} FROM run_todo", ""),
+    ("waits", ("todo_id", "since"), "SELECT {cols} FROM wait WHERE released_at IS NULL AND todo_id IS NOT NULL", ""),
+    ("asks", ("todo_id", "asked_at"), "SELECT {cols} FROM decision WHERE answered_at IS NULL AND todo_id IS NOT NULL",
+     ""),
+    ("goal_events", ("goal_id", "at"),
+     "SELECT goal_id, max(at) AS at FROM event WHERE goal_id IS NOT NULL GROUP BY goal_id", ""),
+)
+
+
+def _rows_each(db) -> list[list]:
+    """Each of :data:`_STORE_READS`' rows as value lists. On Postgres all of them come back in one statement: each
+    ``db.execute`` there is a round trip to ``psql`` (lina#584: seven of them were most of the list's 1.5 s on the
+    hub). The rows are built as ``PgDb.execute`` builds them, so both ways give the same values."""
+    if getattr(db, "dialect", None) != "postgres":
+        return [[list(row) for row in db.execute(sql.format(cols=", ".join(cols))
+                                                 + (f" ORDER BY {order}" if order else "")).fetchall()]
+                for _name, cols, sql, order in _STORE_READS]
+    parts = [f"(SELECT coalesce(json_agg((SELECT json_agg(value) FROM json_each(row_to_json(q)))"
+             f"{' ORDER BY ' + order if order else ''}), '[]') FROM ({sql.format(cols=', '.join(cols))}) q) AS {name}"
+             for name, cols, sql, order in _STORE_READS]
+    (row,) = db.execute("SELECT " + ", ".join(parts)).fetchall()
+    return [list(value) for value in row]
 
 
 def _store(db) -> dict:
-    todos = _q(db, ("id", "status", "reason", "run_count", "last_activity_at", "created_by", "created_at",
-                    "closed_at"), "SELECT {cols} FROM v_todo")
-    goals = _q(db, ("id", "status", "todos_done", "todos_total", "created_by", "created_at", "closed_at"),
-               "SELECT {cols} FROM v_goal")
-    runs = _q(db, ("id", "title", "status", "reason", "goal_id", "created_at", "started_at", "last_activity_at",
-                   "ended_at"), "SELECT {cols} FROM v_run WHERE status <> 'dropped' ORDER BY created_at, id")
+    got = {name: [dict(zip(cols, row)) for row in rows]
+           for (name, cols, _sql, _order), rows in zip(_STORE_READS, _rows_each(db))}
     return {
-        "todo": {r["id"]: r for r in todos}, "goal": {r["id"]: r for r in goals}, "runs": runs,
-        "run_todo": _q(db, ("run_id", "todo_id"), "SELECT {cols} FROM run_todo"),
-        "waits": _q(db, ("todo_id", "since"), "SELECT {cols} FROM wait WHERE released_at IS NULL "
-                    "AND todo_id IS NOT NULL"),
-        "asks": _q(db, ("todo_id", "asked_at"), "SELECT {cols} FROM decision WHERE answered_at IS NULL "
-                   "AND todo_id IS NOT NULL"),
-        "goal_events": dict(db.execute("SELECT goal_id, max(at) FROM event WHERE goal_id IS NOT NULL "
-                                       "GROUP BY goal_id").fetchall()),
+        "todo": {r["id"]: r for r in got["todo"]}, "goal": {r["id"]: r for r in got["goal"]}, "runs": got["runs"],
+        "run_todo": got["run_todo"], "waits": got["waits"], "asks": got["asks"],
+        "goal_events": {r["goal_id"]: r["at"] for r in got["goal_events"]},
     }
 
 
