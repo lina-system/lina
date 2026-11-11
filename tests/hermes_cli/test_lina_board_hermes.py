@@ -2,7 +2,7 @@
 
 The fake CLI is a script outside the LINA tree that logs its argv and answers from ``canned.json`` under the configured
 Hermes home, next to a ``kanban.db`` LINA must never open. Its ``kanban watch`` prints one event each time a ``poke``
-file appears there. The board is read in the background (lina#533): ``Hermes.on`` waits for the first pass. Replies are checked against the published schemas
+file appears there, for the card the file names (``t_a1`` when it is empty). The board is read in the background (lina#533): ``Hermes.on`` waits for the first pass. Replies are checked against the published schemas
 (``docs/api/work-client.yaml``, ``docs/api/board-client.yaml``).
 """
 
@@ -27,6 +27,7 @@ from hermes_cli import kanban_db as kb
 from hermes_cli import kanban_db_connect as kbc
 from hermes_cli import lina_board, lina_board_hermes, lina_ocx
 from tests.hermes_cli._work_env import NOW, WorkEnv
+from tests.waiting import wait_until
 
 pytestmark = pytest.mark.platforms("posix")
 
@@ -44,8 +45,10 @@ if args == ["kanban", "--board", "{board}", "watch", "--interval", "2"]:
     poke = os.path.join(os.environ["HERMES_HOME"], "poke")
     while True:
         if os.path.exists(poke):
+            with open(poke, encoding="utf-8") as f:
+                card = f.read().strip() or "t_a1"
             os.remove(poke)
-            print("[now] t_a1 commented (@alpha)", flush=True)
+            print("[2026-11-11 09:30] " + card.ljust(10) + " commented          (@alpha)", flush=True)
         time.sleep(0.05)
 with open(os.path.join(os.environ["HERMES_HOME"], "canned.json"), encoding="utf-8") as f:
     canned = json.load(f)
@@ -59,6 +62,7 @@ if args == ["json"]:
 elif args == ["kanban", "--board", "{board}", "list", "--json"]:
     print(json.dumps(canned["list"]))
 elif args[:4] == ["kanban", "--board", "{board}", "show"] and args[5:] == ["--json"]:
+    time.sleep(canned.get("delay", 0))
     print(json.dumps(canned["show"][args[4]]))
 else:
     sys.exit(2)
@@ -140,7 +144,10 @@ class Hermes:
         self.canned(_canned())
 
     def canned(self, data: dict, mode: str | None = None) -> None:
-        (self.home / "canned.json").write_text(json.dumps(dict(data, mode=mode)), encoding="utf-8")
+        """The fake's answers, replaced whole so a running pass never reads half a file."""
+        part = self.home / "canned.json.part"
+        part.write_text(json.dumps(dict(data, mode=mode)), encoding="utf-8")
+        os.replace(part, self.home / "canned.json")
 
     def on(self, wait: bool = True, **extra) -> None:
         """Set the source; with *wait*, start its reader and wait for the first pass to end."""
@@ -150,9 +157,9 @@ class Hermes:
         if wait:
             assert lina_board_hermes.reader().wait(1, timeout=30)
 
-    def poke(self) -> None:
+    def poke(self, card: str = "") -> None:
         """What a change on the board makes ``kanban watch`` print."""
-        (self.home / "poke").write_text("", encoding="utf-8")
+        (self.home / "poke").write_text(card, encoding="utf-8")
 
     def off(self) -> None:
         self.work.config()
@@ -403,7 +410,7 @@ def _done(task_id: str, ended: float) -> dict:
 def test_before_the_first_pass_ends_a_route_answers_at_once_with_one_error(hermes, client, monkeypatch):
     entered, release = threading.Barrier(3), threading.Event()
 
-    def held(_src, _budget):
+    def held(_src, _budget, _memo=None):
         entered.wait(timeout=30)
         release.wait(timeout=30)
         raise lina_board_hermes.SourceError("released")
@@ -448,13 +455,19 @@ def test_a_pass_shows_only_open_cards_and_cards_done_within_the_window(hermes, c
     assert len(hermes.shows()) == 5
 
 
-def test_a_failing_pass_keeps_the_last_good_one_served_and_the_next_pass_tries_again(hermes, client):
+def _next_pass(running) -> None:
+    """Wait for a whole pass that started after now."""
+    assert running.wait(running.passes + 2, timeout=30)
+
+
+def test_a_failing_pass_keeps_the_last_good_one_served_and_the_next_pass_tries_again(hermes, client, monkeypatch):
     hermes.on()
     good = _get(client, f"{WORK}/cards", "work-client.yaml", "WorkCardList")
     assert good["errors"] == [] and good["hermesAt"] is not None
     hermes.canned(_canned(), mode="fail")
+    monkeypatch.setattr(lina_board_hermes, "PASS_EVERY_S", 0.05)  # the old record is read again from now on
     hermes.poke()
-    assert lina_board_hermes.reader().wait(2, timeout=10)
+    _next_pass(lina_board_hermes.reader())
     stale = _get(client, f"{WORK}/cards", "work-client.yaml", "WorkCardList")
     assert [c["title"] for c in stale["cards"]] == [c["title"] for c in good["cards"]]
     assert stale["hermesAt"] == good["hermesAt"]
@@ -466,8 +479,7 @@ def test_a_failing_pass_keeps_the_last_good_one_served_and_the_next_pass_tries_a
     assert _get(client, f"{WORK}/cards/hermes:t_a1", "work-client.yaml", "WorkCardDetail")["readOnly"] is True
 
     hermes.canned(_canned())
-    hermes.poke()
-    assert lina_board_hermes.reader().wait(3, timeout=10)
+    _next_pass(lina_board_hermes.reader())
     again = _get(client, f"{WORK}/cards", "work-client.yaml", "WorkCardList")
     assert again["errors"] == [] and again["hermesAt"] is not None
     assert [c["title"] for c in again["cards"]] == [c["title"] for c in good["cards"]]
@@ -504,3 +516,61 @@ def test_a_card_read_from_its_list_row_keeps_its_links_to_shown_cards(hermes, cl
     cards = [c["id"] for c in _get(client, f"{WORK}/cards", "work-client.yaml", "WorkCardList")["cards"]]
     assert "hermes:t_g2" not in cards and "hermes:t_oldw" in cards
     assert len(hermes.shows()) == 4
+
+
+def _open_cards(data: dict, count: int) -> list[str]:
+    """*count* more running cards on the canned board, each with its ``show``; their ids."""
+    rows = [_task(f"t_c{n:03d}", f"Card {n}", "running", "alpha") for n in range(count)]
+    data["list"] += rows
+    data["show"].update({row["id"]: {"task": row, "parents": [], "children": [], "comments": [], "events": [],
+                                     "runs": []} for row in rows})
+    return [row["id"] for row in rows]
+
+
+def test_a_later_pass_shows_again_only_the_cards_that_changed(hermes, client, monkeypatch):
+    """lina#573: a card whose list row did not change and that ``kanban watch`` did not name is not shown again."""
+    monkeypatch.setattr(lina_board_hermes, "PASS_EVERY_S", 0.05)
+    data = _canned()
+    ids = _open_cards(data, 30)
+    hermes.canned(data)
+    hermes.on()
+    running = lina_board_hermes.reader()
+    first = len(hermes.shows())
+    assert first == 33
+
+    _next_pass(running)
+    assert hermes.shows()[first:] == []
+
+    data["list"][10] = dict(data["list"][10], status="blocked")
+    data["show"][ids[7]]["task"] = data["list"][10]
+    hermes.canned(data)
+    _next_pass(running)
+    assert hermes.shows()[first:] == [ids[7]]
+    card = {c["id"]: c for c in _get(client, f"{WORK}/cards", "work-client.yaml", "WorkCardList")["cards"]}
+    assert card[f"hermes:{ids[7]}"]["state"] == "stopped"
+
+    data["show"][ids[20]]["comments"] = [{"author": "alpha", "body": "halfway there", "created_at": NOW}]
+    hermes.canned(data)
+    hermes.poke(ids[20])
+    wait_until(lambda: hermes.shows()[first + 1:] == [ids[20]], timeout=30, what="the named card shown again")
+    _next_pass(running)
+    assert hermes.shows()[first:] == [ids[7], ids[20]]
+    card = {c["id"]: c for c in _get(client, f"{WORK}/cards", "work-client.yaml", "WorkCardList")["cards"]}
+    assert card[f"hermes:{ids[20]}"]["now"] == "halfway there"
+
+
+def test_a_pass_cut_by_its_limit_leaves_its_shows_to_the_next(hermes, client, monkeypatch):
+    """lina#573: a board too big for one pass's limit is still read whole, over the passes that follow."""
+    monkeypatch.setattr(lina_board_hermes, "PASS_EVERY_S", 0.05)
+    monkeypatch.setattr(lina_board_hermes, "PASS_LIMIT_S", 3.0)
+    data = dict(_canned(), delay=0.5)
+    ids = _open_cards(data, 40)
+    hermes.canned(data)
+    hermes.on()
+    running = lina_board_hermes.reader()
+    assert running.part("cards").error is not None and running.part("cards").value is None
+    wait_until(lambda: running.part("cards").error is None, timeout=90, what="a pass that ends")
+    cards = _get(client, f"{WORK}/cards", "work-client.yaml", "WorkCardList")
+    assert cards["errors"] == []
+    assert {f"hermes:{raw}" for raw in ids} <= {c["id"] for c in cards["cards"]}
+    assert len(hermes.shows()) < 2 * 43
