@@ -44,6 +44,26 @@ def _start_push():
     return stop_quietly
 
 
+def _start_hermes_board():
+    """The lina#533 Hermes board reader -> its stop: the first pass starts with the server, not on the app's first
+    request. Optional like push: one that cannot start leaves the source to start on its first read."""
+    from hermes_cli.config_backend import ConfigBackendUnavailable
+    try:
+        from hermes_cli.lina_board_hermes import start
+
+        stop = start()
+    except (Exception, ConfigBackendUnavailable):
+        logger.warning("hermes board: the reader did not start with the server", exc_info=True)
+        return lambda: None
+
+    def stop_quietly() -> None:
+        try:
+            stop()
+        except Exception:
+            logger.warning("hermes board: the reader did not stop cleanly", exc_info=True)
+    return stop_quietly
+
+
 @asynccontextmanager
 async def standalone_lifespan(app: "FastAPI"):
     from hermes_cli.web_server import (
@@ -181,11 +201,13 @@ async def standalone_lifespan(app: "FastAPI"):
     start_background_bootstrap()
 
     stop_push = _start_push()
+    stop_hermes_board = _start_hermes_board()
 
     try:
         yield
     finally:
         stop_push()
+        stop_hermes_board()
         try:
             tui_gateway.server.clear_tui_message_injector()
         except Exception:
@@ -238,6 +260,7 @@ async def http_lifespan(app: FastAPI):
         asyncio.create_task(_dashboard_selftest_loop(), name="gateway-api-selftest"),
     ]
     stop_push = _start_push()
+    stop_hermes_board = _start_hermes_board()
     try:
         async with AsyncExitStack() as surface:
             if policy(app.state).host_terminal:
@@ -246,6 +269,7 @@ async def http_lifespan(app: FastAPI):
             yield
     finally:
         stop_push()
+        stop_hermes_board()
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)

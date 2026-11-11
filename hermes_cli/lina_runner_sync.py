@@ -1,21 +1,25 @@
 """``lina runners sync``: once a day the runner pins follow their sources, after a trial on the hub (lina#238).
 
-For each runner whose pin has ``follow`` (codex, claude, dsh, grok, cursor-agent, agy; omo, OCX and the ACP adapters
-keep LINA's pins):
+For each runner block whose pin has ``follow`` (omo, codex, claude, dsh, grok, cursor-agent, agy, and any block the
+settings add; OCX and the ACP adapters keep LINA's pins):
 
 1. the source names its newest version (``lina_runner_sync_sources``);
 2. a version above the hub's pin is installed on the hub beside the current one (``lina_runners._install_version``:
    the installer that owns the binary, its hash, ``--version``) and asked one real request
    (``lina_runner_sync_trial``); when it answers, the hub writes the move into its ``runner-pins.json`` and switches;
-3. every node follows the hub's pin the same day through its ``runner-sync`` verb (``lina_runner_sync_node``).
+3. every node follows the hub's pin the same day through its ``runner-sync`` verb (``lina_runner_sync_node``);
+4. the block's model list, route and real-call probe are cared for on the hub and then on every node
+   (``lina_runner_sync_tend``, lina#531).
 
 What stops a move: a hold (a failed trial or node install, until ``sync clear``); a major jump (until ``sync clear
 --accept <version>``); a source below the pin; a hash that does not match; the hub not signed in to the runner (a
 question for a person, not a failure). A node with a run holding a slot, an unreachable node and a node without the
 verb are skipped that day and follow on a later one. ``--plan`` only shows what a run would do and writes nothing.
 
-Every run leaves ``runner-sync/YYYYMMDD.json`` and ``runner-sync/last.json``; one short English notice goes through
-``worker.notice.command`` when something moved, failed or waits. ``sync status --issues`` prints the lines the hub's
+Every run leaves ``runner-sync/YYYYMMDD.json`` and ``runner-sync/last.json``. It is quiet when fine (lina#531): a move,
+a follow and an applied route are in the record only, and the one short English notice through
+``worker.notice.command`` carries one line per thing a person should know -- a held tool, a failed probe, a lost
+sign-in, a major version that waits, a source that went back or a hub that cannot take the move. ``sync status --issues`` prints the lines the hub's
 daily check reads.
 """
 
@@ -36,10 +40,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from hermes_cli import lina_ocx, lina_runners
+from hermes_cli import lina_ocx, lina_runner_models, lina_runners
 from hermes_cli import lina_runner_sync_hub as hub_view
 from hermes_cli import lina_runner_sync_sources as sources
 from hermes_cli import lina_runner_sync_state as state
+from hermes_cli import lina_runner_sync_tend as tending
 from hermes_cli import lina_runner_sync_trial as trials
 from hermes_cli.lina_runner_sync_node import VERB
 
@@ -72,6 +77,7 @@ class Env:
     popen: Callable[..., object] = subprocess.Popen
     fetch: Callable[[str, Path], None] = lina_runners.download
     ocx_logs: Callable[[Path], object] = trials.read_ocx_logs
+    ocx_models: Callable[[Path], object] = lina_runner_models.read_ocx_models
     nodes: Callable[[Path], list[NodeView]] | None = None
     sign_in: Callable[[lina_runners.RunnerPin], str] | None = None
     clock: Callable[[], float] = time.time
@@ -128,7 +134,7 @@ def contact_nodes(root: Path) -> list[NodeView]:
 
 
 def _hub_sign_in(runner: lina_runners.RunnerPin, root: Path) -> str:
-    return lina_runners.SIGN_IN.get(runner.sign_in, lina_runners.SIGN_IN["unknown"])(root)[0]
+    return lina_runners.read_sign_in(root, runner)[0]
 
 
 
@@ -137,12 +143,15 @@ class Run:
         self.root, self.env, self.plan = root, env, plan
         self.now = env.clock()
         self.record: dict = {"day": state.day(self.now), "started": self.now, "plan": plan, "runners": {},
-                             "nodes": {}, "events": [], "questions": []}
+                             "nodes": {}, "events": [], "alerts": [], "questions": []}
         self.nodes: list[NodeView] = []
         self.hub_questions: list[dict] = []
 
-    def event(self, line: str) -> None:
+    def event(self, line: str, *, alert: bool = True) -> None:
+        """One line of the record; an ``alert`` (anything but a success) also goes to the owner's notice."""
         self.record["events"].append(scrub(line))
+        if alert:
+            self.record["alerts"].append(scrub(line))
 
     def needed_platforms(self) -> set[str]:
         wanted = {node.platform for node in self.nodes if node.reachable and node.platform}
@@ -207,7 +216,8 @@ class Run:
         signed = (self.env.sign_in or (lambda pin: _hub_sign_in(pin, self.root)))(runner)
         if signed == "signed_out":
             rec["hub"] = {"state": "hub sign-in needed", "to": newest}
-            self.hub_questions.append({"name": name, "sign_in": "signed_out", "sign_in_by": runner.sign_in})
+            self.hub_questions.append({"name": name, "sign_in": "signed_out",
+                                       "sign_in_by": lina_runners.sign_in_kind(runner)})
             self.event(f"{name} hub {newest}: not moved, the hub is not signed in")
             return runner
         if self.hub_busy(name, newest, rec):
@@ -266,7 +276,7 @@ class Run:
     def discard(self, moved: lina_runners.RunnerPin) -> None:
         """A version that failed its trial is not kept: a later retry must download and check it again."""
         if moved.version != lina_runners.current_version(self.root, moved):
-            shutil.rmtree(lina_runners.vendor_dir(self.root, moved.name) / moved.version, ignore_errors=True)
+            shutil.rmtree(lina_runners.vendor_dir(self.root, moved) / moved.version, ignore_errors=True)
 
     def switch(self, name: str, runner, moved, previous: str, rec: dict) -> lina_runners.RunnerPin:
         entry = {"version": moved.version, **({"integrity": moved.integrity} if moved.installer == "npm"
@@ -280,7 +290,7 @@ class Run:
             self.hold(name, "hub", moved.version, " ".join(said), "switch")
             return runner
         rec["hub"] = {"state": "moved", "from": previous, "to": moved.version}
-        self.event(f"{name} hub {previous} -> {moved.version}: moved")
+        self.event(f"{name} hub {previous} -> {moved.version}: moved", alert=False)
         return moved
 
 
@@ -321,7 +331,7 @@ class Run:
         if got["state"] == "failed":
             self.hold(name, node.name, pin.version, got.get("reason") or "install failed", "node")
         elif got["state"] == "switched":
-            self.event(f"{name} {node.name} {row.get('installed')} -> {pin.version}: followed")
+            self.event(f"{name} {node.name} {row.get('installed')} -> {pin.version}: followed", alert=False)
         return got
 
     def questions(self) -> list[dict]:
@@ -356,27 +366,46 @@ def _summarise_nodes(nodes: list[NodeView]) -> dict:
             for node in nodes}
 
 
+def lost_sign_ins(before: dict, nodes: list[NodeView]) -> list[str]:
+    """``<runner> on <node>: sign-in lost`` for each runner a node was signed in to at the last run and is not now."""
+    lines = []
+    for node in nodes:
+        was = ((before.get("nodes") or {}).get(node.name) or {}).get("runners") or {}
+        for name, row in sorted(node.rows.items()):
+            if row.get("sign_in") == "signed_out" and (was.get(name) or {}).get("sign_in") in lina_runners.SIGN_IN_OK:
+                lines.append(f"{name} on {node.name}: sign-in lost")
+    return lines
+
+
 def execute(root: Path, env: Env, *, plan: bool, only: list[str] | None) -> dict:
     run = Run(root, env, plan)
     selected = followed(root, only)
+    before = _last_record(root)
     run.nodes = (env.nodes or contact_nodes)(root)
     run.record["nodes"] = _summarise_nodes(run.nodes)
+    for line in lost_sign_ins(before, run.nodes):
+        run.event(line)
     for name, runner in selected.items():
         rec = run.record["runners"].setdefault(name, {"pin": runner.version})
         if state.held(root, name) or state.held(root, name, "hub"):
+            rec["hub"] = {"state": "held"}
+            continue
+        if not tending.install_declared(run, name, runner, rec):
             rec["hub"] = {"state": "held"}
             continue
         pin = run.hub(name, runner, rec)
         if rec["hub"]["state"] in ("major waits", "hub busy"):
             continue
         run.follow(name, pin, rec)
+        if not state.held(root, name, "hub"):
+            tending.tend(run, name, pin, rec)
     run.record["questions"] = run.questions()
     run.record["finished"] = env.clock()
     return run.record
 
 
 def _notice_text(record: dict) -> str:
-    return "\n".join([f"runner sync {record['day']}:"] + [f"- {line}" for line in record["events"]]) + "\n"
+    return "\n".join([f"runner sync {record['day']}:"] + [f"- {line}" for line in record["alerts"]]) + "\n"
 
 
 def notify(root: Path, text: str) -> str:
@@ -409,7 +438,7 @@ def sync(root: Path | None = None, *, plan: bool = False, only: list[str] | None
                 retry = hub_view.retry_mark(record, state.last(root))
                 path = state.record_path(root, record["started"])
                 state.write_json(path, hub_view.day_record(path, record) if only else record)
-                if record["events"]:
+                if record["alerts"]:
                     record["notice"] = (env.notify or notify)(root, _notice_text(record))
                 _show(record, as_json, out)
             finally:

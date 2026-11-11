@@ -1,5 +1,7 @@
 """The Hermes board's cards in the work API's shapes (lina#481), read through ``hermes_cli.lina_board_hermes``: every
-card comes from ``kanban show <id> --json`` of the configured Hermes CLI, never from its database. The cards are rebuilt
+card comes from the last good background pass (lina#533) of the configured Hermes CLI, never from its database, and a
+request runs no command. A card is its ``kanban show <id> --json``, or for a done card outside the app's done window
+its ``list`` row alone, served with ``detail: false``. The cards are rebuilt
 as ``kanban_db`` rows and read by the work API's own functions, so the states, to-dos and inbox rules are the same as
 for LINA's board. The CLI carries no claim or heartbeat, so an open run counts as live (``CardFacts.assume_live``);
 it carries no ``goal_mode`` either, so a card without the field counts as a goal-mode card unless it is a link-child
@@ -50,17 +52,18 @@ def facts(show: dict) -> Any:
     return CardFacts(task, events, comments, runs, own=own, assume_live=True)
 
 
-def _read_only(row: dict) -> dict:
-    return dict(row, readOnly=True)
+def _read_only(row: dict, listed_only: bool = False) -> dict:
+    return dict(row, readOnly=True, **({"detail": False} if listed_only else {}))
 
 
 class _Board:
-    """One read of the Hermes board: every listed card's facts, and which of them are work and goal cards."""
+    """One pass's cards: every listed card's facts, which of them are work and goal cards, and which are list rows
+    alone."""
 
-    def __init__(self, src: hermes.Source):
+    def __init__(self, shows: list[dict]):
         from hermes_cli.lina_board_plain import is_work_card
-        shows = hermes.cards(src)
         self.facts = {hermes.hermes_id(s["task"]["id"]): facts(s) for s in shows}
+        self.listed = {hermes.hermes_id(s["task"]["id"]) for s in shows if s.get("detail") is False}
         children = {str(child) for s in shows for child in s.get("children") or []}
 
         def goal_mode(task: dict) -> bool:
@@ -80,69 +83,77 @@ class _Board:
         if goal_id not in self.goals:
             return None
         view = goal_view(self.facts[goal_id], [self.facts[i] for i in self.goals[goal_id]], now)
-        return _read_only(dict(view, workCards=[_read_only(c) for c in view["workCards"]]))
+        return _read_only(dict(view, workCards=[_read_only(c, c["id"] in self.listed) for c in view["workCards"]]),
+                          goal_id in self.listed)
 
 
-def goals(src: hermes.Source, now: int) -> dict[str, list]:
-    board = _Board(src)
+def goals(shows: list[dict], now: int) -> dict[str, list]:
+    board = _Board(shows)
     return {"goals": [board.goal(i, now) for i in board.goals]}
 
 
-def cards(src: hermes.Source, now: int, agent: Optional[str], state: Optional[str]) -> dict[str, list]:
+def cards(shows: list[dict], now: int, agent: Optional[str], state: Optional[str]) -> dict[str, list]:
     from plugins.kanban.dashboard.work_api import _implementer, card_summary
-    board = _Board(src)
-    rows = [card_summary(board.facts[i], now) for i in board.work
+    board = _Board(shows)
+    rows = [(i, card_summary(board.facts[i], now)) for i in board.work
             if agent is None or _implementer(board.facts[i]) == agent]
-    return {"cards": [_read_only(r) for r in rows if state is None or r["state"] == state]}
+    return {"cards": [_read_only(r, i in board.listed) for i, r in rows if state is None or r["state"] == state]}
 
 
-def inbox(src: hermes.Source, now: int) -> dict[str, list]:
+def inbox(shows: list[dict], now: int) -> dict[str, list]:
     from plugins.kanban.dashboard.work_api import _inbox_blocked, question_rows
-    board = _Board(src)
+    board = _Board(shows)
     every = list(board.facts.values())
     return {"blocked": [_read_only(_inbox_blocked(f, now)) for f in every if f.task.status == "blocked"],
             "questions": [_read_only(q) for f in every for q in question_rows(f)]}
 
 
-def card(src: hermes.Source, card_id: str, now: int) -> Optional[dict]:
+def card(shows: list[dict], card_id: str, now: int) -> Optional[dict]:
     from plugins.kanban.dashboard.work_api import card_detail
     raw = hermes.raw_id(card_id)
-    if raw not in {str(row["id"]) for row in hermes.card_list(src)}:
-        return None
-    return _read_only(card_detail(facts(hermes.card_show(src, raw)), now))
+    show = next((s for s in shows if str(s["task"]["id"]) == raw), None)
+    return None if show is None else _read_only(card_detail(facts(show), now), show.get("detail") is False)
 
 
-def goal(src: hermes.Source, goal_id: str, now: int) -> Optional[dict]:
-    return _Board(src).goal(hermes.hermes_id(hermes.raw_id(goal_id)), now)
+def goal(shows: list[dict], goal_id: str, now: int) -> Optional[dict]:
+    return _Board(shows).goal(hermes.hermes_id(hermes.raw_id(goal_id)), now)
 
 
-def add(out: dict, board: Optional[str], read: Callable[[hermes.Source], dict[str, list]]) -> dict:
-    """*out* with the Hermes board's rows added after LINA's, and ``errors``. Only the default board's reply gets them,
-    and only while the source is set, so every other reply is as before; a failing command is one ``errors`` entry."""
+def add(out: dict, board: Optional[str], read: Callable[[list[dict]], dict[str, list]]) -> dict:
+    """*out* with the last good pass's cards added after LINA's, ``hermesAt`` and ``errors``. Only the default board's
+    reply gets them, and only while the source is set, so every other reply is as before; no good pass yet, or a
+    failing one, is one ``errors`` entry."""
     from hermes_cli.lina_board import _source
-    sec = hermes.section() if board is None else None
-    if sec is None:
+    if board is not None:
         return out
     errors: list[dict] = []
-    extra = _source(hermes.SOURCE, errors, lambda: _cards_part(hermes.source(sec), read)) or {}
-    return dict(out, **{key: out[key] + rows for key, rows in extra.items()}, errors=errors)
+    running = _source(hermes.SOURCE, errors, hermes.reader)
+    if running is None and not errors:
+        return out
+    part = None if running is None or running.src.command is None else running.part("cards")
+    shows = None if part is None else hermes.served(part, errors)
+    extra = {} if shows is None else _source(hermes.SOURCE, errors, lambda: read(shows)) or {}
+    return dict(out, **{key: out[key] + rows for key, rows in extra.items()}, errors=errors,
+                **({} if part is None else {"hermesAt": part.at}))
 
 
-def _cards_part(src: hermes.Source, read: Callable[[hermes.Source], Any]) -> Any:
-    """*read*'s rows, or none when only the old record is set (``board.hermes.work`` without ``command``)."""
-    return None if src.command is None else read(src)
-
-
-def one(item_id: str, read: Callable[[hermes.Source, str], Optional[dict]]) -> dict:
-    """A ``hermes:`` card or goal: 404 when the source is off or does not have it, 503 when its command fails."""
+def one(item_id: str, read: Callable[[list[dict], str], Optional[dict]]) -> dict:
+    """A ``hermes:`` card or goal of the last good pass: 404 when the source is off or does not have it, 503 when it is
+    set wrong or no pass has read the board yet."""
     from hermes_cli.lina_board import _source
-    sec = hermes.section()
-    if sec is None:
-        raise HTTPException(status_code=404, detail=f"card {item_id} not found")
     errors: list[dict] = []
-    found = _source(hermes.SOURCE, errors, lambda: _cards_part(hermes.source(sec), lambda src: read(src, item_id)))
+    running = _source(hermes.SOURCE, errors, hermes.reader)
     if errors:
         raise HTTPException(status_code=503, detail=errors[0]["message"])
+    if running is None or running.src.command is None:
+        raise HTTPException(status_code=404, detail=f"card {item_id} not found")
+    shows = hermes.served(running.part("cards"), errors)
+    if shows is None:
+        raise HTTPException(status_code=503, detail=errors[0]["message"])
+    failed: list[dict] = []
+    found = _source(hermes.SOURCE, failed, lambda: read(shows, item_id))
+    if failed:
+        raise HTTPException(status_code=503, detail=failed[0]["message"])
     if found is None:
         raise HTTPException(status_code=404, detail=f"card {item_id} not found")
     return found

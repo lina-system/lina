@@ -1,7 +1,8 @@
 """LINA's pinned omo (lina#34): install, upgrade, rollback and status of the omo work devices run.
 
-``pm/lina-deps.json`` pins omo (``omo-ai``, version + npm integrity) next to the Node and OCX of lina#32, and omo is
-installed the same way, with the same helpers (``lina_ocx.install_node`` / ``npm_install`` / ``set_current``):
+``pm/lina-deps.json`` describes omo as one runner block (``runners.omo``, lina#531) like every other worker tool, and
+``lina omo install|upgrade|rollback`` are ``lina_runners``' install, upgrade and rollback of that block; what stays
+here is omo's own daemon (status and the handoff hint) and the omo command line:
 
 * ``vendor/omo/<ver>/``: omo installed by the pinned Node's npm with ``--prefix``; the lock must carry the pinned
   integrity. ``vendor/omo/current`` points at the active version, ``vendor/omo/previous`` records the one before
@@ -20,17 +21,18 @@ version, to be run when the device is idle (draining a device is ``lina worker``
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
-import shlex
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from hermes_cli import lina_ocx
+from hermes_cli import lina_ocx, lina_runners
 
 OcxError = lina_ocx.OcxError
+NAME = "omo"  # omo's runner block (lina#531)
 
 
 @dataclass(frozen=True)
@@ -41,12 +43,20 @@ class OmoPin:
 
 
 def omo_pin(path: Path = lina_ocx.PIN_FILE) -> OmoPin:
-    omo = json.loads(path.read_text(encoding="utf-8-sig"))["omo"]
-    return OmoPin(omo["package"], omo["version"], omo["integrity"])
+    """omo's block in ``pm/lina-deps.json`` ``runners`` (lina#531), with the config block and the daily sync's move."""
+    block = lina_runners.pins(path)[NAME]
+    return OmoPin(block.package, block.version, block.integrity)
+
+
+def runner() -> lina_runners.RunnerPin:
+    """omo's runner block with the pinned version: every install step below is ``lina_runners``' code."""
+    pin = omo_pin()
+    return dataclasses.replace(lina_runners.pins()[NAME], package=pin.package, version=pin.version,
+                               integrity=pin.integrity)
 
 
 def vendor_dir(root: Path) -> Path:
-    return root / "vendor" / "omo"
+    return lina_runners.vendor_dir(root, runner())
 
 
 def current_version(root: Path) -> str | None:
@@ -55,7 +65,7 @@ def current_version(root: Path) -> str | None:
 
 def entry_path(root: Path, version: str = "current") -> Path:
     """omo's CLI entry (``bin/omo.js``) of an installed version, or of ``current``."""
-    return vendor_dir(root) / version / "node_modules" / omo_pin().package / "bin" / "omo.js"
+    return lina_runners.entry_path(root, runner(), version)
 
 
 def omo_task_path(root: Path) -> Path:
@@ -70,7 +80,7 @@ def agent_dir() -> Path:
 
 
 def shim_path(root: Path) -> Path:
-    return root / "bin" / "omo"
+    return lina_runners.shim_path(root, runner())
 
 
 def node_bin(root: Path) -> Path:
@@ -84,60 +94,17 @@ def omo_env() -> dict[str, str]:
     return build_subprocess_env(scrub_secrets=False, inherit_profile_home=False, extra={"OMO_RUNTIME": "node"})
 
 
-def write_shim(root: Path, node: Path) -> Path:
-    shim = shim_path(root)
-    shim.parent.mkdir(parents=True, exist_ok=True)
-    tmp = shim.with_name(".omo.tmp")
-    tmp.write_text("#!/bin/sh\n"
-                   "# LINA's pinned omo (lina#34), written by `lina omo install`: vendor/omo/current on the pinned Node.\n"
-                   "# OMO_RUNTIME=node keeps omo on this Node even when a bun is on PATH.\n"
-                   "export OMO_RUNTIME=node\n"
-                   f"exec {shlex.quote(str(node / 'bin' / 'node'))} {shlex.quote(str(entry_path(root)))} \"$@\"\n",
-                   encoding="utf-8")
-    tmp.chmod(0o755)
-    os.replace(tmp, shim)
-    return shim
-
-
-def reported_version(root: Path, node: Path, version: str,
-                     run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> str | None:
-    """The version ``omo --version`` of an installed *version* prints (``omo 5.1.69 (engine: …)``), else None."""
-    try:
-        result = run([str(node / "bin" / "node"), str(entry_path(root, version)), "--version"], env=omo_env(),
-                     capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120, check=False)
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    words = (result.stdout or "").split()
-    return words[1] if result.returncode == 0 and len(words) > 1 and words[0] == "omo" else None
-
-
-def _install_version(root: Path, version: str, integrity: str, fetch, run) -> Path:
-    """Node, then omo *version* beside the others; it must answer ``--version`` with *version*."""
-    node = lina_ocx.install_node(root, lina_ocx.pins(), fetch)
-    lina_ocx.npm_install(root, node, vendor_dir(root), omo_pin().package, version, integrity, run)
-    got = reported_version(root, node, version, run)
-    if got != version:
-        raise OcxError(f"omo {version} installed but `omo --version` reports {got or 'nothing'}")
-    return node
-
-
 def install(root: Path | None = None, *, fetch: Callable[[str, Path], None] = lina_ocx.download,
             run: Callable[..., subprocess.CompletedProcess] = subprocess.run, out=print) -> int:
-    """``lina omo install`` without the routing step: the pinned Node and omo, ``current`` and the shim."""
-    from hermes_cli import lina_omo_routing
+    """``lina omo install`` without the routing step: ``lina_runners.install_pin`` of omo's block (its ``--version``
+    must print the pin, ``omo 5.1.69 (engine: …)``), then its route source prepared (``lina_runner_routes``)."""
+    from hermes_cli import lina_runner_routes
     root = root or lina_ocx.lina_root()
-    pin = omo_pin()
-    node = _install_version(root, pin.version, pin.integrity, fetch, run)
-    out(f"✓ omo {pin.version}: {vendor_dir(root) / pin.version} ({pin.integrity[:20]}…)")
-    active = current_version(root)
-    if active is None:
-        lina_ocx.set_current(root, pin.version, vendor_dir(root))
-        active = pin.version
-    if active != pin.version:
-        out(f"  current stays {active}; `lina omo upgrade {pin.version}` switches to the pin")
-    out(f"✓ shim: {write_shim(root, node)} (omo {active} on Node {lina_ocx.pins().node_version}; "
-        "any other omo on this device is left alone)")
-    out(f"✓ ocx-omo: {lina_omo_routing.build(root, node, run=run)}")
+    block = runner()
+    lina_runners.install_pin(root, block, fetch=fetch, run=run, out=out)
+    prepared = lina_runner_routes.prepare(root, block, run=run)
+    if prepared:
+        out(f"✓ {block.route.get('source')}: {prepared}")
     return 0
 
 
@@ -161,55 +128,24 @@ def _handoff_hint(root: Path, out, run) -> None:
             f"move it with: {shim_path(root)} host handoff")
 
 
-def _previous_file(root: Path) -> Path:
-    return vendor_dir(root) / "previous"
-
-
 def upgrade(root: Path | None = None, version: str | None = None, integrity: str | None = None, *,
             fetch: Callable[[str, Path], None] = lina_ocx.download,
             run: Callable[..., subprocess.CompletedProcess] = subprocess.run, out=print) -> int:
-    """Install *version* beside the current one, check ``omo --version``, then switch ``current``."""
+    """``lina_runners.upgrade_pin`` of omo's block; a running daemon is left on the old version (one hint)."""
     root = root or lina_ocx.lina_root()
-    pin = omo_pin()
-    version = version or pin.version
-    integrity = integrity or (pin.integrity if version == pin.version else None)
-    if integrity is None:
-        out(f"omo {version} is not the pinned version ({pin.version}): pass its npm integrity with --integrity")
-        return 1
-    previous = current_version(root)
-    if previous is None:
-        out("omo is not installed. Run `lina omo install`.")
-        return 1
-    if previous == version:
-        out(f"✓ omo {version} is already current")
-        return 0
-    try:
-        node = _install_version(root, version, integrity, fetch, run)
-    except OcxError as exc:
-        out(f"omo: {exc}; current stays {previous}")
-        return 1
-    _previous_file(root).write_text(previous + "\n", encoding="utf-8")
-    lina_ocx.set_current(root, version, vendor_dir(root))
-    write_shim(root, node)
-    out(f"✓ current: {previous} -> {version} (`lina omo rollback` switches back)")
-    _handoff_hint(root, out, run)
-    return 0
+    code = lina_runners.upgrade_pin(root, runner(), version, integrity, fetch=fetch, run=run, out=out)
+    if code == 0:
+        _handoff_hint(root, out, run)
+    return code
 
 
 def rollback(root: Path | None = None, *, run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
              out=print) -> int:
     root = root or lina_ocx.lina_root()
-    record = _previous_file(root)
-    previous = record.read_text(encoding="utf-8-sig").strip() if record.exists() else ""
-    if not previous or not entry_path(root, previous).exists():
-        out("Nothing to roll back to: no upgrade recorded a previous omo version")
-        return 1
-    current = current_version(root)
-    lina_ocx.set_current(root, previous, vendor_dir(root))
-    record.unlink()
-    out(f"✓ current: {current} -> {previous}")
-    _handoff_hint(root, out, run)
-    return 0
+    code = lina_runners.rollback_pin(root, runner(), out=out)
+    if code == 0:
+        _handoff_hint(root, out, run)
+    return code
 
 
 def installed_versions(root: Path) -> list[str]:

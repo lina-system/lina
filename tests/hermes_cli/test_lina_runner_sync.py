@@ -134,7 +134,8 @@ def test_a_newer_version_is_tried_on_the_hub_then_the_nodes_follow_the_same_day(
     assert record["runners"]["grok"]["hub"]["state"] == "moved"
     assert {n: r["state"] for n, r in record["runners"]["grok"]["nodes"].items()} == {
         "build-a": "switched", "build-b": "switched"}
-    assert len(hub["notices"]) == 1 and "grok hub 1.0.70 -> 1.0.71: moved" in hub["notices"][0]
+    assert "grok hub 1.0.70 -> 1.0.71: moved" in record["events"]
+    assert hub["notices"] == [], "a move that went well is in the record only: quiet when fine (lina#531)"
     assert (root / state.HISTORY).read_text().count("\n") == 1, "the previous entry is kept for a way back"
 
 
@@ -196,7 +197,10 @@ def test_a_hash_the_answer_contradicts_moves_nothing(hub):
     root = hub["root"]
     assert current(root) == "1.0.70"
     assert not (lina_runners.vendor_dir(root, "grok") / "1.0.71").exists()
-    assert {k: v for k, v in files(root).items() if not k.startswith(state.SYNC_DIR)} == before
+    kept = {k: v for k, v in files(root).items() if not k.startswith(state.SYNC_DIR)}
+    assert json.loads(kept.pop("runner-probes.json"))["grok"]["version"] == "1.0.70", \
+        "the daily probe of the version it keeps is the only new file (lina#531)"
+    assert kept == before
 
 
 def test_a_busy_node_is_skipped_and_one_that_got_busy_refuses_on_its_side(hub, tmp_path, monkeypatch):

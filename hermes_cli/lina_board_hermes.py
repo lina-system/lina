@@ -14,34 +14,41 @@ root's ``config.yaml``::
         board: <slug>                # optional; the Hermes CLI's current board when unset
         work: [/path/to/work]        # the old work record's CLI; without it the record part is off
         home: /path/to/hermes-home   # optional; HERMES_HOME for both commands
-        timeout_seconds: 10
-        cache_seconds: 5
+        timeout_seconds: 10          # one command's limit
 
-Unset, nothing runs. A reply is kept in memory for ``cache_seconds``, a failure too, so a hung command is not run again
-on every poll; nothing is written to disk. Items from this source carry ids prefixed ``hermes:`` and ``readOnly: true``;
-LINA's write routes refuse such ids with 409 (:data:`READ_ONLY`).
+Unset, nothing runs. The commands never run in a request (lina#533): the board takes ``list`` plus one ``show`` per
+card, minutes on a big board, so a background reader (:class:`_Reader`) runs one pass at a time, when the server starts,
+:data:`PASS_EVERY_S` after the last pass, and as soon as ``kanban watch`` prints an event, each pass bounded by
+:data:`PASS_LIMIT_S`. A request serves the last good pass with its time (``hermesAt``); before the first one ends, or
+while the passes fail, it adds one ``errors`` entry. ``show`` runs only for cards not done and cards done within the
+app's done window (``lina_board.DONE_WINDOW_S``); every other done card is its ``list`` row alone, marked
+``detail: false``. Nothing is written to disk. Items from this source carry ids prefixed ``hermes:`` and
+``readOnly: true``; LINA's write routes refuse such ids with 409 (:data:`READ_ONLY`).
 """
 
 from __future__ import annotations
 
 import dataclasses
 import json
+import logging
 import shlex
 import subprocess
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 PREFIX = "hermes:"
 SOURCE = "hermes"
 DEFAULT_TIMEOUT_S = 10.0
-DEFAULT_CACHE_S = 5.0
 SHOW_WORKERS = 4
+PASS_EVERY_S = 15.0
+PASS_LIMIT_S = 120.0
+WATCH_POLL_S = 2.0
+FIRST_PASS = "the first read of the Hermes board has not ended yet"
 READ_ONLY = "read only: this item is on the Hermes board or in the old work record; change it there"
-_CACHE: dict[tuple, tuple[float, bool, Any]] = {}
-_CACHE_LOCK = threading.Lock()
+logger = logging.getLogger(__name__)
 
 
 class SourceError(RuntimeError):
@@ -55,7 +62,6 @@ class Source:
     work: tuple[str, ...] | None
     home: str | None
     timeout: float
-    cache: float
 
 
 def is_hermes(item_id: object) -> bool:
@@ -120,8 +126,7 @@ def source(sec: dict) -> Source:
     if command is None and work is None:
         raise SourceError("board.hermes needs command (the Hermes Agent CLI) or work (the old record's CLI)")
     return Source(command, board.strip() if board else None, work, str(Path(home).expanduser()) if home else None,
-                  _seconds(sec, "timeout_seconds", DEFAULT_TIMEOUT_S, positive=True),
-                  _seconds(sec, "cache_seconds", DEFAULT_CACHE_S, positive=False))
+                  _seconds(sec, "timeout_seconds", DEFAULT_TIMEOUT_S, positive=True))
 
 
 # ---------------------------------------------------------------- running the commands
@@ -134,13 +139,29 @@ def _env(src: Source) -> dict[str, str]:
     return env
 
 
-def _call(src: Source, argv: tuple[str, ...]) -> Any:
+@dataclasses.dataclass(frozen=True)
+class _Budget:
+    """One pass's limit: :data:`PASS_LIMIT_S` from its start, and its reader still running."""
+    deadline: float
+    stopped: threading.Event
+
+    def left(self) -> float:
+        if self.stopped.is_set():
+            raise SourceError("the Hermes board reader stopped")
+        left = self.deadline - time.monotonic()
+        if left <= 0:
+            raise SourceError(f"the read of the Hermes board passed its {PASS_LIMIT_S:g}s limit")
+        return left
+
+
+def _call(src: Source, argv: tuple[str, ...], budget: _Budget) -> Any:
     shown = shlex.join(argv)
+    timeout = min(src.timeout, budget.left())
     try:
         done = subprocess.run(list(argv), capture_output=True, text=True, encoding="utf-8", errors="replace",
-                              timeout=src.timeout, env=_env(src), stdin=subprocess.DEVNULL, check=False)
+                              timeout=timeout, env=_env(src), stdin=subprocess.DEVNULL, check=False)
     except subprocess.TimeoutExpired as exc:
-        raise SourceError(f"{shown} timed out after {src.timeout:g}s") from exc
+        raise SourceError(f"{shown} timed out after {timeout:g}s") from exc
     except OSError as exc:
         raise SourceError(f"{shown}: {exc}") from exc
     if done.returncode:
@@ -152,67 +173,257 @@ def _call(src: Source, argv: tuple[str, ...]) -> Any:
         raise SourceError(f"{shown} did not print JSON") from exc
 
 
-def _cached(src: Source, argv: tuple[str, ...]) -> Any:
-    """One command's reply, run again only ``cache_seconds`` after it ended (a command slower than that would
-    otherwise run on every read); a failure is kept as long and raised again."""
-    key, now = (argv, src.home), time.monotonic()
-    with _CACHE_LOCK:
-        hit = _CACHE.get(key)
-    if hit is not None and hit[0] > now:
-        if not hit[1]:
-            raise SourceError(hit[2])
-        return hit[2]
-    try:
-        value, entry = _call(src, argv), None
-    except SourceError as exc:
-        value, entry = None, (False, str(exc))
-    ended = time.monotonic()
-    with _CACHE_LOCK:
-        for old in [k for k, v in _CACHE.items() if v[0] <= ended]:
-            del _CACHE[old]
-        _CACHE[key] = (ended + src.cache, *(entry or (True, value)))
-    if entry is not None:
-        raise SourceError(entry[1])
-    return value
-
-
-def _kanban(src: Source, verb: str, *args: str) -> Any:
+def _kanban_argv(src: Source, verb: str, *args: str) -> tuple[str, ...]:
     if src.command is None:
         raise SourceError("board.hermes.command is not set")
-    return _cached(src, (*src.command, "kanban", *(("--board", src.board) if src.board else ()), verb, *args))
+    return (*src.command, "kanban", *(("--board", src.board) if src.board else ()), verb, *args)
 
 
-def card_list(src: Source) -> list[dict]:
+def card_list(src: Source, budget: _Budget) -> list[dict]:
     """``kanban list --json``: the board's cards (archived ones are not listed)."""
-    rows = _kanban(src, "list", "--json")
+    rows = _call(src, _kanban_argv(src, "list", "--json"), budget)
     if not isinstance(rows, list) or not all(isinstance(r, dict) and r.get("id") for r in rows):
         raise SourceError("kanban list --json is not a list of cards")
     return [r for r in rows if r.get("status") != "archived"]
 
 
-def card_show(src: Source, raw: str) -> dict:
+def card_show(src: Source, raw: str, budget: _Budget) -> dict:
     """``kanban show <id> --json``: the card with its comments, events, runs and links."""
-    reply = _kanban(src, "show", raw, "--json")
+    reply = _call(src, _kanban_argv(src, "show", raw, "--json"), budget)
     if not isinstance(reply, dict) or not isinstance(reply.get("task"), dict):
         raise SourceError(f"kanban show {raw} --json is not a card")
     return reply
 
 
-def cards(src: Source) -> list[dict]:
-    """``show`` of every listed card, a few at a time."""
-    ids = [str(row["id"]) for row in card_list(src)]
-    with ThreadPoolExecutor(SHOW_WORKERS) as pool:
-        return list(pool.map(lambda raw: card_show(src, raw), ids))
+def _shown(row: dict, now: float) -> bool:
+    """A card whose detail the app shows: not done, or done within the app's done window."""
+    from hermes_cli.kanban_db import _to_epoch
+    from hermes_cli.lina_board import DONE_WINDOW_S
+    if row.get("status") != "done":
+        return True
+    ended = _to_epoch(row.get("completed_at"))
+    return ended is not None and now - ended <= DONE_WINDOW_S
 
 
-def record(src: Source) -> dict | None:
-    """``<work> json``: the old record's items and agents; None when the record part is not set."""
+def _listed_only(row: dict, links: dict[str, dict[str, list[str]]]) -> dict:
+    """A done card outside the window as ``show`` would give it, from its ``list`` row alone (``detail: False``). Its
+    links come from the shown cards' (*links*), so a goal and its work cards keep their places; a link between two
+    such cards is not known."""
+    raw = str(row["id"])
+    return {"task": row, "parents": links["parents"].get(raw, []), "children": links["children"].get(raw, []),
+            "comments": [], "events": [], "runs": [], "detail": False}
+
+
+def _links(shows: list[dict]) -> dict[str, dict[str, list[str]]]:
+    """The other side of each shown card's links: ``children[x]`` lists the shown cards that name *x* a parent,
+    ``parents[x]`` the shown cards that name *x* a child."""
+    links: dict[str, dict[str, list[str]]] = {"children": {}, "parents": {}}
+    for show in shows:
+        raw = str(show["task"]["id"])
+        for parent in show.get("parents") or []:
+            links["children"].setdefault(str(parent), []).append(raw)
+        for child in show.get("children") or []:
+            links["parents"].setdefault(str(child), []).append(raw)
+    return links
+
+
+def read_cards(src: Source, budget: _Budget) -> list[dict]:
+    """One pass's cards in ``list`` order: ``show`` of every card :func:`_shown`, a few at a time, and the list row
+    alone of every other. A failing ``show`` fails the pass and cancels the ones not started."""
+    rows, now = card_list(src, budget), time.time()
+    wanted = [str(row["id"]) for row in rows if _shown(row, now)]
+    pool = ThreadPoolExecutor(SHOW_WORKERS, thread_name_prefix="lina-hermes-show")
+    try:
+        shows = dict(zip(wanted, pool.map(lambda raw: card_show(src, raw, budget), wanted)))
+    finally:
+        pool.shutdown(cancel_futures=True)
+    links = _links(list(shows.values()))
+    return [shows.get(str(row["id"])) or _listed_only(row, links) for row in rows]
+
+
+def read_record(src: Source, budget: _Budget) -> dict:
+    """``<work> json``: the old record's items and agents."""
     if src.work is None:
-        return None
-    reply = _cached(src, (*src.work, "json"))
+        raise SourceError("board.hermes.work is not set")
+    reply = _call(src, (*src.work, "json"), budget)
     if not isinstance(reply, dict) or not isinstance(reply.get("items"), list):
         raise SourceError("work json has no items list")
     return reply
+
+
+# ---------------------------------------------------------------- the background reader (lina#533)
+@dataclasses.dataclass(frozen=True)
+class Part:
+    """One part of the reader's state: the last good value (None before one), the wall time its pass ended, and the
+    error of the latest pass when it did not end well (:data:`FIRST_PASS` until the first pass ends)."""
+    value: Any = None
+    at: float | None = None
+    error: str | None = FIRST_PASS
+
+
+def served(part: Part, errors: list[dict]) -> Any:
+    """*part*'s value for a reply; a part not read yet, or whose latest pass failed, adds one ``errors`` entry saying
+    how old the served value is."""
+    if part.error is not None:
+        age = "" if part.at is None else f"; serving the read of {max(0, round(time.time() - part.at))}s ago"
+        errors.append({"source": SOURCE, "message": f"{part.error}{age}"[:300]})
+    return part.value
+
+
+class _Reader:
+    """The passes of one configured source, in a thread of their own: one pass at a time, then a wait of
+    :data:`PASS_EVERY_S` cut short when ``kanban watch`` (a second thread) prints an event. It ends when stopped or
+    when the config no longer sets this source. Requests only read :meth:`part`."""
+
+    def __init__(self, root: Path, src: Source):
+        self.root, self.src = root, src
+        self.passes = 0
+        self._parts = {"cards": Part(), "record": Part()}
+        self._cond = threading.Condition()
+        self._wake, self._stopped = threading.Event(), threading.Event()
+        self._watch: subprocess.Popen | None = None
+        from agent.memory_provider import spawn_context_thread
+        spawn_context_thread(self._loop, name="lina-hermes-board").start()
+        if src.command is not None:
+            spawn_context_thread(self._watch_loop, name="lina-hermes-watch").start()
+
+    @property
+    def stopped(self) -> bool:
+        return self._stopped.is_set()
+
+    def part(self, name: str) -> Part:
+        with self._cond:
+            return self._parts[name]
+
+    def wait(self, passes: int, timeout: float) -> bool:
+        """True once *passes* passes have ended (tests, and the measurement in lina#533's report)."""
+        with self._cond:
+            return self._cond.wait_for(lambda: self.passes >= passes, timeout)
+
+    def stop(self) -> None:
+        self._stopped.set()
+        self._wake.set()
+        with self._cond:
+            proc = self._watch
+        if proc is not None and proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+
+    def _still_set(self) -> bool:
+        from hermes_cli.config_backend import ConfigBackendUnavailable
+        try:
+            sec = section(self.root)
+            return sec is not None and source(sec) == self.src
+        except (SourceError, ConfigBackendUnavailable, OSError, ValueError):
+            logger.warning("hermes board: the config could not be read; this reader stops", exc_info=True)
+            return False
+
+    def _loop(self) -> None:
+        while not self.stopped and self._still_set():
+            self._wake.clear()
+            self._pass()
+            self._wake.wait(PASS_EVERY_S)
+        self.stop()
+
+    def _pass(self) -> None:
+        budget = _Budget(time.monotonic() + PASS_LIMIT_S, self._stopped)
+        reads: dict[str, Callable[[], Any]] = {}
+        if self.src.work is not None:
+            reads["record"] = lambda: read_record(self.src, budget)
+        if self.src.command is not None:
+            reads["cards"] = lambda: read_cards(self.src, budget)
+        with ThreadPoolExecutor(len(reads), thread_name_prefix="lina-hermes-pass") as pool:
+            for name, read in reads.items():
+                pool.submit(self._keep, name, read)
+        with self._cond:
+            self.passes += 1
+            self._cond.notify_all()
+
+    def _keep(self, name: str, read: Callable[[], Any]) -> None:
+        """One part of a pass. The command's output is outside data, so any error in reading it is kept as this
+        part's error (the last good value stays served) and the next pass tries again."""
+        try:
+            value = read()
+        except Exception as exc:
+            logger.warning("hermes board: the %s read failed", name, exc_info=not isinstance(exc, SourceError))
+            message = str(exc) if isinstance(exc, SourceError) else f"{type(exc).__name__}: {exc}"
+            with self._cond:
+                old = self._parts[name]
+                self._parts[name] = Part(old.value, old.at, message)
+            return
+        with self._cond:
+            self._parts[name] = Part(value, time.time(), None)
+
+    def _watch_loop(self) -> None:
+        """``kanban watch``: every event line it prints starts the next pass now. Restarted after
+        :data:`PASS_EVERY_S` when it ends; the timer alone keeps the board read meanwhile."""
+        argv = list(_kanban_argv(self.src, "watch", "--interval", f"{WATCH_POLL_S:g}"))
+        while not self.stopped:
+            try:
+                # health: allow HX006 -- kanban watch is a stream that runs until the reader stops; stop() ends and reaps it
+                proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                        stdin=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace",
+                                        env=_env(self.src))
+            except OSError:
+                logger.warning("hermes board: %s did not start", shlex.join(argv), exc_info=True)
+            else:
+                with self._cond:
+                    self._watch = proc
+                if self.stopped:
+                    proc.terminate()
+                for line in proc.stdout or ():
+                    if line.strip() and not line.startswith("Watching "):
+                        self._wake.set()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()
+            self._stopped.wait(PASS_EVERY_S)
+
+
+_READER: _Reader | None = None
+_READER_LOCK = threading.Lock()
+
+
+def reader(root: Path | None = None) -> _Reader | None:
+    """The running reader of the set source, started on first use (:func:`start` starts it with the server); None
+    when the source is off. A reader of another config, or one that ended, is stopped and replaced; a source set
+    wrong stops it and raises SourceError."""
+    global _READER
+    if root is None:
+        from hermes_cli.lina_board import _root
+        root = _root()
+    sec = section(root)
+    try:
+        src = None if sec is None else source(sec)
+    except SourceError:
+        stop()
+        raise
+    with _READER_LOCK:
+        if _READER is not None and (_READER.stopped or (_READER.root, _READER.src) != (root, src)):
+            _READER.stop()
+            _READER = None
+        if src is not None and _READER is None:
+            _READER = _Reader(root, src)
+        return _READER
+
+
+def start() -> Callable[[], None]:
+    """The server's start: the first pass begins now, not on the first request. Returns the stop for shutdown."""
+    reader()
+    return stop
+
+
+def stop() -> None:
+    global _READER
+    with _READER_LOCK:
+        running, _READER = _READER, None
+    if running is not None:
+        running.stop()
 
 
 # ---------------------------------------------------------------- the old record in the board's shapes
@@ -251,33 +462,35 @@ def _record_rows(reply: dict, root: Path) -> dict:
 
 
 def merge(work: dict | None, errors: list[dict], root: Path) -> dict | None:
-    """LINA's own record part (``lina_board.work_read``) with the old record's rows added after its own. Off, it is
-    returned as it is; a failing command adds one ``errors`` entry and LINA's part is served alone, and a failing
-    LINA record leaves the old record's rows served alone."""
-    sec = section(root)
-    if sec is None:
-        return work
+    """LINA's own record part (``lina_board.work_read``) with the old record's rows of the last good pass added after
+    its own, and that pass's time as ``hermesAt``. Off, it is returned as it is; no good pass yet, or a failing one,
+    adds one ``errors`` entry (the last good rows stay served), and a failing LINA record leaves the old record's rows
+    served alone."""
     from hermes_cli.lina_board import _source
-
-    def read() -> dict | None:
-        reply = record(source(sec))
-        return None if reply is None else _record_rows(reply, root)
-    extra = _source(SOURCE, errors, read)
+    running = _source(SOURCE, errors, lambda: reader(root))
+    if running is None or running.src.work is None:
+        return work
+    part = running.part("record")
+    reply = served(part, errors)
+    extra = None if reply is None else _source(SOURCE, errors, lambda: _record_rows(reply, root))
     if work is None or extra is None:
-        return work if extra is None else extra
-    return {**work, "agents": {**extra["agents"], **work["agents"]},
-            "decide": work["decide"] + extra["decide"], "mine": work["mine"] + extra["mine"],
-            "due": {name: rows + extra["due"].get(name, []) for name, rows in work["due"].items()}}
+        merged = work if extra is None else extra
+    else:
+        merged = {**work, "agents": {**extra["agents"], **work["agents"]},
+                  "decide": work["decide"] + extra["decide"], "mine": work["mine"] + extra["mine"],
+                  "due": {name: rows + extra["due"].get(name, []) for name, rows in work["due"].items()}}
+    return None if merged is None else {**merged, "hermesAt": part.at}
 
 
 def only_hermes_agent(agent: str, root: Path) -> bool:
-    """An agent the old record knows and LINA's own record does not: a quick add to it would be a write there."""
+    """An agent the old record knows and LINA's own record does not: a quick add to it would be a write there. Read
+    from the last good pass; before one, or with the source set wrong, no agent is known."""
     from hermes_cli.work import env
-    sec = section(root)
-    if sec is None or agent in env.load(root).agents:
-        return False
     try:
-        reply = record(source(sec))
+        running = reader(root)
     except SourceError:
         return False
+    if running is None or running.src.work is None or agent in env.load(root).agents:
+        return False
+    reply = running.part("record").value
     return reply is not None and agent in (reply.get("bots") or {})
