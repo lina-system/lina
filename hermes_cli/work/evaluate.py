@@ -7,6 +7,7 @@ import re
 import time
 
 from hermes_cli.work.common import ago, now
+from hermes_cli.work.kinds import TODO, kind_now
 from hermes_cli.work.links import gh_repo, kanban_read, kanban_state_word, link_label, refuse_reason, run_check
 from hermes_cli.work.locale import t
 from hermes_cli.work.people import agent_name, owner
@@ -222,7 +223,7 @@ def _manager(r: dict, c: dict, ctx: dict, s: Scan):
 
 
 def _goal_kids(r: dict, c: dict, ctx: dict, s: Scan):
-    kids = [x for x in ctx["recs"].values() if x.get("parent") == r["id"] and x["kind"] == "할 일"
+    kids = [x for x in ctx["recs"].values() if x.get("parent") == r["id"] and kind_now(x["kind"]) == TODO
             and x.get("state") != "dropped"]
     kd = [x for x in kids if x.get("state") == "done" or ctx["prev"].get(x["id"], {}).get("pass")]
     c["kids"] = [len(kd), len(kids)]

@@ -8,6 +8,7 @@ from hermes_cli.work import ledger
 from hermes_cli.work.common import die, warn
 from hermes_cli.work.evaluate import item_name
 from hermes_cli.work.items import get, mutate
+from hermes_cli.work.kinds import TODO, kind_now
 from hermes_cli.work.links import kanban_parts, norm_link
 from hermes_cli.work.locale import kind, t
 from hermes_cli.work.people import owner
@@ -37,7 +38,7 @@ def _comment(link: str, body: str) -> None:
 def _link_items(ids: list[str], link: str, want: str, as_) -> list[dict]:
     recs, _ = ledger.read_all()
     for i in ids:
-        if get(recs, i)["kind"] != want:
+        if kind_now(get(recs, i)["kind"]) != want:
             die(t("{id}는 {kind}이 아니다", id=i, kind=kind(want)))
     out = []
     for i in ids:
@@ -65,7 +66,7 @@ def link_card(card: str, *, goal: str | None = None, todos: list[str] | None = N
         _comment(link, t("기록의 목표: {id} {name}", id=g["id"], name=item_name(g)))
         lines.append(t("{card}: 목표 {id}", card=link[7:], id=g["id"]))
     if todos:
-        rs = _link_items([x.upper() for x in todos], link, "할 일", as_)
+        rs = _link_items([x.upper() for x in todos], link, TODO, as_)
         covered = card_todos(link[7:])
         _comment(link, t("기록의 할 일: {ids}", ids=", ".join(covered)))
         lines.append(t("{card}: 할 일 {ids}", card=link[7:], ids=", ".join(r["id"] for r in rs)))

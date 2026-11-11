@@ -87,7 +87,7 @@ def test_store_matches_sqlite_when_records_are_appended(pg_db: PgDb, tmp_path: P
         {"id": "A1", "kind": "영역", "title": "Area", "by": "owner", "op": "add"},
         {"id": "G1", "kind": "목표", "parent": "A1", "title": "Goal", "by": "owner", "op": "add",
          "links": ["gh:o/r#1"], "promise": True, "stall": "1d"},
-        {"id": "T1", "kind": "할 일", "parent": "G1", "title": "Todo '한글'\\\n", "by": "owner", "op": "add",
+        {"id": "T1", "kind": "작업", "parent": "G1", "title": "Todo '한글'\\\n", "by": "owner", "op": "add",
          "links": ["kanban:t_0123abcd", "omo:OT-ABC123"], "wait": {"on": "answer", "since": 1800000000},
          "decide": "Choose", "decide_choices": ["yes", "no"]},
     ]

@@ -7,10 +7,12 @@ Korean in the code and looked up in ``locale_en.MESSAGES`` for en; a template mi
 
 from __future__ import annotations
 
+from hermes_cli.work.kinds import TODO, kind_now
+
 LABELS: dict[str, dict[str, object]] = {
     "ko": {
         "owner_word": "주인",
-        "kind": {"영역": "영역", "목표": "목표", "할 일": "할 일", "메모": "메모"},
+        "kind": {"영역": "영역", "목표": "목표", TODO: "작업", "메모": "메모"},
         "status": {"done": "끝남", "dropped": "내림", "ok": "정상", "bad": "이상", "check_left": "검사 남음",
                    "open": "열림", "working": "하는 중", "waiting": "기다림", "stalled": "멈춤", "unknown": "모름",
                    "memo": "메모", "archive_due": "보관할 것", "evidence_wait": "증거 확인 필요",
@@ -30,7 +32,7 @@ LABELS: dict[str, dict[str, object]] = {
     },
     "en": {
         "owner_word": "owner",
-        "kind": {"영역": "area", "목표": "goal", "할 일": "to-do", "메모": "memo"},
+        "kind": {"영역": "area", "목표": "goal", TODO: "to-do", "메모": "memo"},
         "status": {"done": "done", "dropped": "dropped", "ok": "ok", "bad": "failing", "check_left": "check left",
                    "open": "open", "working": "working", "waiting": "waiting", "stalled": "stalled",
                    "unknown": "unknown", "memo": "memo", "archive_due": "to archive",
@@ -71,7 +73,7 @@ def word(table: str, key: str, default: str | None = None) -> str:
 
 
 def kind(k: str) -> str:
-    return word("kind", k)
+    return word("kind", kind_now(k))
 
 
 def status(code: str) -> str:

@@ -9,12 +9,13 @@ import time
 from hermes_cli.work import ledger
 from hermes_cli.work.common import Lock, die, now
 from hermes_cli.work.env import current
+from hermes_cli.work.kinds import TODO, kind_now
 from hermes_cli.work.locale import kind as kind_word, status, t
 from hermes_cli.work.writing import date_word
 
-KINDS = {"영역": "A", "목표": "G", "할 일": "T", "메모": "M"}
-KIND_IN = {"영역": "영역", "area": "영역", "목표": "목표", "goal": "목표", "할일": "할 일", "할 일": "할 일",
-           "todo": "할 일", "to-do": "할 일", "메모": "메모", "memo": "메모"}
+KINDS = {"영역": "A", "목표": "G", TODO: "T", "메모": "M"}
+KIND_IN = {"영역": "영역", "area": "영역", "목표": "목표", "goal": "목표", "작업": TODO, "task": TODO, "할일": TODO,
+           "할 일": TODO, "todo": TODO, "to-do": TODO, "메모": "메모", "memo": "메모"}
 OPEN_OPS = ("note", "reopen", "link", "unlink", "evidence", "quote")
 
 
@@ -112,7 +113,7 @@ def due_of(value, kind: str, board: bool = False) -> str:
     if value is None:
         return ""
     v = value.strip()
-    if v and kind not in ("목표", "할 일") and not (board and kind == "메모"):
+    if v and kind_now(kind) not in ("목표", TODO) and not (board and kind == "메모"):
         die(t("--due는 목표·할 일에만 쓴다"))
     if v:
         try:
@@ -126,7 +127,7 @@ def due_of(value, kind: str, board: bool = False) -> str:
 
 def due_hint(r: dict, texts) -> None:
     """One line at the end of add/edit/note output when the text names a date and the item has no due date."""
-    if r.get("kind") in ("목표", "할 일") and not r.get("due") and any(date_word(x or "") for x in texts):
+    if kind_now(r.get("kind")) in ("목표", TODO) and not r.get("due") and any(date_word(x or "") for x in texts):
         print(t("날짜가 보인다. 마감일이면: work edit {id} --due YYYY-MM-DD", id=r["id"]))
 
 

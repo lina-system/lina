@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from hermes_cli.work import ledger
 from hermes_cli.work.common import Lock, iso, load_json, now, paths, save_json, warn
 from hermes_cli.work.evaluate import ALERT, evaluate, item_name
+from hermes_cli.work.kinds import TODO, kind_now
 from hermes_cli.work.locale import status, t
 from hermes_cli.work.people import name
 
@@ -31,7 +32,7 @@ def recompute() -> None:
     if not ids:
         return
     recs, _ = ledger.read_all()
-    goals = [recs[i]["parent"] for i in ids if i in recs and recs[i].get("kind") == "할 일" and recs[i].get("parent")]
+    goals = [recs[i]["parent"] for i in ids if i in recs and kind_now(recs[i].get("kind")) == TODO and recs[i].get("parent")]
     ids = [i for i in dict.fromkeys(ids + goals) if i in recs and recs[i].get("state") == "open"]
     if ids:
         try:
@@ -53,9 +54,9 @@ def build_ctx(recs: dict):
 
 def _evaluate_all(recs: dict, ids: list[str], ctx: dict, st: dict) -> dict:
     out = dict(st.get("items", {}))
-    tier = {k: [i for i in ids if recs[i]["kind"] == k] for k in ("할 일", "목표")}
+    tier = {k: [i for i in ids if kind_now(recs[i]["kind"]) == k] for k in (TODO, "목표")}
     with ThreadPoolExecutor(6) as ex:
-        out.update(dict(zip(tier["할 일"], ex.map(lambda i: evaluate(recs[i], ctx), tier["할 일"]))))
+        out.update(dict(zip(tier[TODO], ex.map(lambda i: evaluate(recs[i], ctx), tier[TODO]))))
         ctx["prev"] = out
         out.update(dict(zip(tier["목표"], ex.map(lambda i: evaluate(recs[i], ctx), tier["목표"]))))
     for i in ids:
@@ -76,7 +77,7 @@ def _close_passed(recs: dict, ids: list[str], out: dict, dry: bool):
             for i in ids:
                 c, r = out[i], cur.get(i)
                 if (c.get("pass") and r and r.get("state") == "open" and not r.get("every")
-                        and r.get("rev") == recs[i].get("rev") and r["kind"] in ("목표", "할 일") and not dry):
+                        and r.get("rev") == recs[i].get("rev") and kind_now(r["kind"]) in ("목표", TODO) and not dry):
                     ledger.append(r, "done", "checker", state="done", done_at=now(), done_by=t("검사"),
                                   done_evidence=(c.get("check") or {}).get("out", "")[:400])
                     cur[i] = dict(r, state="done")

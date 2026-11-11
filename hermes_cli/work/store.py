@@ -17,7 +17,9 @@ import json
 import re
 from contextlib import contextmanager
 
-TABLE = {"영역": "area", "목표": "goal", "할 일": "todo", "메모": "todo"}
+from hermes_cli.work.kinds import OLD_TODO, TODO, current
+
+TABLE = {"영역": "area", "목표": "goal", TODO: "todo", OLD_TODO: "todo", "메모": "todo"}
 PREFIX_TABLE = {"A": "area", "G": "goal", "T": "todo", "M": "todo"}
 ITEM_ID = "COALESCE(area_id, goal_id, todo_id)"
 TABLES = ("actor", "setting", "status_label", "area", "project", "goal", "todo", "run", "run_todo", "wait",
@@ -91,7 +93,7 @@ def interval_of(value, unit="hours"):
 
 # ---------------------------------------------------------------- reads
 def _ledger(data: str) -> dict:
-    return json.loads(json.loads(data)["ledger"])
+    return current(json.loads(json.loads(data)["ledger"]))
 
 
 def read_all(db):

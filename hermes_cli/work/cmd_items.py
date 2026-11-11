@@ -7,6 +7,7 @@ import sys
 from hermes_cli.work import ledger
 from hermes_cli.work.common import Lock, die, mask, now, writer_profile
 from hermes_cli.work.items import due_hint, get, mutate, parse_day
+from hermes_cli.work.kinds import TODO, kind_now
 from hermes_cli.work.links import norm_link
 from hermes_cli.work.locale import t
 from hermes_cli.work.notify import answering_agent
@@ -85,9 +86,9 @@ def set_decide(r: dict, a) -> None:
 def _wait_on_item(r: dict, a) -> None:
     recs, _ = ledger.read_all()
     target = recs.get(a.on_item.strip().upper())
-    if not target or target["kind"] != "할 일" or target.get("state") != "open" or target["id"] == r["id"]:
+    if not target or kind_now(target["kind"]) != TODO or target.get("state") != "open" or target["id"] == r["id"]:
         die(t("--on-item은 다른 열린 할 일 id다: {v}", v=a.on_item))
-    if r["kind"] != "할 일" or owner() not in (r["by"], target["by"]):
+    if kind_now(r["kind"]) != TODO or owner() not in (r["by"], target["by"]):
         die(t("--on-item: 에이전트의 할 일은 주인 할 일을, 주인 할 일은 열린 할 일을 기다린다"))
     r["wait"] = {"item": target["id"], "since": now()}
 
