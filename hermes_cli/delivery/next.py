@@ -19,7 +19,7 @@ from hermes_cli.delivery.github import GhError, dev_state
 
 NEEDS_ROUTING = "needs-routing"
 _REF = re.compile(r"(?<![\w-])(?:([\w.-]+)/)?([\w.-]+)(?:#| issue #)(\d+)(?!\d)")
-_SERIAL = re.compile(r"^\s*Serial with:(.*)$", re.MULTILINE)
+_SERIAL = re.compile(settings.LIST_ITEM + r"Serial with:(.*)$", re.MULTILINE)
 _SERIAL_REF = re.compile(r"(?:(?:([\w.-]+)/)?([\w.-]+))?#(\d+)(?!\d)")
 _SCOPE = re.compile(r"^\s*[a-z]+\(([^)]+)\)!?:")
 _BRANCH = re.compile(r"^[a-z]+/(\d+)-")
@@ -90,6 +90,21 @@ def size_of(labels: list[str], body: str) -> str | None:
         return found
     line = _SIZE.search(body or "")
     return line.group(1) if line else None
+
+
+def sprint_hold(body: str) -> tuple[str, bool]:
+    """Why the issue waits for the sprint, and whether to show it. An issue written for another sprint stays
+    quiet; a ``Sprint:`` line that names no sprint is shown with the text it reads, so the owner can fix the line
+    (lina#511) instead of only being told the issue has no sprint."""
+    found = settings.issue_sprint(body)
+    if found:
+        return f"not in the current sprint: {settings.sprint_label(found)}", False
+    line = settings.sprint_line(body)
+    if line is None:
+        return "not in the current sprint: no sprint", False
+    reads = "is empty" if not line else f"reads {line!r}"
+    return (f"not in the current sprint: no sprint (the Sprint: line {reads}; write Sprint: M0 S3 or Sprint: S3)",
+            True)
 
 
 def runner_of(labels: list[str], runners: dict[str, str]) -> str | None:
@@ -252,9 +267,8 @@ def decide(snapshot: dict) -> dict:
         if issue["parent"] or issue["title"].strip() == "Roadmap":
             hold("parent", "parent issue" if issue["parent"] else "Roadmap", shown=False)
         elif not settings.in_sprint(issue["body"], sprint):
-            found = settings.issue_sprint(issue["body"])
-            hold("sprint", "not in the current sprint: " + (settings.sprint_label(found) if found else "no sprint"),
-                 shown=False)
+            reason, shown = sprint_hold(issue["body"])
+            hold("sprint", reason, shown=shown)
         elif key in running:
             hold("running", f"already running: {running[key]}")
         elif blockers.get(key):
