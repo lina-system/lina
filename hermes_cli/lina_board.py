@@ -9,16 +9,87 @@ count is the length of a list in the same snapshot. Notice lines are in the work
 
 from __future__ import annotations
 
+import contextvars
 import logging
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
 API_VERSION = 1
 DONE_WINDOW_S = 86400
+# The app polls /board, /devices and /quota together and each outside read is seconds of ssh and OCX calls, so one read
+# answers every request for this long.
+READ_TTL_S = 5
 _WORK_LOCK = threading.Lock()
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class _Read:
+    at: float
+    value: Any = None
+    failure: BaseException | None = None
+    errors: list[dict] = field(default_factory=list)
+    waiting: int = 0
+    ended: float | None = None
+    done: threading.Event = field(default_factory=threading.Event)
+
+    def result(self):
+        if self.failure is not None:
+            raise self.failure
+        return self.value
+
+
+class _SharedReads:
+    """The outside reads (the running runs' live view, the nodes' ``hello`` and ``probe``, the quota) by key: a
+    request that comes while a read runs waits for it instead of starting its own, and the read answers every request
+    for ``READ_TTL_S`` seconds after it ends, a failed one too, so a device that times out is not asked again by every
+    request in that window. Expired reads are dropped when a new one starts (a key names a set of running runs)."""
+
+    def __init__(self, ttl: float):
+        self.ttl = ttl
+        self._lock = threading.Lock()
+        self._reads: dict[tuple, _Read] = {}
+
+    def get(self, key: tuple, read: Callable[[list[dict]], Any]) -> _Read:
+        from hermes_cli.config_backend import ConfigBackendUnavailable
+        with self._lock:
+            got = self._reads.get(key)
+            running = got is not None and got.ended is None
+            if running:
+                got.waiting += 1
+            elif got is not None and self._fresh(got):
+                return got
+            else:
+                for old in [k for k, r in self._reads.items() if r.ended is not None and not self._fresh(r)]:
+                    del self._reads[old]
+                got = self._reads[key] = _Read(at=time.time())
+        if running:
+            got.done.wait()
+            return got
+        try:
+            got.value = read(got.errors)
+        except (Exception, ConfigBackendUnavailable) as exc:  # health: allow BLE001 -- kept for every request it answers: _Read.result re-raises it into _source, which logs the traceback
+            got.failure = exc
+        finally:
+            with self._lock:
+                got.ended = time.time()
+            got.done.set()
+        return got
+
+    def _fresh(self, read: _Read) -> bool:
+        return 0 <= time.time() - read.ended < self.ttl
+
+    def waiting(self, name: str) -> int:
+        """How many requests wait on the running *name* read now."""
+        with self._lock:
+            return sum(read.waiting for key, read in self._reads.items() if key[0] == name and read.ended is None)
+
+
+READS = _SharedReads(READ_TTL_S)
 
 
 def _root() -> Path:
@@ -103,12 +174,39 @@ def _source(name: str, errors: list[dict], read: Callable[[], Any]):
     a separate store, device or process (sqlite, psql, ssh, OCX) with its own error types, and one that fails must not
     take the others down, so any error is caught here and reported."""
     from hermes_cli.config_backend import ConfigBackendUnavailable
+    started = time.monotonic()
     try:
         return read()
     except (Exception, ConfigBackendUnavailable) as exc:
         logger.warning("board source %s failed", name, exc_info=True)
         errors.append({"source": name, "message": f"{type(exc).__name__}: {exc}"[:300]})
         return None
+    finally:
+        logger.debug("board source %s took %.2fs", name, time.monotonic() - started)
+
+
+def _outside(name: str, root: Path, errors: list[dict], read: Callable[[list[dict]], Any]) -> tuple[Any, float | None]:
+    """An outside read as a source, through :data:`READS`: ``(value, the time it was read)``, ``(None, None)`` when it
+    failed. The errors the read added and its failure reach every request it answers."""
+    got: list[_Read] = []
+
+    def shared():
+        got.append(READS.get((name, str(root), str(_worker_base())), read))
+        errors.extend(got[0].errors)
+        return got[0].result()
+    value = _source(name, errors, shared)
+    return value, (got[0].at if got and got[0].failure is None else None)
+
+
+def _parallel(reads: dict[str, Callable[[list[dict]], Any]]) -> tuple[dict[str, Any], list[dict]]:
+    """Each read in its own thread with the request's context (they wait on ssh, OCX and the record, not the CPU);
+    the errors in the order of *reads*, whatever order the reads end in."""
+    errors: dict[str, list[dict]] = {name: [] for name in reads}
+    with ThreadPoolExecutor(len(reads), thread_name_prefix="lina-board") as pool:
+        futures = {name: pool.submit(contextvars.copy_context().run, read, errors[name])
+                   for name, read in reads.items()}
+        values = {name: future.result() for name, future in futures.items()}
+    return values, [error for name in reads for error in errors[name]]
 
 
 def notices(work: dict | None, review: list[dict]) -> list[dict]:
@@ -176,7 +274,8 @@ def due(now: float | None = None) -> dict:
 def devices(now: float | None = None) -> dict:
     now, root, errors = time.time() if now is None else now, _root(), []
     found = _source("devices", errors, lambda: devices_read(root, now, errors)) or {}
-    return {"version": API_VERSION, "at": now, "errors": errors, "machines": found.get("machines") or [],
+    return {"version": API_VERSION, "at": min(now, found.get("at") or now), "errors": errors,
+            "machines": found.get("machines") or [],
             "person": found.get("person") or []}
 
 
@@ -185,19 +284,28 @@ def quota(now: float | None = None) -> dict:
     OCX could not be read)."""
     from hermes_cli.lina_board_quota import view
     now, root, errors = time.time() if now is None else now, _root(), []
-    data = _source("quota", errors, lambda: view(root, now))
-    return {"version": API_VERSION, "at": now, "errors": errors, "quota": data["quota"] if data else [],
+    data, at = _outside("quota-view", root, errors, lambda _errs: view(root, now))
+    return {"version": API_VERSION, "at": min(now, at or now), "errors": errors,
+            "quota": data["quota"] if data else [],
             "missing": data["missing"] if data else None}
 
 
 def board(now: float | None = None) -> dict:
-    """``GET /api/lina/board``: one snapshot of everything above."""
-    now, root, errors = time.time() if now is None else now, _root(), []
-    work = own_and_hermes_work(root, errors)
+    """``GET /api/lina/board``: one snapshot of everything above. The four reads run at once; their calls to other
+    devices and to OCX are shared (:data:`READS`: the quota view, the nodes' ``hello`` and ``probe``, the running
+    runs' live view), so ``at`` is the time of the oldest of those served. The record, the hub's runs and the read
+    marks are read for every request, so a write (a read mark, ``counts.unread``) shows at once."""
+    now, root = time.time() if now is None else now, _root()
+    got, errors = _parallel({
+        "work": lambda errs: (own_and_hermes_work(root, errs), now),
+        "worker": lambda errs: (_source("worker", errs, lambda: worker_read(root, now)), None),
+        "devices": lambda errs: _devices_part(root, now, errs),
+        "quota": lambda errs: _outside("quota", root, errs, lambda _errs: quota_read(root, now)),
+    })
+    (work, _), (cards, _), (found, _), (services, _) = got["work"], got["worker"], got["devices"], got["quota"]
+    at = min([now] + [read_at for _, read_at in got.values() if read_at is not None])
     counted = None if _own_failed(errors) else work
-    cards = _source("worker", errors, lambda: worker_read(root, now))
-    machines = (_source("devices", errors, lambda: devices_read(root, now, errors)) or {}).get("machines")
-    services = _source("quota", errors, lambda: quota_read(root, now))
+    machines = (found or {}).get("machines")
     review = [c for c in cards or [] if c["state"] == "waiting" and _verdict_agent(c) is None]
     with _WORK_LOCK:
         lines = _source("work", errors, lambda: _notices_in_locale(root, work, review))
@@ -210,7 +318,7 @@ def board(now: float | None = None) -> dict:
     counts["unread"] = (sum(not note["read"] for note in lines)
                         if lines is not None and counted is not None and cards is not None else None)
     return {
-        "version": API_VERSION, "at": now, "errors": errors, "counts": counts,
+        "version": API_VERSION, "at": at, "errors": errors, "counts": counts,
         "cards": cards or [],
         "inbox": {"decide": (work or {}).get("decide", []), "review": [c["id"] for c in review],
                   "mine": [{k: row[k] for k in ("id", "title", "waiting", "due", "agent", "readOnly") if k in row}
@@ -219,6 +327,13 @@ def board(now: float | None = None) -> dict:
         "notices": lines or [], "machines": machines or [], "quota": services or [],
         "writer": _writer(now), **_hermes_at(work),
     }
+
+
+def _devices_part(root: Path, now: float, errors: list[dict]) -> tuple[Any, float | None]:
+    """The devices view, read for every request: only the nodes' ``hello`` and ``probe`` are shared
+    (``lina_board_devices.nodes``); the sign-ins running now and the background reads that landed show at once."""
+    found = _source("devices", errors, lambda: devices_read(root, now, errors))
+    return found, found.get("at") if isinstance(found, dict) else None
 
 
 def _hermes_at(work: dict | None) -> dict:

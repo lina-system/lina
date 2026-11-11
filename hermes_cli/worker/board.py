@@ -101,6 +101,15 @@ def _lives(hub: Hub, jobs: list[dict]) -> dict[str, dict]:
     return {tid: dict(meta.get("live") or {}) for tid, meta in remote.items() if not meta.get("unreachable")}
 
 
+def _shared_lives(worker_root: Path, jobs: list[dict]) -> dict[str, dict]:
+    """:func:`_lives` through the board's shared reads (``lina_board.READS``, lina#573): the same running runs ask
+    their devices once per ``READ_TTL_S`` seconds, whoever asks for the board."""
+    from hermes_cli.lina_board import READS
+    running = tuple(sorted((job["id"], job["host"]) for job in jobs if job.get("state") == "running" and job.get("host")))
+    return READS.get(("lives", str(worker_root), running),
+                     lambda _errors: _lives(Hub(worker_root, out=lambda *_: None), jobs)).result()
+
+
 def cards(worker_root: Path, now: float) -> list[dict]:
     """Runs not started from a card on LINA's own board (lina#112 serves those) that run, wait, or moved in the last
     two days, newest first. A run handed out from a Hermes card is listed here with its card and board."""
@@ -109,7 +118,7 @@ def cards(worker_root: Path, now: float) -> list[dict]:
     jobs = [job for job in store.all() if (not job.get("card") or kanban_link.on_hermes(job["card"]))
             and _recent(job, ends.get(job["id"]), now)]
     receipts = record.receipts_by_task(store)
-    lives = _lives(Hub(worker_root, out=lambda *_: None), jobs)
+    lives = _shared_lives(worker_root, jobs)
     from hermes_cli.lina_board_plain import lookup
     plain = lookup("run", [job["id"] for job in jobs])
     out = []
