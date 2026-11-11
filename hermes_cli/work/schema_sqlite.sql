@@ -245,22 +245,29 @@ SELECT id, runner, title, mode, topic, agent_id, goal_id, device, created_at, st
     END AS reason
 FROM r;
 
+-- Each to-do's latest run and latest open wait come from one pass over v_run and wait (migration 0010, lina#595);
+-- on a tie the smaller id wins.
 CREATE VIEW IF NOT EXISTS v_todo AS
-WITH runs AS (
-    SELECT rt.todo_id,
-        count(CASE WHEN vr.status <> 'dropped' THEN 1 END) AS run_count,
-        max(vr.status = 'in_progress') AS any_running,
-        max(vr.status = 'waiting') AS any_waiting,
-        (SELECT v.status FROM run_todo x JOIN v_run v ON v.id = x.run_id
-         WHERE x.todo_id = rt.todo_id AND v.status <> 'dropped' ORDER BY v.created_at DESC LIMIT 1) AS last_status,
-        (SELECT v.reason FROM run_todo x JOIN v_run v ON v.id = x.run_id
-         WHERE x.todo_id = rt.todo_id AND v.status <> 'dropped' ORDER BY v.created_at DESC LIMIT 1) AS last_reason
+WITH todo_runs AS (
+    SELECT rt.todo_id, vr.status, vr.reason,
+        row_number() OVER (PARTITION BY rt.todo_id
+                           ORDER BY vr.status = 'dropped', vr.created_at DESC, vr.id) AS n
     FROM run_todo rt JOIN v_run vr ON vr.id = rt.run_id
-    GROUP BY rt.todo_id
+), runs AS (
+    SELECT todo_id,
+        count(CASE WHEN status <> 'dropped' THEN 1 END) AS run_count,
+        max(status = 'in_progress') AS any_running,
+        max(status = 'waiting') AS any_waiting,
+        max(CASE WHEN n = 1 AND status <> 'dropped' THEN status END) AS last_status,
+        max(CASE WHEN n = 1 AND status <> 'dropped' THEN reason END) AS last_reason
+    FROM todo_runs
+    GROUP BY todo_id
 ), waits AS (
-    SELECT w.todo_id, (SELECT x.reason FROM wait x WHERE x.todo_id = w.todo_id AND x.released_at IS NULL
-                       ORDER BY x.since DESC LIMIT 1) AS reason
-    FROM wait w WHERE w.released_at IS NULL AND w.todo_id IS NOT NULL GROUP BY w.todo_id
+    SELECT todo_id, reason FROM (
+        SELECT todo_id, reason, row_number() OVER (PARTITION BY todo_id ORDER BY since DESC, id) AS n
+        FROM wait WHERE released_at IS NULL AND todo_id IS NOT NULL
+    ) w
+    WHERE n = 1
 ), asks AS (
     SELECT todo_id, count(*) AS n FROM decision WHERE answered_at IS NULL AND todo_id IS NOT NULL GROUP BY todo_id
 ), last_act AS (
