@@ -64,6 +64,16 @@ def _start_hermes_board():
     return stop_quietly
 
 
+def _warm_board() -> None:
+    """lina#584: the board's outside reads start with the server, so the first sign-in is served from them."""
+    try:
+        from hermes_cli.lina_board import warm
+
+        warm()
+    except Exception:
+        logger.warning("board: the read at server start did not start", exc_info=True)
+
+
 @asynccontextmanager
 async def standalone_lifespan(app: "FastAPI"):
     from hermes_cli.web_server import (
@@ -202,6 +212,7 @@ async def standalone_lifespan(app: "FastAPI"):
 
     stop_push = _start_push()
     stop_hermes_board = _start_hermes_board()
+    _warm_board()
 
     try:
         yield
@@ -261,6 +272,7 @@ async def http_lifespan(app: FastAPI):
     ]
     stop_push = _start_push()
     stop_hermes_board = _start_hermes_board()
+    _warm_board()
     try:
         async with AsyncExitStack() as surface:
             if policy(app.state).host_terminal:
