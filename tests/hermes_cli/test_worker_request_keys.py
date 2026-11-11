@@ -441,6 +441,24 @@ def test_the_same_key_with_other_arguments_is_refused(lane):
     assert _requests(lane, task_id) == ["request.1", "request.2"]
 
 
+def test_the_same_key_with_another_base_branch_is_another_request(lane):
+    task_id = _submitted(lane)
+    with pytest.raises(HubError, match=rf"^request key rk-one was already used for submit {task_id} at .+ with "
+                                       "other arguments$"):
+        lane.hub.submit(_opts(lane, base_branch="release/2"))
+    assert [job["id"] for job in lane.hub.store.all()] == [task_id]
+
+
+def test_submit_base_is_the_branch_the_task_starts_from(lane):
+    brief = fakes.brief(lane.tmp, "SCENARIO:done base")
+    assert _cli(["submit", "--brief", brief, "--topic", "base", "--bot", "sion", "--runner", "fakecli",
+                 "--key", "rk-base", "--base", "release/2"]) == 0
+    (job,) = lane.hub.store.all()
+    assert job["base_branch"] == "release/2"
+    device_job = json.loads((lane.root / "tasks" / job["id"] / "job.json").read_text(encoding="utf-8"))
+    assert device_job["base_branch"] == "release/2"
+
+
 def test_a_hub_restart_between_the_two_calls_replays(lane):
     task_id = _submitted(lane)
     _ended(lane, task_id)
