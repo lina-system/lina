@@ -9,6 +9,7 @@ from hermes_cli.work import ledger
 from hermes_cli.work.common import Lock, ago, die, mask, now
 from hermes_cli.work.evaluate import item_name
 from hermes_cli.work.items import get
+from hermes_cli.work.kinds import TODO, kind_now
 from hermes_cli.work.locale import REPLY_ALIASES, kind, t
 from hermes_cli.work.notify import answering_agent, tell, tell_owner_agent
 from hermes_cli.work.people import agent, agents, is_owner_word, name, owner
@@ -24,8 +25,8 @@ def reply_hint(r: dict, cid: str) -> str:
 
 def commentable(recs: dict, i: str) -> dict:
     r = dict(get(recs, i))
-    if r["kind"] not in ("목표", "할 일"):
-        die(t("댓글은 {goal}·{todo}에만 단다", goal=kind("목표"), todo=kind("할 일")))
+    if kind_now(r["kind"]) not in ("목표", TODO):
+        die(t("댓글은 {goal}·{todo}에만 단다", goal=kind("목표"), todo=kind(TODO)))
     if r.get("state") == "dropped":
         die(t("{id}는 내린 항목이다", id=r["id"]))
     r["comments"] = [dict(c, replies=list(c.get("replies") or [])) for c in r.get("comments") or []]
@@ -119,11 +120,11 @@ def cmd_owner_done(a) -> None:
     with Lock():
         recs, _ = ledger.read_all()
         r = dict(get(recs, a.id))
-        if r["kind"] not in ("목표", "할 일"):
-            die(t("완료 표시는 {goal}·{todo}에만 한다", goal=kind("목표"), todo=kind("할 일")))
+        if kind_now(r["kind"]) not in ("목표", TODO):
+            die(t("완료 표시는 {goal}·{todo}에만 한다", goal=kind("목표"), todo=kind(TODO)))
         if r.get("state") != "open":
             die(t("{id}는 열린 항목이 아니다", id=r["id"]))
-        kids = [x for x in recs.values() if x.get("parent") == r["id"] and x["kind"] == "할 일"
+        kids = [x for x in recs.values() if x.get("parent") == r["id"] and kind_now(x["kind"]) == TODO
                 and x.get("state") == "open"]
         if kids and not a.with_open:
             die(t("{id}에 열린 할 일이 남아 있어 완료로 표시하지 않았다: {kids} — 함께 닫으려면 --with-open", id=r["id"],

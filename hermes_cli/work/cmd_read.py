@@ -11,6 +11,7 @@ from hermes_cli.work import ledger
 from hermes_cli.work.common import ago, die, load_json, mask, now, paths
 from hermes_cli.work.evaluate import item_name, omo_next_late
 from hermes_cli.work.items import KIND_IN, find_area, get, norm_project
+from hermes_cli.work.kinds import JSON_TODO, TODO, kind_now
 from hermes_cli.work.ledger import projects_of
 from hermes_cli.work.links import link_label
 from hermes_cli.work.locale import kind, label, status, t
@@ -48,7 +49,7 @@ def _listed(r: dict, recs: dict, a, by, ar, pj) -> bool:
     if not a.all and r.get("state") != "open" and not (
             r["kind"] == "목표" and any(x.get("parent") == r["id"] and x.get("state") == "open" for x in recs.values())):
         return False
-    return not (a.kind and r["kind"] != KIND_IN.get(a.kind))
+    return not (a.kind and kind_now(r["kind"]) != KIND_IN.get(a.kind))
 
 
 def _item_line(r: dict, recs: dict, st: dict, d: int) -> str:
@@ -214,6 +215,8 @@ def json_item(r: dict, recs: dict, st: dict, fw: dict, show_all: bool) -> dict:
         v = row_view(r, x["computed"], recs)
         v["stage_since"] = (st.get("stage_at") or {}).get(i) or x["first_said"]
         x["view"] = v
+    if kind_now(x["kind"]) == TODO:
+        x["kind"] = JSON_TODO
     x["by_ko"] = name(x["by"])
     if x["by"] == owner():  # only the owner's own to-dos carry these, so older json output stays the same
         x["owner"] = owner()

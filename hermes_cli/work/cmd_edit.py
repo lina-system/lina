@@ -8,6 +8,7 @@ import time
 from hermes_cli.work import ledger
 from hermes_cli.work.common import Lock, die, now
 from hermes_cli.work.items import due_hint, due_of, find_area, get, mutate, norm_session, split_projects
+from hermes_cli.work.kinds import TODO, kind_now
 from hermes_cli.work.ledger import projects_of
 from hermes_cli.work.links import refuse_reason
 from hermes_cli.work.locale import kind, status, t
@@ -17,18 +18,18 @@ from hermes_cli.work.sources import basis_of, basis_profile, desk_file, new_basi
 from hermes_cli.work.view import archive_due_projects, proj_name
 from hermes_cli.work.writing import guard_text, missing_field
 
-PARENT_KIND = {"목표": "영역", "할 일": "목표", "메모": "영역"}
+PARENT_KIND = {"목표": "영역", TODO: "목표", "메모": "영역"}
 EDIT_FIELDS = ("title", "why", "done", "check", "session", "parent", "every", "owner", "project", "add_project",
                "remove_project", "stall", "decide", "due")
 
 
 def _guards(r: dict, a) -> None:
-    if a.title is not None and r["kind"] in ("목표", "할 일"):
+    if a.title is not None and kind_now(r["kind"]) in ("목표", TODO):
         guard_text("목표 이름" if r["kind"] == "목표" else "할 일 제목", a.title)
-    if a.done is not None and r["kind"] in ("목표", "할 일"):
+    if a.done is not None and kind_now(r["kind"]) in ("목표", TODO):
         guard_text("완료 조건", a.done)
     if a.why is not None:
-        if r["kind"] != "할 일":
+        if kind_now(r["kind"]) != TODO:
             die(t("--why는 할 일에만 쓴다"))
         if not a.why.strip():
             missing_field("왜", "--why")
@@ -50,7 +51,7 @@ def _plain(r: dict, a) -> None:
         r["session"] = norm_session(a.session, r["by"]) if a.session else ""
     if a.parent is not None:
         recs, _ = ledger.read_all()
-        want = PARENT_KIND.get(r["kind"])
+        want = PARENT_KIND.get(kind_now(r["kind"]))
         pr = find_area(recs, a.parent) if want == "영역" else recs.get(a.parent.upper())
         if not want or not pr or pr["kind"] != want:
             die(t("{kind}의 상위는 {want}이어야 한다", kind=kind(r["kind"]), want=kind(want) if want else t("없음")))
@@ -61,7 +62,7 @@ def _plain(r: dict, a) -> None:
 
 def _due_projects(r: dict, a) -> None:
     if a.due is not None:
-        if r["kind"] not in ("목표", "할 일"):
+        if kind_now(r["kind"]) not in ("목표", TODO):
             die(t("--due는 목표·할 일에만 쓴다"))
         due = due_of(a.due, r["kind"])
         if due:
@@ -84,7 +85,7 @@ def _owner_change(r: dict, a) -> None:
         return
     new = owner_or_agent(a.owner)
     if new == owner():
-        if r["kind"] != "할 일":
+        if kind_now(r["kind"]) != TODO:
             die(t("주인은 할 일만 맡는다"))
         if r["by"] != owner():
             r["from"] = r["by"]  # the agent that held it stays on as the one who asked
@@ -216,7 +217,7 @@ def cmd_sprint(a) -> None:
     _sprint_args(a)
 
     def change(r):
-        if r.get("kind") != "할 일":
+        if kind_now(r.get("kind")) != TODO:
             die(t("체크리스트는 할 일(점검)에만 단다"))
         if a.action == "owner" and not (r.get("sprint") or {}).get("items"):
             die(t("체크리스트 항목을 먼저 넣는다"))
