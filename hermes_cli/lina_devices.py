@@ -1,9 +1,9 @@
 """``lina devices``: the work devices ``lina worker`` bids over (``devices.workers`` in the LINA root's config), with
 their readiness (lina#37).
 
-Readiness of one device: ssh reachable (a local device always is), the pinned omo present (``lina omo status`` on the
-device: ``current`` is the pin) when its runner is omo, free disk, the cap and what runs now, from the same ``probe``
-the bidding uses. ``check <name> --run-smoke`` hands one tiny real task to that device through ``lina worker`` and
+Readiness of one device: ssh reachable (a local device always is), its default runner ready by the same runner block
+row every tool has (installed at its pin, signed in, and its last real-call probe not failed, lina#531), free disk,
+the cap and what runs now, from the same ``probe`` the bidding uses. ``check <name> --run-smoke`` hands one tiny real task to that device through ``lina worker`` and
 reports ``done`` or ``failed`` with the run ID; it runs only when asked.
 
 Each device also shows its runners (lina#222): pinned and installed version, sign-in and one reason when not ready,
@@ -53,7 +53,7 @@ def probe(dev: settings.Device, worker_root: Path, runner: str) -> dict:
 
 
 def omo_status(dev: settings.Device) -> dict:
-    """``lina omo status --json`` on *dev* (in this process for a local device)."""
+    """``lina omo status --json`` on *dev* (in this process for a local device), for the board's devices view."""
     if dev.local:
         from hermes_cli.lina_omo import status
         return status()
@@ -118,18 +118,17 @@ def readiness(dev: settings.Device, worker_root: Path) -> dict:
            "free_gb": found.get("free_gb"), "running": found.get("running"), "serve": found.get("serve")}
     reachable = found["ssh"] and not found.get("protocol_error")
     hello = _file_node_hello(dev, worker_root) if reachable and dev.kind == settings.FILE_KIND else {}
-    omo = omo_status(dev) if reachable and runner == "omo" and dev.kind != settings.FILE_KIND else {}
-    row["omo"] = (hello.get("omo") if dev.kind == settings.FILE_KIND else None if runner != "omo"
-                  else bool(omo.get("pinned") and omo.get("current") == omo.get("pinned")))
+    row["omo"] = hello.get("omo") if dev.kind == settings.FILE_KIND else None
     why = bidding.readiness(dev, found, repo=None, min_free_gb=int(settings.setting("min_free_gb", worker=worker)))
     if why == "only when named with --host":
         why = None
     if hello and not hello.get("ready"):
         why = hello.get("why") or why
-    if why is None and row["omo"] is False:
-        why = f"pinned omo {omo.get('pinned') or '?'} not current ({omo.get('error') or omo.get('current') or 'none'})"
-    row["ready"], row["why"] = why is None, why
     row["runners"] = runner_rows(dev, worker_root, found)
+    own = next((item for item in row["runners"] if item.get("name") == runner and item.get("pinned")), None)
+    if why is None and reachable and own is not None and own.get("ready") is False:
+        why = f"runner {runner} not ready: {own.get('why')}"
+    row["ready"], row["why"] = why is None, why
     return row
 
 
@@ -142,9 +141,10 @@ def _file_node_hello(dev: settings.Device, worker_root: Path) -> dict:
 
 
 def render(row: dict) -> str:
-    omo = {None: "-", True: "ok", False: "missing"}.get(row["omo"], row["omo"])  # a file node: its omo version
+    omo = f" · omo {row['omo']}" if row.get("omo") is not None else ""  # a file node: its omo version
     return (f"{row['name']:<14} {row['host']:<14} cap {row['cap']} · running {row.get('running', '-')} · ssh "
-            f"{'ok' if row['ssh'] else 'unreachable'} · omo {omo} · free disk {row.get('free_gb', '-')}GB · "
+            f"{'ok' if row['ssh'] else 'unreachable'}{omo} · runner {row['runner']} · "
+            f"free disk {row.get('free_gb', '-')}GB · "
             + ("ready" if row["ready"] else f"not ready: {row['why']}"))
 
 

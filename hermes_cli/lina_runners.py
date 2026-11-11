@@ -555,13 +555,17 @@ def row(root: Path, runner: RunnerPin, *, run: Callable[..., subprocess.Complete
     installed, installed_why = active_version(root, runner, run)
     sign_in, sign_in_why = read_sign_in(root, runner)
     why = _why(runner, installed, sign_in)
+    from hermes_cli import lina_runner_probe
     from hermes_cli import lina_runner_sync_state as sync_state
+    probed = lina_runner_probe.verdict(root, runner, installed)
+    if why is None and probed and probed.get("state") == "failed":
+        why = "probe failed"  # the static checks passed; the last real call of this version did not
     return {"name": runner.name, "pin": runner.name, "pinned": runner.version, "pin_from": sync_state.pin_from(root, runner.name),
             "current": current_version(root, runner),
             "installed": installed, "installed_why": installed_why, "versions": installed_versions(root, runner), "person_installed": person_installed(root, runner, run, path),
             "sign_in": sign_in, "sign_in_by": sign_in_kind(runner), "sign_in_why": sign_in_why,
             "shim": str(shim_path(root, runner)) if shim_path(root, runner).exists() else None,
-            "ready": why is None, "why": why}
+            "probe": probed, "ready": why is None, "why": why}
 
 
 def status(root: Path | None = None, *, run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> list[dict]:
@@ -691,6 +695,12 @@ def node_service(worker_root: Path, service: str, action: str, instance_id: str 
     return {"service": "worker", **protocol.service_action(worker_root, action, instance_id)}
 
 
+def _probe_text(probed: dict | None) -> str:
+    if not probed:
+        return "-"
+    return probed["state"] if probed.get("state") == "done" else f"{probed.get('state')} ({probed.get('why')})"
+
+
 def render(rows: list[dict]) -> list[str]:
     lines = []
     for item in rows:
@@ -702,5 +712,6 @@ def render(rows: list[dict]) -> list[str]:
         sign = (item.get("sign_in") or "-") + (f" ({item['sign_in_why']})" if item.get("sign_in_why") else "")
         lines.append(f"{item['name']:<17} pinned {item['pinned']} · installed "
                      f"{item.get('installed') or '-'} · person {person.get('version') or ('-' if not person else '?')} · "
-                     f"sign-in {sign} · " + ("ready" if item["ready"] else f"not ready: {item['why']}"))
+                     f"sign-in {sign} · probe {_probe_text(item.get('probe'))} · "
+                     + ("ready" if item["ready"] else f"not ready: {item['why']}"))
     return lines

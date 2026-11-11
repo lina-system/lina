@@ -18,7 +18,7 @@ from hermes_cli.worker import serve, settings
 from tests.hermes_cli import _worker_fakes as fakes
 from tests.waiting import wait_until
 
-PIN = {"pinned": "1.2.3", "current": "1.2.3"}
+PIN = {"pinned": "1.2.3", "installed": "1.2.3", "ready": True, "why": None}
 
 
 @pytest.fixture
@@ -46,11 +46,13 @@ def probes(monkeypatch):
         "build-c": {"ssh": True, "ready": True, "serve": True, "free_gb": 80, "running": 0},
         "build-d": {"ssh": True, "ready": True, "serve": True, "free_gb": 2, "running": 0},
     }
-    omo = {"build-a": PIN, "build-c": {"pinned": "1.2.3", "current": "1.2.0"}, "build-d": PIN}
+    omo = {"build-a": PIN, "build-c": {"pinned": "1.2.3", "installed": "1.2.0", "ready": False, "why": "update"},
+           "build-d": PIN}
     asked: list[str] = []
     monkeypatch.setattr(lina_devices, "probe", lambda dev, root, runner: found[dev.name])
-    monkeypatch.setattr(lina_devices, "omo_status", lambda dev: asked.append(dev.name) or omo[dev.name])
-    monkeypatch.setattr(lina_devices, "runner_status", lambda dev, root: [])
+    monkeypatch.setattr(lina_devices, "runner_status",
+                        lambda dev, root: asked.append(dev.name) or [{"name": "omo", "type": "omo", "pin": "omo",
+                                                                      **omo[dev.name]}])
     return asked
 
 
@@ -59,17 +61,18 @@ def test_list_shows_each_device_with_ssh_omo_disk_and_cap(base, probes):
     assert lina_devices.list_devices(base, as_json=True, out=lines.append) == 0
     rows = {row["name"]: row for row in json.loads(lines[0])}
 
-    assert rows["build-a"]["ready"] is True and rows["build-a"]["cap"] == 2 and rows["build-a"]["omo"] is True
+    assert rows["build-a"]["ready"] is True and rows["build-a"]["cap"] == 2
     assert rows["build-b"]["ssh"] is False and "unreachable" in rows["build-b"]["why"]
-    assert rows["build-c"]["omo"] is False and "pinned omo 1.2.3 not current" in rows["build-c"]["why"]
+    assert rows["build-c"]["ready"] is False and rows["build-c"]["why"] == "runner omo not ready: update", \
+        "the default runner is judged by its block's row, omo like any other (lina#531)"
     assert rows["build-d"]["ready"] is False and "disk 2GB < 5GB" in rows["build-d"]["why"]
-    assert "build-b" not in probes, "lina omo status is not asked over an ssh that does not connect"
+    assert "build-b" not in probes, "the runner rows are not asked over an ssh that does not connect"
 
     text: list[str] = []
     lina_devices.list_devices(base, out=text.append)
     assert text[0].split()[:2] == ["build-a", "build-a"] and text[0].endswith("ready")
-    devices = [line for line in text if not line.startswith(" ")]  # runner rows (omo's block too) are indented
-    assert "ssh unreachable" in devices[1] and "omo missing" in devices[2]
+    devices = [line for line in text if not line.startswith(" ")]  # runner rows are indented under their device
+    assert "ssh unreachable" in devices[1] and devices[2].endswith("not ready: runner omo not ready: update")
 
 
 def test_check_exits_1_for_a_device_that_is_not_ready(base, probes):
