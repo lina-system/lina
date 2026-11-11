@@ -214,7 +214,7 @@ def test_cli_handoff_refused_while_gate_fails_without_judge(kanban_home, workspa
 
     from hermes_cli import kanban as kc
 
-    monkeypatch.setattr(kc, "_goal_mode_handoff_rejection", lambda task, ev: ("done", None))
+    monkeypatch.setattr(kc, "_goal_mode_handoff_rejection", lambda task, ev, **kw: ("done", None))
     tid, run_id = _card(workspace, ["echo suite red; test -f ok.txt"], claim=True)
     monkeypatch.setenv("HERMES_KANBAN_TASK", tid)
     monkeypatch.setenv("HERMES_KANBAN_RUN_ID", str(run_id))
