@@ -67,8 +67,23 @@ def probe(root: Path, runner: lina_runners.RunnerPin, *,
     return result
 
 
+def tend(root: Path, runner: lina_runners.RunnerPin, asked: dict, *,
+         run: Callable[..., subprocess.CompletedProcess] = subprocess.run, **kw) -> dict:
+    """One device's daily care of one block: refresh its model list and apply its route when asked, then probe."""
+    from hermes_cli import lina_runner_models, lina_runner_routes
+    done: dict = {}
+    if asked.get("refresh"):
+        problem = lina_runner_models.refresh(root, runner, run)
+        done["models"] = {"state": "failed", "why": problem} if problem else {"state": "refreshed"}
+    if asked.get("route"):
+        code = lina_runner_routes.apply(root, runner, run=run)
+        done["route"] = {"state": "applied"} if code in (0, None) else {"state": "failed", "why": f"apply exit {code}"}
+    return {**probe(root, runner, run=run, **kw), **done}
+
+
 def apply(worker_root: Path, payload: dict, **kw) -> dict:
-    """The node side of ``runner-probe``: each named runner probed."""
+    """The node side of ``runner-probe``: for each named runner, the hub's asks first (``refresh``: its model list,
+    ``route``: apply its route source, both after the hub's own probe passed), then its probe."""
     from hermes_cli.worker import slots
     root = worker_root.parent
     wanted = payload.get("runners") if isinstance(payload, dict) else None
@@ -80,10 +95,10 @@ def apply(worker_root: Path, payload: dict, **kw) -> dict:
         return {"action": "error", "reason": f"no runner block {', '.join(unknown)}"}
     held = slots.held(worker_root)
     out = {}
-    for name in wanted:
+    for name, asked in wanted.items():
         if held:
             out[name] = {"state": "busy", "why": f"{held} run(s) hold a slot; next day"}
             continue
-        out[name] = probe(root, table[name], **kw)
+        out[name] = tend(root, table[name], asked if isinstance(asked, dict) else {}, **kw)
     lina_runners.clear_report_cache(worker_root)
     return {"action": VERB, "results": out}

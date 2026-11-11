@@ -1,13 +1,15 @@
 """``lina runners sync``: once a day the runner pins follow their sources, after a trial on the hub (lina#238).
 
-For each runner whose pin has ``follow`` (codex, claude, dsh, grok, cursor-agent, agy; omo, OCX and the ACP adapters
-keep LINA's pins):
+For each runner block whose pin has ``follow`` (omo, codex, claude, dsh, grok, cursor-agent, agy, and any block the
+settings add; OCX and the ACP adapters keep LINA's pins):
 
 1. the source names its newest version (``lina_runner_sync_sources``);
 2. a version above the hub's pin is installed on the hub beside the current one (``lina_runners._install_version``:
    the installer that owns the binary, its hash, ``--version``) and asked one real request
    (``lina_runner_sync_trial``); when it answers, the hub writes the move into its ``runner-pins.json`` and switches;
-3. every node follows the hub's pin the same day through its ``runner-sync`` verb (``lina_runner_sync_node``).
+3. every node follows the hub's pin the same day through its ``runner-sync`` verb (``lina_runner_sync_node``);
+4. the block's model list, route and real-call probe are cared for on the hub and then on every node
+   (``lina_runner_sync_tend``, lina#531).
 
 What stops a move: a hold (a failed trial or node install, until ``sync clear``); a major jump (until ``sync clear
 --accept <version>``); a source below the pin; a hash that does not match; the hub not signed in to the runner (a
@@ -36,10 +38,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from hermes_cli import lina_ocx, lina_runners
+from hermes_cli import lina_ocx, lina_runner_models, lina_runners
 from hermes_cli import lina_runner_sync_hub as hub_view
 from hermes_cli import lina_runner_sync_sources as sources
 from hermes_cli import lina_runner_sync_state as state
+from hermes_cli import lina_runner_sync_tend as tending
 from hermes_cli import lina_runner_sync_trial as trials
 from hermes_cli.lina_runner_sync_node import VERB
 
@@ -72,6 +75,7 @@ class Env:
     popen: Callable[..., object] = subprocess.Popen
     fetch: Callable[[str, Path], None] = lina_runners.download
     ocx_logs: Callable[[Path], object] = trials.read_ocx_logs
+    ocx_models: Callable[[Path], object] = lina_runner_models.read_ocx_models
     nodes: Callable[[Path], list[NodeView]] | None = None
     sign_in: Callable[[lina_runners.RunnerPin], str] | None = None
     clock: Callable[[], float] = time.time
@@ -371,6 +375,8 @@ def execute(root: Path, env: Env, *, plan: bool, only: list[str] | None) -> dict
         if rec["hub"]["state"] in ("major waits", "hub busy"):
             continue
         run.follow(name, pin, rec)
+        if not state.held(root, name, "hub"):
+            tending.tend(run, name, pin, rec)
     run.record["questions"] = run.questions()
     run.record["finished"] = env.clock()
     return run.record

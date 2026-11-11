@@ -196,7 +196,10 @@ def test_a_hash_the_answer_contradicts_moves_nothing(hub):
     root = hub["root"]
     assert current(root) == "1.0.70"
     assert not (lina_runners.vendor_dir(root, "grok") / "1.0.71").exists()
-    assert {k: v for k, v in files(root).items() if not k.startswith(state.SYNC_DIR)} == before
+    kept = {k: v for k, v in files(root).items() if not k.startswith(state.SYNC_DIR)}
+    assert json.loads(kept.pop("runner-probes.json"))["grok"]["version"] == "1.0.70", \
+        "the daily probe of the version it keeps is the only new file (lina#531)"
+    assert kept == before
 
 
 def test_a_busy_node_is_skipped_and_one_that_got_busy_refuses_on_its_side(hub, tmp_path, monkeypatch):
