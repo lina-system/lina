@@ -168,7 +168,8 @@ def test_a_committed_lock_is_installed_as_is_and_must_carry_the_pin(world, locke
 
 @pytest.mark.parametrize("name", ["ocx", "omo"])
 def test_the_committed_lock_of_each_npm_pin_carries_the_pinned_integrity(name):
-    pin = json.loads(lina_ocx.PIN_FILE.read_text())[name]
+    pins = json.loads(lina_ocx.PIN_FILE.read_text())
+    pin = pins[name] if name in pins else pins["runners"][name]  # omo is a runner block (lina#531)
     lock = lina_ocx.committed_lock(name, pin["package"], pin["version"])
     assert lock is not None, f"pm/npm-locks/{name} does not lock {pin['package']}@{pin['version']}"
     entry = json.loads((lock / "package-lock.json").read_text())["packages"][f"node_modules/{pin['package']}"]

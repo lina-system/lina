@@ -31,6 +31,7 @@ class Verb:
 def verbs() -> dict[str, Verb]:
     """The only dispatch table, including payload and legacy recovery contracts."""
     import json
+    from hermes_cli import lina_runner_probe as runner_probe
     from hermes_cli import lina_runner_sync_node as runner_sync
     from hermes_cli.worker import device as d
 
@@ -56,6 +57,8 @@ def verbs() -> dict[str, Verb]:
         "bundle": Verb(lambda root, args, data: d.bundle(root, *args[:2]), "read", legacy=True),
         "runner-sync": Verb(lambda root, args, data: d._ok(runner_sync.apply(root, json.loads(data))), "destructive",
                             stdin=True),
+        "runner-probe": Verb(lambda root, args, data: d._ok(runner_probe.apply(root, json.loads(data))), "write",
+                             stdin=True),
     }
 
 

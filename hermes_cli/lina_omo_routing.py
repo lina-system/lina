@@ -11,6 +11,7 @@ pinned Node, so the checkout stays clean; it is redone when the sources change (
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import os
@@ -102,20 +103,12 @@ def catalog_problem() -> str | None:
 
 
 def _enable_integration(root: Path, run) -> str | None:
-    """Ask LINA's own running OCX to write its catalog for omo; None when it did, else why not."""
-    version = lina_ocx.current_version(root)
-    if version is None:
-        return "LINA's OCX is not installed: run `lina models install`"
-    if not lina_ocx.own_proxy_running(root, lina_ocx.configured_port(root)):
-        return "LINA's OCX is not running: run `lina services start ocx`"
-    lina_omo.agent_dir().mkdir(parents=True, exist_ok=True)  # OCX reports omo absent until its agent dir exists
-    result = run(lina_ocx.ocx_argv(root, version, "integration", "client", "enable", "--client", "omo"),
-                 env=lina_ocx.ocx_env(root), capture_output=True, text=True, encoding="utf-8", errors="replace",
-                 timeout=120, check=False)
-    if result.returncode != 0:
-        tail = ((result.stderr or "") + (result.stdout or "")).strip().splitlines()[-1:] or ["no output"]
-        return f"`ocx integration client enable --client omo` failed: {tail[0]}"
-    return None
+    """Ask LINA's own running OCX to write its catalog for omo: the model refresh of omo's block
+    (``lina_runner_models.refresh``, lina#531), pointed at omo's agent dir; None when it did, else why not."""
+    from hermes_cli import lina_runner_models
+    block = lina_omo.runner()
+    block = dataclasses.replace(block, models={**block.models, "file": str(catalog_path())})
+    return lina_runner_models.refresh(root, block, run)
 
 
 def setup_catalog(root: Path, run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> str | None:
@@ -155,6 +148,20 @@ def check(root: Path, run: Callable[..., subprocess.CompletedProcess] = subproce
     result = run(argv(root, "check", []), env=lina_omo.omo_env(), capture_output=True, text=True,
                  encoding="utf-8", errors="replace", timeout=120, check=False)
     return result.returncode, ((result.stdout or "") + (result.stderr or "")).strip()
+
+
+def prepare(root: Path, run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> str:
+    """The route source's ``prepare`` (``lina_runner_routes``): ocx-omo built on the pinned Node."""
+    return str(build(root, lina_omo.node_bin(root).parent.parent, run=run))
+
+
+def apply(root: Path, run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> int:
+    """The route source's ``apply`` with its output captured (the daily sync, lina#531)."""
+    problem = _missing(root)
+    if problem:
+        return 2
+    return run(argv(root, "apply", []), env=lina_omo.omo_env(), capture_output=True, text=True, encoding="utf-8",
+               errors="replace", timeout=120, check=False).returncode
 
 
 def install_step(apply: bool = False, root: Path | None = None, out=print,

@@ -381,6 +381,18 @@ def model_path(worker_root: Path, name: str = "", spec: dict | None = None) -> d
     return {"model_path": "down", "model_path_why": f"model path does not answer ({url}: HTTP {code or 'none'})"}
 
 
+def probe_failed(base: Path, worker: dict, name: str) -> str | None:
+    """Why runner *name* is not ready after its static checks passed: the last real-call probe of the version this
+    node runs failed (``lina_runner_probe``, lina#531). None when it passed, was not run, or probed another version."""
+    from hermes_cli import lina_runner_probe, lina_runners
+    pin = next((pin for offered, _kind, pin in lina_runners.offered(worker) if offered == name and pin), None)
+    if pin is None:
+        return None
+    found = lina_runner_probe.verdict(base, pin, lina_runners.current_version(base, pin))
+    return f"runner {name}: last probe failed ({found.get('why')})" if found and found.get("state") == "failed" \
+        else None
+
+
 def probe(worker_root: Path, repo: str = "", runner_name: str = "", hub_spec: dict | None = None) -> dict:
     """What the hub bids with: readiness of the runner, the service, running tasks, load, disk, available memory, the
     repo path and whether the model path answers.
@@ -394,6 +406,9 @@ def probe(worker_root: Path, repo: str = "", runner_name: str = "", hub_spec: di
         ready, why = runners.build(name, spec, root=base_of(worker_root)).available()
     except RunnerError as exc:
         ready, why = False, str(exc)
+    failed = probe_failed(base_of(worker_root), worker, name) if ready else None
+    if failed:
+        ready, why = False, failed
     heartbeat = settings.tasks_dir(worker_root).parent / HEARTBEAT
     serve = heartbeat.exists() and time.time() - heartbeat.stat().st_mtime < 60
     running = slots.held(worker_root)

@@ -144,6 +144,17 @@ components:
       description: >
         Present and true on items of the read-only hermes source (lina#481): a card of the Hermes Agent board,
         read through its CLI. Their ids start with "hermes:"; the answer route refuses them with 409.
+    Detail:
+      type: boolean
+      description: >
+        Present and false on a done card of the hermes source that ended outside the app's done window (lina#533):
+        it is the board's list row alone, without comments, events or runs.
+    HermesAt:
+      type: number
+      nullable: true
+      description: >
+        Present only while the hermes source is set (lina#533): when the served Hermes rows were read, in epoch
+        seconds; null before the first read ended. The board is read in the background, never in the request.
     SourceErrors:
       type: array
       description: >
@@ -227,6 +238,8 @@ components:
       properties:
         readOnly:
           $ref: "#/components/schemas/ReadOnly"
+        detail:
+          $ref: "#/components/schemas/Detail"
         id:
           type: string
         title:
@@ -258,6 +271,8 @@ components:
       properties:
         errors:
           $ref: "#/components/schemas/SourceErrors"
+        hermesAt:
+          $ref: "#/components/schemas/HermesAt"
         cards:
           type: array
           items:
@@ -372,6 +387,8 @@ components:
       properties:
         readOnly:
           $ref: "#/components/schemas/ReadOnly"
+        detail:
+          $ref: "#/components/schemas/Detail"
         id:
           type: string
         title:
@@ -447,6 +464,8 @@ components:
       properties:
         readOnly:
           $ref: "#/components/schemas/ReadOnly"
+        detail:
+          $ref: "#/components/schemas/Detail"
         id:
           type: string
         title:
@@ -478,6 +497,8 @@ components:
       properties:
         errors:
           $ref: "#/components/schemas/SourceErrors"
+        hermesAt:
+          $ref: "#/components/schemas/HermesAt"
         goals:
           type: array
           items:
@@ -536,6 +557,8 @@ components:
       properties:
         errors:
           $ref: "#/components/schemas/SourceErrors"
+        hermesAt:
+          $ref: "#/components/schemas/HermesAt"
         blocked:
           type: array
           items:
