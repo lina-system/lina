@@ -6,7 +6,9 @@ import sqlite3
 
 import pytest
 
+from plugins.context_engine import lcm_x_store
 from tests.hermes_cli.test_migrate_memory import _command, _run
+from tests.plugins.context_engine.test_lcm_x_on_store import _lcm
 
 QUARANTINE = """
     CREATE TABLE lcm_fork_quarantined_messages (store_id INTEGER PRIMARY KEY, original_session_id TEXT NOT NULL,
@@ -74,6 +76,35 @@ def test_engine_bindings_and_quarantined_rows_migrate_and_replay(tmp_path, _memo
     assert memory_store_sql("SELECT store_id,uid,kind FROM ctx.host_uid_bindings ORDER BY store_id") == [
         (0, "engine-uid", "engine"), (1, "host-uid-1", "canonical")]
     assert json.loads(again.stdout)["lcm"]["inserted"] == 0
+
+
+def test_quarantined_row_cited_only_by_entity_memory_stays_visible(tmp_path, _memory_store):
+    # Given: a quarantined message that only a note and an alias cite, both visible in the source.
+    command = _command(tmp_path, _memory_store)
+    path = tmp_path / "hermes/profiles/alpha/lcm.db"
+    _source(tmp_path, QUARANTINE,
+            ("INSERT INTO messages VALUES (4, 'session-a::fork-quarantine', 'agent', "
+             "'conversation-a::fork-quarantine', 'user', 'quarantined evidence', 1767323049)", ()),
+            ("INSERT INTO lcm_fork_quarantined_messages VALUES (4, 'session-a', 'conversation-a', '1', 'synthetic', "
+             "NULL, NULL, 1767323051, NULL)", ()))
+    with closing(_lcm("entity_store").EntityStore(path, profile_key="alpha")) as memory:
+        person = memory.create_entity("Synthetic person")
+        note = memory.add_note("synthetic fact", entity_id=person, cites=[4])
+        alias = memory.add_alias(person, "Synthetic nickname", "nickname", source_store_ids=[4])
+        assert memory.get_note(note) is not None and memory.get_alias(alias) is not None
+    # When: importing it.
+    done = _run(command, tmp_path)
+    assert done.returncode == 0, done.stdout + done.stderr
+    # Then: the cited row is kept, so the same note and alias still read back.
+    target = tmp_path / "lina/profiles/alpha-copy/lcm.db"
+    lcm_x_store.route(target, "alpha-copy")
+    try:
+        with closing(_lcm("entity_store").EntityStore(target, profile_key="alpha")) as memory:
+            assert (memory.get_note(note) is not None, memory.get_alias(alias) is not None) == (True, True)
+    finally:
+        lcm_x_store.unroute(target)
+    assert json.loads(done.stdout)["lcm"]["fork_quarantine"] == {
+        "records": 1, "left_out_messages": 0, "kept_cited_messages": 1}
 
 
 @pytest.mark.parametrize("kind", ["canonical", "engine"])

@@ -406,7 +406,9 @@ The SQLite-only fork quarantine (`lcm_fork_quarantined_messages`, written by the
 out, not copied: the destination has no such table, and the rows it records are raw copies of LCM's own summary
 heads or of earlier rows, so their text is held elsewhere and only `restore()` would be lost. An unrestored
 quarantined message in its `::fork-quarantine` session that nothing cites (summary nodes, message relations,
-assertions, importer receipts) is not copied, nor are its chunk metadata, chunk vectors and host UID bindings;
+assertion sources/assertions/relations, importer receipts, memory note `cites`/`retracts_store_ids`, entity
+alias/key `source_store_ids`, and those arrays and override `scope_store_ids` in memory event payloads) is not
+copied, nor are its chunk metadata, chunk vectors and host UID bindings;
 each table counts them as `skipped` with reason `fork_quarantine_uncited`. A quarantined message something cites
 is copied as an ordinary message in its `::fork-quarantine` session. The quarantine records are counted as skipped
 (`fork_quarantine_records_left_out`), and `fork_quarantine` in the report gives the record, left-out and kept-cited

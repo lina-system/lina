@@ -33,7 +33,12 @@ LEFT_OUT = "fork_quarantine_uncited"
 OWNED_BY_MESSAGE = ("messages", "host_uid_bindings", "lcm_chunk_meta")
 CITING = (("message_relations", "store_id"), ("message_relations", "related_store_id"),
           ("lcm_assertion_sources", "source_store_id"), ("lcm_assertions", "source_store_id"),
-          ("lcm_imported_messages", "target_store_id"))
+          ("lcm_assertion_relations", "source_store_id"), ("lcm_imported_messages", "target_store_id"))
+# Message ids LCM-X keeps in JSON arrays. EntityStore._visible hides a note, alias or key whose cited message is
+# missing, and override_key events keep their scope_store_ids only in the event payload.
+JSON_CITING = (("lcm_memory_notes", "cites"), ("lcm_memory_notes", "retracts_store_ids"),
+               ("lcm_entity_aliases", "source_store_ids"), ("lcm_entity_keys", "source_store_ids"))
+EVENT_CITING = {"cites", "retracts_store_ids", "source_store_ids", "scope_store_ids"}
 
 
 def digest(row: dict) -> str:
@@ -144,12 +149,30 @@ def fork_quarantine(source, tables: dict) -> dict:
     for table, column in CITING:
         if table in tables:
             cited.update(r[0] for r in source.execute(f'SELECT "{column}" FROM "{table}"'))
+    for table, column in JSON_CITING:
+        if table in tables:
+            for (encoded,) in source.execute(f'SELECT "{column}" FROM "{table}"'):
+                cited.update(json.loads(encoded))
+    if "lcm_memory_events" in tables:
+        for (encoded,) in source.execute("SELECT payload_json FROM lcm_memory_events"):
+            cited.update(_event_citations(json.loads(encoded)))
     found["store_ids"] = held - cited
     found["kept_cited"] = len(held & cited)
     if "lcm_chunk_meta" in tables:
         found["chunk_ids"] = {chunk for chunk, store_id in source.execute("SELECT chunk_id,store_id FROM lcm_chunk_meta")
                               if store_id in found["store_ids"]}
     return found
+
+
+def _event_citations(value, key=None):
+    if isinstance(value, dict):
+        for name, item in value.items():
+            yield from _event_citations(item, name)
+    elif key in EVENT_CITING:
+        yield from json.loads(value) if isinstance(value, str) else value
+    elif isinstance(value, list):
+        for item in value:
+            yield from _event_citations(item)
 
 
 def engine_bindings(source, tables: dict) -> int:
