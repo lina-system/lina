@@ -9,10 +9,15 @@ catalog form (`claude/claude-opus-5-5`) on both kinds, through the name table `h
 worker:
   proxy:
     kind: magpie        # ocx (default) or magpie
-    remote_id: hub      # the id the node's magpie gives its remote link to the hub (default hub)
+    remote_id: hub      # the id the node's magpie gives its remote link to the hub (default hub); "": local
     health: http://127.0.0.1:3425/v1/models   # optional: the address of the proxy check (lina#586)
     service: magpie     # the node's local magpie service: systemd user unit / launchd label (default magpie)
 ```
+
+**A node whose own magpie holds the models** (the machine that runs the hub's gateway, lina#623) has no remote
+link: its magpie lists the models plainly (`claude/claude-opus-5-5`). Set `remote_id: ""` (explicitly empty) there.
+Runs then open as `magpie` with `<provider>/<id>`, `lina omo routing` reads and writes `magpie/<provider>/<id>`, and the
+device screen shows the link as `local`. Without `remote_id` the node is `hub` as before; a value with `/` is refused.
 
 ## The check the bid reads
 
@@ -60,7 +65,7 @@ Run on the node, as the user the worker runs as.
 2. **Connect the agents to the node's magpie** with magpie's own (official) connection commands for claude, codex and
    omo. They add magpie's provider and leave the node's other proxy settings alone.
 3. **Set the kind** in the node's LINA `config.yaml`: `worker.proxy.kind: magpie` (and `remote_id` when the node's
-   magpie names its link to the hub something other than `hub`). The next run on the node opens its session as
+   magpie names its link to the hub something other than `hub`, or `""` on the hub itself). The next run on the node opens its session as
    `magpie` with `<remote_id>/<provider>/<id>`; runs already going keep their session.
 4. **Move omo's routes:** `lina omo routing plan`, review it, then `lina omo routing apply` (see below). The
    connection command for omo changes only omo's default model; its role and category routes stay on OCX until this

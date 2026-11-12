@@ -5,7 +5,8 @@ LINA config. Absent means ``ocx``, the node's own OCX, as before.
 worker:
   proxy:
     kind: magpie          # ocx (default) or magpie: the node's local magpie, installed separately
-    remote_id: hub        # the id the node's magpie gives its remote link to the hub (default hub)
+    remote_id: hub        # the id the node's magpie gives its remote link to the hub (default hub); "" when the
+                          # node's own magpie holds the models (the hub itself, lina#623)
     health: http://127.0.0.1:3425/v1/models   # optional: the address the node's proxy check asks (lina#586)
     url: http://127.0.0.1:<port>  # optional; magpie's gateway for the usage, quota and model screens (lina#588);
                                   # default: the origin of `health`, else magpie's default port on 127.0.0.1
@@ -37,7 +38,7 @@ _UNIT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._@\-]{0,127}$")
 @dataclass(frozen=True)
 class Proxy:
     kind: str = OCX
-    remote_id: str = "hub"  # on a magpie node, model ids read `<remote_id>/<provider>/<model>`
+    remote_id: str = "hub"  # on a magpie node, model ids read `<remote_id>/<provider>/<model>`; "": `<provider>/<model>`
     health: str | None = None  # the address device.model_check_url asks instead of the kind's default (lina#586)
     url: str | None = None  # magpie's gateway for the read-only screens (lina#588)
     key_env: str | None = None  # the variable holding the gateway key; the key itself is a secret in `.env`
@@ -62,8 +63,8 @@ def of(worker: dict) -> Proxy:
         raise RunnerError(f"worker.proxy.kind: one of {', '.join(KINDS)}, not {kind!r}")
     remote_id = section.get("remote_id")
     remote_id = "hub" if remote_id is None else remote_id
-    if not isinstance(remote_id, str) or not remote_id or "/" in remote_id:
-        raise RunnerError(f"worker.proxy.remote_id: a name without '/', not {remote_id!r}")
+    if not isinstance(remote_id, str) or "/" in remote_id:
+        raise RunnerError(f"worker.proxy.remote_id: a name without '/' (or \"\" for local), not {remote_id!r}")
     health = section.get("health")
     if health is not None and not isinstance(health, str):
         raise RunnerError(f"worker.proxy.health: a text, not {health!r}")

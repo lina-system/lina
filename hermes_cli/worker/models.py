@@ -21,7 +21,8 @@ whichever proxy a node reaches it through (``proxy.py``). It is written in any o
 - OCX's: ``opencodex`` with OCX's namespaced id (``opencodex/anthropic/claude-opus-5-5``), or the namespaced id alone
   (``anthropic/claude-opus-5-5``, OCX's list form);
 - magpie's: ``claude/claude-opus-5-5``, or a magpie node's ``<remote_id>/claude/claude-opus-5-5`` (as ``magpie`` with
-  that id, or written with the remote id as provider).
+  that id, or written with the remote id as provider); a node whose own magpie holds the models (``remote_id: ""``,
+  lina#623) opens ``magpie`` with the plain ``claude/claude-opus-5-5``.
 
 ``opencodex/`` and ``<remote_id>/`` are route markers, not part of the identity. ``canonical`` gives the identity of
 every form: it is what the settings check looks up and what the run record and the run page show; older records that
@@ -127,13 +128,13 @@ def _through_magpie(profile: ModelProfile, remote_id: str) -> tuple[str, str]:
     if provider not in magpie_providers():
         raise RunnerError(f"model {_written(profile)}: no magpie provider for {provider!r} in "
                           f"{NAMES.name} (known: {', '.join(sorted(magpie_providers()))})")
-    return MAGPIE, f"{remote_id}/{provider}/{model_id}"
+    return MAGPIE, f"{remote_id}/{provider}/{model_id}" if remote_id else f"{provider}/{model_id}"
 
 
 def through_proxy(profile: ModelProfile, proxy: proxies.Proxy) -> tuple[str | None, str | None]:
     """``(provider, id)`` the omo runner opens its session with on a node of *proxy*'s kind: ``opencodex`` and OCX's
-    namespaced id, or ``magpie`` and ``<remote_id>/<provider>/<id>``. A model the proxy cannot serve is refused with
-    ``RunnerError`` naming it; nothing is substituted."""
+    namespaced id, or ``magpie`` and ``<remote_id>/<provider>/<id>`` (``<provider>/<id>`` with an empty remote id). A
+    model the proxy cannot serve is refused with ``RunnerError`` naming it; nothing is substituted."""
     if proxy.kind == proxies.MAGPIE:
         return _through_magpie(profile, proxy.remote_id)
     return _through_ocx(profile)

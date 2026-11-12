@@ -17,7 +17,7 @@ unreachable and keeps the last versions. The read changes nothing on the device.
 
 Each node carries ``proxy``, the model proxy its hello reports (lina#589, from #586's ``capabilities.proxy``, else an
 older node's ``capabilities.ocx``; null for a node that reports none): ``ocx`` shows as before, ``magpie`` its link to
-the hub (``link``, the node's ``remote_id``), the model count of its local ``/v1/models`` and its local service state.
+the hub (``link``, the node's ``remote_id``; ``local`` when its own magpie holds the models), the model count of its local ``/v1/models`` and its local service state.
 On a ``magpie`` node the runners that sign in through the proxy show ``signIn: magpie`` and are not signed in on the
 node: their accounts are on the hub's magpie (``proxy.signIn: hub``).
 
@@ -296,9 +296,15 @@ def proxy_view(descriptor: dict | None) -> dict | None:
     service = fact.get("service") if isinstance(fact.get("service"), dict) else None
     return {"kind": fact["kind"], "health": _int(fact.get("health")), "version": fact.get("version"),
             "models": _int(fact.get("models")) if magpie else None,
-            "link": str(fact.get("remote_id") or "hub") if magpie else None,
+            "link": _link(fact.get("remote_id")) if magpie else None,
             "service": {"name": str(service.get("name")), "state": str(service.get("state"))} if service else None,
             "signIn": "hub" if magpie else "node"}
+
+
+def _link(remote_id) -> str:
+    """``local`` for a node whose own magpie holds the models (``remote_id: ""``, lina#623); ``hub`` when the node
+    reports none (an older node)."""
+    return "local" if remote_id == "" else str(remote_id or "hub")
 
 
 def _int(value) -> int | None:

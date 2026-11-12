@@ -1005,7 +1005,7 @@ components:
         link:
           type: string
           nullable: true
-          description: magpie only, the remote_id of the node's link to the hub's magpie (model ids <link>/<provider>/<model>).
+          description: magpie only, the remote_id of the node's link to the hub's magpie (model ids <link>/<provider>/<model>); local when the node's own magpie holds the models (remote_id "", model ids <provider>/<model>).
         service:
           type: object
           nullable: true

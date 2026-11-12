@@ -35,7 +35,7 @@ node dist/src/cli.js plan --proxy magpie --remote-id hub --names ../../hermes_cl
 ```
 
 - 카탈로그는 `models.json`의 `providers.magpie.models`(id 예: `hub/claude/claude-opus-5-5`)입니다. magpie의 omo 연결 명령이 씁니다.
-- 같은 정책으로 같은 라우트를 만듭니다. omo의 추천 순서와 추론 강도, `extras`는 그대로이고, 각 OCX 후보(`namespaces` 순서)를 이름표(`--names`, LINA의 `hermes_cli/worker/proxy_names.json` 하나, 복사본 없음)로 magpie provider에 옮겨 `magpie/<remote_id>/<provider>/<id>`로 씁니다.
+- 같은 정책으로 같은 라우트를 만듭니다. omo의 추천 순서와 추론 강도, `extras`는 그대로이고, 각 OCX 후보(`namespaces` 순서)를 이름표(`--names`, LINA의 `hermes_cli/worker/proxy_names.json` 하나, 복사본 없음)로 magpie provider에 옮겨 `magpie/<remote_id>/<provider>/<id>`로 씁니다. 노드 자신의 magpie가 모델을 가진 경우(`--remote-id ""`, lina#623)에는 `magpie/<provider>/<id>`로 씁니다.
 - 두 OCX 네임스페이스가 같은 provider가 되면(`google`, `google-antigravity` → `antigravity`) 체인마다 처음 것만 남습니다.
 - 카탈로그에 없는 모델(`-fast` 티어 등)과 이름표에 없는 네임스페이스는 OCX에 없는 모델처럼 빠지고 `not routed`에 나옵니다. `extras`의 모델도 같습니다.
 - `check` 종료 코드(0/10/2)와 기준선 형식은 같습니다. 모드를 바꾸면 모든 라우트가 바뀐 것으로 나오고(10), 다시 `apply`하면 됩니다. magpie로 적용한 뒤 OCX로 다시 적용하면 원래 라우트가 그대로 돌아옵니다(백업은 남음).

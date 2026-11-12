@@ -10,7 +10,8 @@ pinned Node, so the checkout stays clean; it is redone when the sources change (
 
 The routes follow the node's model proxy (``worker.proxy``, lina#585, lina#587): on an ``ocx`` node (the default)
 ocx-omo runs exactly as before; on a ``magpie`` node it gets ``--proxy magpie --remote-id <id> --names <path>``,
-reads ``providers.magpie`` of omo's catalog and writes ``magpie/<remote_id>/<provider>/<id>``. The name table is
+reads ``providers.magpie`` of omo's catalog and writes ``magpie/<remote_id>/<provider>/<id>`` (``magpie/<provider>/<id>``
+with ``remote_id: ""``, passed as an empty ``--remote-id`` argument, lina#623). The name table is
 LINA's one ``proxy_names.json``, passed by path at run time (not copied into the build) and part of the digest.
 """
 

@@ -261,6 +261,14 @@ def test_routing_on_a_magpie_node_passes_the_proxy_its_remote_and_the_one_name_t
 
 
 @pytest.mark.platforms("posix")
+def test_routing_on_a_node_whose_own_magpie_holds_the_models_passes_an_empty_remote_id(world):
+    _install(world)
+    _proxy(world, '{kind: magpie, remote_id: ""}')
+    assert _lina_omo("routing", "plan") == 0
+    assert world["calls"]()[-1][-6:] == ["--proxy", "magpie", "--remote-id", "", "--names", str(NAMES)]
+
+
+@pytest.mark.platforms("posix")
 def test_install_on_a_magpie_node_reads_magpie_s_catalog_and_never_enables_ocx_s_integration(world, monkeypatch):
     installed_root(world["root"])
     monkeypatch.setattr(lina_ocx, "own_proxy_running", lambda root, port: True)
