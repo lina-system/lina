@@ -89,3 +89,17 @@ worker:
 
 Take `$LINA_HOME/bin` off PATH (and out of the service definitions), so `work` resolves to the old tool again.
 The tasks `lina worker` started stay readable with `lina worker status <ID>`.
+
+### Going back after the record moved (lina#480)
+
+Once the live record lives in the store, `work` and the 15-minute check have two sides to put back, in this order:
+
+1. Stop the new check timer first (`systemctl --user stop lina-work-check.timer`): two reminder paths must not run
+   together.
+2. Take what the store gained since the move out of it: `lina work export-jsonl --to <file>`. Within an hour of the
+   move, `lina store restore <backup name from the move>` is the other way; it drops everything newer.
+3. Point `work` (and `work-probe`) at the old tool again, and `board.hermes.work` in the LINA config if it was moved.
+4. Thaw the old record (`<old tool> freeze` was run at the move): `<old tool> thaw`, then write the exported lines
+   back with the old tool.
+5. Enable the old check timer (`systemctl --user enable --now <old check timer>`). Its files and the old record are
+   kept for this.
