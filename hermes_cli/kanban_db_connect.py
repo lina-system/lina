@@ -999,6 +999,10 @@ def _migrate_add_optional_columns(conn: sqlite3.Connection) -> None:
     from hermes_cli.kanban_outcomes import ensure_table
     ensure_table(conn)
 
+    # lina#604: parks whose time lives only in their reason get it as a recorded wait, once.
+    from hermes_cli.kanban_db_park import migrate_legacy_time_parks
+    migrate_legacy_time_parks(conn)
+
     _rebuild_drifted_tables(conn)
 
 

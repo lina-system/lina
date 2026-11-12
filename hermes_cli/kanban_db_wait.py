@@ -9,6 +9,7 @@ payload as ``wait_for``:
 * ``{"kind": "card", "task_id": ...}``     -- another card is completed (``done``, or archived after it)
 * ``{"kind": "review", "task_id": ...}``   -- a review card it asked for has its result (completed the same way)
 * ``{"kind": "pr", "repo": ..., "number": ...}`` -- the PR's required checks have all finished
+* ``{"kind": "merged", "repo": ..., "number": ...}`` -- the PR is merged (closed unmerged: to a person)
 * ``{"kind": "until", "at": <epoch>}``     -- a recorded time passes
 
 Each dispatcher tick calls :func:`wake_waiting_tasks`, which checks those
@@ -38,7 +39,7 @@ import time
 from datetime import UTC, datetime
 from typing import Any, Callable, Optional
 
-WAIT_KINDS = ("card", "review", "pr", "until")
+WAIT_KINDS = ("card", "review", "pr", "merged", "until")
 DISPATCHER_ACTOR = "kanban-dispatcher"
 
 _PR_URL = re.compile(r"https://github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/pull/([1-9][0-9]*)")
@@ -58,6 +59,10 @@ class WaitReadFailed(Exception):
     """The evidence for a wait could not be collected; the message names the failure."""
 
 
+class WaitGone(Exception):
+    """The awaited event can no longer happen (a PR closed without merging); the message says why."""
+
+
 def _parse_until(value: str) -> int:
     if value.isdigit():
         return int(value)
@@ -68,18 +73,20 @@ def _parse_until(value: str) -> int:
 
 
 def parse_wait_for(spec: str) -> dict[str, Any]:
-    """``card:<id>`` / ``review:<id>`` / ``pr:<url|owner/repo#n>`` / ``until:<epoch|ISO-8601>``."""
+    """``card:<id>`` / ``review:<id>`` / ``pr:<url|owner/repo#n>`` / ``merged:<url|owner/repo#n>`` /
+    ``until:<epoch|ISO-8601>``."""
     kind, sep, value = (spec or "").partition(":")
     kind, value = kind.strip().lower(), value.strip()
     if not sep or kind not in WAIT_KINDS or not value:
-        raise ValueError("wait-for must be card:<id>, review:<id>, pr:<url|owner/repo#n> or until:<time>")
+        raise ValueError("wait-for must be card:<id>, review:<id>, pr:<url|owner/repo#n>, "
+                         "merged:<url|owner/repo#n> or until:<time>")
     if kind in ("card", "review"):
         return {"kind": kind, "task_id": value}
-    if kind == "pr":
+    if kind in ("pr", "merged"):
         match = _PR_URL.fullmatch(value) or _PR_SHORT.fullmatch(value)
         if not match:
-            raise ValueError("pr wait must be a GitHub PR URL or owner/repo#number")
-        return {"kind": "pr", "repo": match[1], "number": int(match[2])}
+            raise ValueError(f"{kind} wait must be a GitHub PR URL or owner/repo#number")
+        return {"kind": kind, "repo": match[1], "number": int(match[2])}
     try:
         return {"kind": "until", "at": _parse_until(value)}
     except ValueError:
@@ -114,6 +121,8 @@ def describe_wait(wait_for: dict[str, Any]) -> str:
         return f"{kind} {wait_for.get('task_id')} done"
     if kind == "pr":
         return f"required checks of {wait_for.get('repo')}#{wait_for.get('number')} finished"
+    if kind == "merged":
+        return f"{wait_for.get('repo')}#{wait_for.get('number')} merged"
     if kind == "until":
         at = datetime.fromtimestamp(int(wait_for.get("at") or 0), tz=UTC)
         return f"time {at.strftime('%Y-%m-%dT%H:%M:%SZ')} passed"
@@ -290,6 +299,30 @@ def read_pr_checks(wait_for: dict[str, Any], assignee: Optional[str]) -> bool:
     return bool(checks) and all(c.get("classification") not in _UNFINISHED_CHECKS for c in checks)
 
 
+def read_pr_merged(wait_for: dict[str, Any], assignee: Optional[str]) -> bool:
+    """True once the PR is merged, False while it is open. A PR closed without merging raises
+    :class:`WaitGone`; an unreadable one :class:`WaitReadFailed`, which the tick counts."""
+    import subprocess
+
+    from hermes_cli.kanban_pr_acceptance import _api, _assignee_profile_home, _GateAuthError
+
+    owner, name = str(wait_for["repo"]).split("/")
+    query = (f"{{repository(owner:{json.dumps(owner)},name:{json.dumps(name)})"
+             f"{{pullRequest(number:{int(wait_for['number']):d}){{state}}}}}}")
+    try:
+        repository = _api("graphql", query=query, profile_home=_assignee_profile_home(assignee))["data"]["repository"]
+    except _GateAuthError as exc:
+        raise WaitReadFailed(f"auth: {exc}") from None
+    except (subprocess.SubprocessError, OSError, ValueError, KeyError, TypeError) as exc:
+        raise WaitReadFailed(f"infra: {type(exc).__name__}") from None
+    state = ((repository or {}).get("pullRequest") or {}).get("state")
+    if state is None:
+        raise WaitReadFailed(f"auth: {wait_for['repo']}#{wait_for['number']} is not readable")
+    if state == "CLOSED":
+        raise WaitGone(f"{wait_for['repo']}#{wait_for['number']} was closed without merging")
+    return state == "MERGED"
+
+
 def pr_checks_finished(wait_for: dict[str, Any], assignee: Optional[str]) -> bool:
     """:func:`read_pr_checks` with a failed read reported as not finished."""
     try:
@@ -392,17 +425,21 @@ def _card_done(conn: sqlite3.Connection, task_id: str) -> bool:
 
 
 def wait_met(conn: sqlite3.Connection, wait_for: dict[str, Any], *, assignee: Optional[str],
-             now: int, pr_checks_fn: Callable[[dict, Optional[str]], bool]) -> bool:
+             now: int, pr_checks_fn: Callable[[dict, Optional[str]], bool],
+             pr_merged_fn: Callable[[dict, Optional[str]], bool] = read_pr_merged) -> bool:
     kind = wait_for["kind"]
     if kind in ("card", "review"):
         return _card_done(conn, str(wait_for.get("task_id")))
     if kind == "pr":
         return pr_checks_fn(wait_for, assignee)
+    if kind == "merged":
+        return pr_merged_fn(wait_for, assignee)
     return now >= int(wait_for.get("at") or 0)
 
 
 def wake_waiting_tasks(conn: sqlite3.Connection, *, now: Optional[int] = None,
-                       pr_checks_fn: Optional[Callable[[dict, Optional[str]], bool]] = None) -> list[str]:
+                       pr_checks_fn: Optional[Callable[[dict, Optional[str]], bool]] = None,
+                       pr_merged_fn: Optional[Callable[[dict, Optional[str]], bool]] = None) -> list[str]:
     """Unblock every parked card whose recorded event happened; returns the woken ids.
 
     Parked = ``scheduled``, or ``blocked`` with ``block_kind = 'needs_input'``. Network reads
@@ -430,7 +467,13 @@ def wake_waiting_tasks(conn: sqlite3.Connection, *, now: Optional[int] = None,
                 "finishing, so the wait can never be met. Decide what it waits on now, then unblock it."))
             continue
         try:
-            met = wait_met(conn, wait_for, assignee=row["assignee"], now=now, pr_checks_fn=pr_checks_fn)
+            met = wait_met(conn, wait_for, assignee=row["assignee"], now=now, pr_checks_fn=pr_checks_fn,
+                           pr_merged_fn=pr_merged_fn or read_pr_merged)
+        except WaitGone as exc:
+            hold_for_person(conn, row["id"], park_event_id, (
+                f"The wait ({describe_wait(wait_for)}) can never be met: {exc}. "
+                "Decide what it waits on now, then unblock it."))
+            continue
         except WaitReadFailed as exc:
             _record_read(conn, row["id"], park_event_id, wait_for, str(exc))
             continue
@@ -447,8 +490,8 @@ def wake_waiting_tasks(conn: sqlite3.Connection, *, now: Optional[int] = None,
 
 
 __all__ = [
-    "DISPATCHER_ACTOR", "WAIT_KINDS", "WAIT_READ_FAILURE_LIMIT", "WaitReadFailed", "describe_wait",
+    "DISPATCHER_ACTOR", "WAIT_KINDS", "WAIT_READ_FAILURE_LIMIT", "WaitGone", "WaitReadFailed", "describe_wait",
     "dispatcher_wake", "hold_for_person", "needs_input_wait", "park_payload", "parse_wait_for",
-    "pr_checks_finished", "read_pr_checks", "recorded_wait", "scheduled_resume_status",
+    "pr_checks_finished", "read_pr_checks", "read_pr_merged", "recorded_wait", "scheduled_resume_status",
     "wait_for_from_directive", "wait_met", "wake_waiting_tasks", "woken_for_pr_work",
 ]

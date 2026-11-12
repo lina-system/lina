@@ -929,7 +929,7 @@ def _block_wait_for(kb, conn, spec: Any, kind: Optional[str]) -> Optional[dict]:
 
 @_kanban_handler("kanban_schedule")
 def _handle_schedule(args: dict, **kw) -> str:
-    """Park the current task until an orchestrator re-gates it."""
+    """Park the current task on what wakes it (``kanban_db_park.resolve_park``, shared with the CLI)."""
     tid = _worker_guard("kanban_schedule", args)
     raw_reason = args.get("reason")
     _check(raw_reason is None or isinstance(raw_reason, str), "reason must be a string")
@@ -942,10 +942,15 @@ def _handle_schedule(args: dict, **kw) -> str:
                "goal_mode tasks cannot be scheduled: use kanban_block with kind "
                f"in {sorted(_GOAL_MODE_BLOCK_ALLOWED_KINDS)} for a genuine external "
                "blocker, or kanban_complete so the completion judge can evaluate it.")
+        from hermes_cli.kanban_db_park import resolve_park
+        try:
+            wait_for = resolve_park(conn, reason, args.get("wait_for"))
+        except ValueError as exc:
+            raise _Reject(f"kanban_schedule: {exc}") from None
         ok = kb.schedule_task(
-            conn, tid, reason=reason, expected_run_id=_worker_run_id(tid))
+            conn, tid, reason=reason, expected_run_id=_worker_run_id(tid), wait_for=wait_for)
         _check(ok, f"could not schedule {tid} (unknown id or not in todo/ready/running/blocked)")
-        return _ok_landed(kb, conn, tid, "scheduled", reason=reason)
+        return _ok_landed(kb, conn, tid, "scheduled", reason=reason, **({"wait_for": wait_for} if wait_for else {}))
 
 
 @_kanban_handler("kanban_request_review")

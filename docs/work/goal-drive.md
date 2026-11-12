@@ -144,6 +144,43 @@ GitHub is read at most once per run per tick, and each pull request and check re
 The usage-limit pattern is a runner's `usage_limit` in the work settings; without it the drive matches the 429,
 "usage limit", "rate limit", "too many requests" and "quota exceeded" wording of OCX, Anthropic and OpenAI runners.
 
+## Parking and waking
+
+The rule: no park without a waker (lina#604). A card parked in `scheduled` must name something that wakes it;
+otherwise it would sleep until someone unblocks it by hand. `kanban_schedule` (the model tool) and
+`hermes kanban schedule` (the CLI) check a new park with one validator, `kanban_db_park.resolve_park`, and refuse
+a park that resolves to nothing, naming the accepted forms; nothing changes on the card. A card already resting in
+`scheduled` keeps its state: only new parks are checked.
+
+| The park names | Given as | What wakes it |
+|---|---|---|
+| A time | `wait_for=until:<epoch or ISO-8601>`, or `SCHEDULED_UNTIL=<time>` in the reason | The kanban dispatcher's tick, at that time. The time is recorded as data on the `scheduled` event (`wait_for`), not only in the reason, so the session arms no timer of its own and a dispatcher restart in between loses nothing: each tick reads the wait from the board. |
+| Another card reaching a state | `wait_for=card:<id>` (done) or `review:<id>` (its result) | The dispatcher's tick, once that card is completed. |
+| A pull request | `wait_for=pr:<PR>` (its required checks finished) or `merged:<PR>` (it is merged) | The dispatcher's tick, reading GitHub with the card's assignee's login. |
+| A worker run | `wait_for=run:<run id>[,<run id>...]`, or the run id anywhere in the reason (`lina worker wait` prints such a reason) | The worker hub, after the last named run ends (`unblock --judge-wake`). |
+| A unit the caller declares | `wait_for=unit:<name>` | Only that unit, which unblocks the card itself; nothing else reads it. |
+| The goal drive's own park | A reason with `WAIT_EVENT=<event> GOAL_ACTION=<action id>` | The hub's goal drive (see [Parking](#parking)). |
+
+A park whose waker is gone does not wait silently:
+
+- A card or review wait whose card was deleted or archived unfinished, a PR wait that cannot be read 30 ticks in a
+  row, and a merge wait whose PR was closed without merging become a `needs_input` block naming why, for a person.
+- Every other late park is reported as an anomaly, `wake overdue: <why>`, while the card stays parked: its recorded
+  time passed more than five minutes ago (`OVERDUE_GRACE_S`, about five dispatcher ticks), a worker run it names
+  has no record on the hub or ended more than five minutes ago, or nothing at all wakes it (a park from before this
+  rule whose reason is prose).
+
+An overdue park shows on the goal line, the card's line in `hermes kanban list` (`⚠ wake overdue: …`, and
+`wake_overdue` in `--json`), and as a `wake_overdue` diagnostic (severity error) in `hermes kanban diagnostics`,
+`hermes kanban show` and the board's diagnostics.
+
+Cards parked before this rule with only a `SCHEDULED_UNTIL=<time>` marker in their reason are read once, on the
+board's migration pass: the time becomes the park's recorded wait (a `wait_recorded` event says so), and a marker
+that is not a time gets one `wait_unparsed` event, a log line for the operator and the `wake overdue` anomaly.
+Cards that wait on a worker run or on the goal drive are not touched and keep waking as before. To give a resting
+card a different wait, unblock it and park it again with the new `wait_for`; replacing or clearing a wait in one
+step is lina#525.
+
 ## Action ids and the ledger
 
 Every action has the id `<goal card>:<work card>:<hub task>:<run>:<rule>`, with characters outside letters, digits,

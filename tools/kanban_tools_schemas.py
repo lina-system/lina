@@ -209,16 +209,26 @@ KANBAN_BLOCK_SCHEMA = _schema(
 KANBAN_SCHEDULE_SCHEMA = _schema(
     "kanban_schedule",
     (
-        "Park your task as 'scheduled' while it waits for a time or external event. This ends the current run and makes the "
-        "task non-dispatchable until an orchestrator unblocks it; it does not "
-        "create a timer. Put any wake-up marker such as "
-        "``SCHEDULED_UNTIL=<ISO8601>`` in ``reason``."
+        "Park your task as 'scheduled' until something wakes it. This ends the current run; the card is not "
+        "dispatched again until its waker wakes it. A park needs a waker, else it is refused and nothing changes: "
+        "set ``wait_for``, or name a worker run id (OT-/OG-) or ``SCHEDULED_UNTIL=<ISO8601>`` in ``reason``. "
+        "A time wait is recorded on the card and the dispatcher wakes it at that time: you need no timer of "
+        "your own. A card whose waker is late, ended or missing shows 'wake overdue' in kanban diagnostics."
     ),
     {
         "task_id": _prop("string", _DESC_TASK_ID_DEFAULT),
         "reason": _prop("string", (
-            "Optional reason or machine-readable wake-up marker recorded on "
-            "the completed run and scheduled event."
+            "Why the task waits, recorded on the completed run and scheduled event. A worker run id "
+            "in it (the hub wakes the card after the last named run ends) or SCHEDULED_UNTIL=<time> "
+            "(recorded as an until wait) is a waker by itself."
+        )),
+        "wait_for": _prop("string", (
+            "What wakes the card: 'until:<epoch seconds or ISO-8601 time>' (the dispatcher, at that "
+            "time), 'card:<task id>' (that card is done), 'review:<task id>' (that review card has "
+            "its result), 'pr:<PR URL or owner/repo#n>' (its required checks finished), "
+            "'merged:<PR URL or owner/repo#n>' (it is merged), 'run:<worker run id>[,<run id>...]' "
+            "(the worker hub, after the last run ends) or 'unit:<name>' (that unit unblocks it; "
+            "nothing else does)."
         )),
     },
     [],

@@ -447,13 +447,15 @@ def park(store, card: dict, open_runs: list[str]) -> None:
 
 
 def _last_schedule(view: dict) -> tuple[list[str], str | None]:
-    """The runs the card's last ``scheduled`` event names (its ``reason`` and ``goal_park.workers``), and that
-    event's identity; ``([], None)`` when it has none."""
+    """The runs the card's last ``scheduled`` event names (its ``reason``, ``goal_park.workers`` and a ``run``
+    ``wait_for``), and that event's identity; ``([], None)`` when it has none."""
     for event in reversed(view.get("events") or []):
         if isinstance(event, dict) and event.get("kind") == "scheduled":
             payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
             park = payload.get("goal_park") if isinstance(payload.get("goal_park"), dict) else {}
-            text = " ".join([str(payload.get("reason") or ""), *map(str, park.get("workers") or [])])
+            wait = payload.get("wait_for") if isinstance(payload.get("wait_for"), dict) else {}
+            text = " ".join([str(payload.get("reason") or ""), *map(str, park.get("workers") or []),
+                             *map(str, wait.get("runs") or [])])
             return list(dict.fromkeys(RUN_ID.findall(text))), f"{event.get('created_at')}:{event.get('run_id')}"
     return [], None
 

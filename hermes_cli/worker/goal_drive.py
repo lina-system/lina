@@ -172,10 +172,13 @@ def resume_wait(view: dict) -> str:
 
 
 def native_wait(view: dict) -> bool:
-    """Whether the latest park transition still owns a native dispatcher wait."""
+    """Whether the latest park transition still owns a native dispatcher wait (a ``run`` or ``unit`` wait is
+    woken by the hub or the unit that declared it, not by the dispatcher)."""
     for event in reversed(view.get("events") or []):
         if event.get("kind") in ("scheduled", "blocked", "unblocked", "gave_up"):
-            return event["kind"] == "scheduled" and bool((event.get("payload") or {}).get("wait_for"))
+            wait = (event.get("payload") or {}).get("wait_for")
+            hub_owned = isinstance(wait, dict) and wait.get("kind") in ("run", "unit")
+            return event["kind"] == "scheduled" and bool(wait) and not hub_owned
     return False
 
 

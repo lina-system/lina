@@ -46,6 +46,9 @@ active profile. The submit line names the owner and its source; `accept` and `re
   is, what to do), and `report.md` as an attachment (`report-<ID>-<run>.md`). A repeated end report adds nothing.
 - After `wait`, call the Hermes model tool `kanban_schedule` with `workers=["<run id>", ...]` and
   `reason="waiting on lina worker <run ids>"`, then end the turn. `wait` does not call the scheduling CLI.
+- A park needs a waker: `kanban_schedule` refuses a reason of plain prose. What a park accepts, what wakes each
+  form and how a late park shows as `wake overdue` are in
+  [Parking and waking](work/goal-drive.md#parking-and-waking).
 - On a run's end the hub reads `hermes kanban show <id> --json`. The card waits on the run when its last
   `scheduled` event names it, in `reason` (any wording: the ID as a whole token) or in `goal_park.workers`, with or
   without `wait`; else when `wait` recorded it. A schedule that names several runs is woken once, after the last of

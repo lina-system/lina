@@ -620,6 +620,34 @@ def _rule_stuck_in_blocked(task, events, runs, now, cfg) -> list[Diagnostic]:
     )]
 
 
+def _rule_wake_overdue(task, events, runs, now, cfg) -> list[Diagnostic]:
+    """A ``scheduled`` card whose waker is late, ended or missing (``kanban_db_park.overdue``, lina#604).
+    ``cfg["_run_state"]`` replaces the hub's job records as the worker-run lookup."""
+    if _task_field(task, "status") != "scheduled":
+        return []
+    parks = [ev for ev in events if _event_kind(ev) in {"scheduled", "blocked", "unblocked", "gave_up"}]
+    if not parks or _event_kind(parks[-1]) != "scheduled":
+        return []
+    from hermes_cli.kanban_db_park import overdue
+    park = _parse_payload(parks[-1])
+    why = overdue(park, now, cfg.get("_run_state"))
+    if why is None:
+        return []
+    parked_at = _event_ts(parks[-1])
+    task_id = _task_field(task, "id")
+    return [Diagnostic(
+        kind="wake_overdue", severity="error",
+        title=why,
+        detail=("This card is parked in scheduled and nothing is going to wake it on time. Give it a "
+                "wait that wakes it (hermes kanban unblock, then park it again with --wait-for), or "
+                "unblock it now."),
+        actions=[_cli_hint("Unblock from the CLI", f"hermes kanban unblock {task_id}", suggested=True)],
+        first_seen_at=parked_at, last_seen_at=parked_at, count=1,
+        data={"parked_at": parked_at, "reason": park.get("reason") or "",
+              **({"wait_for": json.dumps(park["wait_for"])} if park.get("wait_for") else {})},
+    )]
+
+
 def _rule_block_unblock_cycling(task, events, runs, now, cfg) -> list[Diagnostic]:
     """>= cfg["block_cycle_threshold"] (default 3) blocked-after-unblocked
     cycles within cfg["block_cycle_window_seconds"] (default 24h). Complements
@@ -817,6 +845,7 @@ _RULES: list[RuleFn] = [
     _rule_review_dependency_deadlock,
     _rule_running_with_open_parents,
     _rule_stuck_in_blocked,
+    _rule_wake_overdue,
     _rule_block_unblock_cycling,
     _rule_stranded_in_ready,
     _rule_stale_running,

@@ -161,7 +161,9 @@ Waiting costs no turns. A goal-mode card whose judge says WAIT is parked in `sch
 event it waits for recorded on its `scheduled` event (`wait_for`): another card done, a review
 card's result, a PR's required checks finished, or a time. Each dispatcher tick checks that event
 and unblocks the card once when it happens. A worker records the same by hand with
-`hermes kanban schedule <id> --wait-for card:<id>|review:<id>|pr:<url>|until:<time>`, or
+`hermes kanban schedule <id> --wait-for card:<id>|review:<id>|pr:<url>|merged:<url>|until:<time>`
+(or the `kanban_schedule` tool's `wait_for`; a schedule with nothing that wakes it is refused, see
+`docs/work/goal-drive.md` "Parking and waking"), or
 `hermes kanban block <id> --wait-for ...` or the `kanban_block` tool's `wait_for` (a `needs_input`
 block that returns to ready by itself); a `needs_input` block without one waits for a person. A
 manual schedule from a reviewer run returns to review on unblock. A wait that can no longer be met
