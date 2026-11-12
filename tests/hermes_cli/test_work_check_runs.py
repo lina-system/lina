@@ -102,3 +102,30 @@ def test_check_adds_no_run_row_a_job_file_names_but_the_record_does_not_hold(wor
     assert (after_rows["run"], after_rows["run_todo"]) == (rows["run"], rows["run_todo"])
     assert (after_counts["run"], after_counts["run_todo"]) == (counts["run"], counts["run_todo"])
     assert computed(work, todo)["status"] == "stalled"
+
+
+@pytest.mark.parametrize("extra,age,status,line", [
+    ("", 2 * 86400, "waiting", "카드 기다림"),
+    ("", 3600, "working", "작업 planned"),
+    ("  run_never_started_s: 3600\n", 2 * 3600, "waiting", "카드 기다림"),
+], ids=["older-than-the-default-limit", "inside-the-default-limit", "older-than-a-set-limit"])
+def test_a_never_started_run_with_no_job_file_is_live_only_inside_the_limit(tmp_path, monkeypatch, extra, age,
+                                                                              status, line):
+    """lina#606: a run row with no start and no worker job file read planned (live) for as long as it existed."""
+    # Given a to-do waiting on a blocked card, linked to a run never started that the worker has no job file for
+    work = WorkEnv(tmp_path, monkeypatch, extra=extra)
+    todo = todo_with_run(work)
+    card_store(work, {"t_11111111": ("blocked", None)})
+    work.ok("link", todo, "kanban:t_11111111")
+    work.clock[0] += age
+    before = snapshot(work)
+    # When
+    out = work.ok("check", "--dry")
+    # Then the dry check reads it as the limit says and writes nothing
+    assert line in out
+    assert snapshot(work) == before
+    # And the check reports the card wait once the run is past the limit, and the run as live inside it
+    work.ok("check", "--quiet")
+    row = computed(work, todo)
+    assert (row["status"], line in row["line"]) == (status, True)
+    assert run_status(RUN) == ("planned",)
