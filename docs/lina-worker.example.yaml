@@ -34,6 +34,11 @@ worker:
       mass-research: planner
       ulw: builder
       mass: builder
+  proxy:                                     # THIS node's model proxy, in the node's own config.yaml (lina#585);
+    kind: ocx                                # ocx (default, also when absent) or magpie (installed separately);
+    remote_id: hub                           # magpie: the id of its remote link to the hub (model ids read
+                                             # <remote_id>/<provider>/<id>); health: optional healthz address.
+                                             # Switch and rollback per node: docs/worker-proxy-switch.md
   runners:
     omo: {type: omo}                         # built in: LINA's pinned omo (lina#34)
     claude:

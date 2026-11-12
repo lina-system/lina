@@ -16,6 +16,7 @@ worker:
   todo_link: {kind: hermes, command: [my-todo]}  # `<command> link|evidence|note <to-do> ...` for --todo; unset = none
   hub_rules: "- This machine is the hub: ..."     # added to the first prompt of a run on a `host: local` device
   models: {...}                    # see models.py
+  proxy: {kind: ocx}               # this node's model proxy, ocx or magpie: proxy.py, docs/worker-proxy-switch.md
   runners: {...}                   # see runners/__init__.py
 ```
 

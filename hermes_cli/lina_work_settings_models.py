@@ -200,6 +200,20 @@ def model_row(row: dict, accounts: list[dict]) -> dict:
             "resetAt": None if best is None else best[1], "accounts": len(usable)}
 
 
+def _row_identity(row: dict) -> tuple:
+    """A row of OCX's list by the model's one identity (lina#585), from OCX's own namespaced id when it has one."""
+    from hermes_cli.worker.models import OCX, canonical
+    if row.get("namespaced"):
+        return canonical(OCX, str(row["namespaced"]))
+    return canonical(row.get("provider"), row.get("id"))
+
+
+def identity(value: str | None, worker: dict) -> str | None:
+    """``<provider>/<id>`` of a model value in the one identity, None when it names none."""
+    ref = _resolve(value, worker)
+    return None if ref is None else "/".join(ref)
+
+
 def _resolve(value: str | None, worker: dict) -> tuple[str, str] | None:
     from hermes_cli.worker.models import canonical, parse
     from hermes_cli.worker.runners.base import RunnerError
@@ -219,8 +233,8 @@ def _state(value: str | None, worker: dict, rows: list[dict], accounts: list[dic
     ref = _resolve(value, worker)
     if ref is None or not read_ok:
         return "unknown"
-    from hermes_cli.worker.models import canonical
-    row = next((r for r in rows if canonical(r.get("provider"), r.get("id")) == ref), None)
+    # TODO(lina#588): the check reads the hub's OCX list only; a magpie node's `/v1/models` has no seam here yet.
+    row = next((r for r in rows if _row_identity(r) == ref), None)
     if row is None or _off(row):
         return "off"
     return model_row(row, accounts)["state"]
@@ -242,7 +256,8 @@ def _check(who: str, value: str | None, fallback: str | None, worker: dict, ctx:
     else:
         tail = f"다음 실행은 {fallback}로 갑니다" if fallback else "대체 모델이 없습니다"
         warning = WARN[state].format(who=who) + " · " + tail
-    return {"model": value, "state": state, "usable": usable, "fallback": fallback, "warning": warning}
+    return {"model": value, "identity": identity(value, worker), "state": state, "usable": usable,
+            "fallback": fallback, "warning": warning}
 
 
 def view(base: Path | None = None, now: float | None = None) -> dict:

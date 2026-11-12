@@ -46,7 +46,7 @@ class OmoRunner:
     def __init__(self, name: str, spec: dict, limits: dict | None = None, root: Path | None = None):
         from hermes_cli import lina_ocx, lina_omo
         self.name, self.limits = name, limits or {}
-        base = root or lina_ocx.lina_root()
+        base = self.root = root or lina_ocx.lina_root()
         self.bin = Path(spec.get("bin") or lina_omo.shim_path(base))
         self.node = Path(spec.get("node") or lina_omo.node_bin(base))
         current = lina_omo.vendor_dir(base) / "current"
@@ -88,10 +88,11 @@ class OmoRunner:
 
     def _open_session(self, task: Task, prompt_file: Path, model: ModelProfile | None, run: int,
                       access: str) -> tuple[dict | None, int]:
-        from hermes_cli.worker.models import through_ocx
+        from hermes_cli.worker import proxy, settings
+        from hermes_cli.worker.models import through_proxy
         err = task.path(f"stderr.{run}.txt")
-        # omo reaches every model through OCX's own provider (lina#385).
-        provider, model_id = through_ocx(model) if model else (None, None)
+        # omo reaches every model through this node's own proxy (lina#385, lina#585): OCX unless it says magpie.
+        provider, model_id = through_proxy(model, proxy.of(settings.section(self.root))) if model else (None, None)
         return self._call([str(self.node), str(HELPERS / "omo_open.mjs"), str(self.engine), str(task.work),
                            task.id, str(prompt_file), provider or "", model_id or "",
                            model.thinking or "" if model else "", access], 300, err)
