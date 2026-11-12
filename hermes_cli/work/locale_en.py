@@ -479,6 +479,8 @@ MESSAGES = {
         "Use plain language. One fact per field.",
     "스프린트":
         "Sprint",
+    "시작 안 됨, 작업 파일 없음":
+        "never started, no job file",
     "실행 실패: {e}":
         "Run failed: {e}",
     "실행 이력 없음":

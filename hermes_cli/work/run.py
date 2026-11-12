@@ -233,11 +233,17 @@ def resume() -> None:
 
 
 # ---------------------------------------------------------------- record side
-def _sync_one(db, run_id: str) -> None:
+def worker_job(run_id: str) -> dict | None:
+    """*run_id*'s worker job file in the shape ``store.sync_runs`` reads, or None when the worker has no such job."""
     from hermes_cli.worker.hub_store import Store
     job = Store(_worker_root()).load(run_id)
-    if job:
-        store.sync_runs(db, [_job_row(job)], [], store.utc(now()))
+    return _job_row(job) if job else None
+
+
+def _sync_one(db, run_id: str) -> None:
+    row = worker_job(run_id)
+    if row:
+        store.sync_runs(db, [row], [], store.utc(now()))
 
 
 def card_todos(card: str) -> list[str]:

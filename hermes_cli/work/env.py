@@ -14,6 +14,7 @@ work:
   writing: {devices: [build-a]}   # extra device names the writing rules refuse (devices.workers is read too)
   store: {backend: postgres}      # postgres (the LINA store, schema work; default) or sqlite (work/work.db)
   freeze_wait_s: 1800
+  run_never_started_s: 86400     # work check: a linked run never started, no worker job file, this old reads stopped
 ```
 
 The values are read once per command (``bind``), never at import time.

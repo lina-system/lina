@@ -1,7 +1,12 @@
 """An item's state is recomputed the moment it is written: every write of a note, wait, evidence, link or close
 marks the item (``touched``), and ``recompute`` (run by the CLI right after the command) evaluates the marked items
 and their goals once, closes those whose own check passes and stores the result. ``work check`` is the same pass
-over every open item; nothing here runs on a timer."""
+over every open item; nothing here runs on a timer.
+
+The check reads a worker run an open item links (``omo:``) from v_run, then from the worker's job file, and writes
+nothing to do so: a run that ended there reads as ``run-sync`` would leave it (lina#605), and a run never started
+with no job file reads stopped once it is older than ``work.run_never_started_s`` in the root's ``config.yaml``
+(seconds, default 86400: one day) (lina#606)."""
 
 from __future__ import annotations
 
@@ -9,11 +14,13 @@ from concurrent.futures import ThreadPoolExecutor
 
 from hermes_cli.work import ledger
 from hermes_cli.work.common import Lock, iso, load_json, now, paths, save_json, warn
-from hermes_cli.work.evaluate import ALERT, evaluate, item_name
+from hermes_cli.work.env import current
+from hermes_cli.work.evaluate import ALERT, RUN_ACTIVE, evaluate, item_name
 from hermes_cli.work.kinds import TODO, kind_now
 from hermes_cli.work.links import KANBAN_REOPEN, kanban_read, kanban_state_word, link_label
 from hermes_cli.work.locale import status, t
 from hermes_cli.work.people import name
+from hermes_cli.work.sources import iso_ts
 from hermes_cli.work.store import CHECK_WORDS
 
 RECOMPUTE_OPS = {"note", "wait", "evidence", "done", "owner_done", "owner_undo", "drop", "reopen", "link", "unlink",
@@ -47,11 +54,47 @@ def build_ctx(recs: dict):
     from hermes_cli.work.sources import sessions_index
     sess, sess_id = sessions_index()
     st = load_json(paths()["state"], {})
-    runs = {rid: (code, reason) for rid, code, reason in
-            ledger.db().execute("SELECT id, status, reason FROM v_run").fetchall()}
+    runs = worker_runs(recs, ledger.db().execute("SELECT id, status, reason, created_at FROM v_run").fetchall())
     ctx = {"recs": recs, "sess": sess, "sess_id": sess_id, "gh": st.get("gh_cache", {}), "prev": st.get("items", {}),
            "runs": runs}
     return ctx, st
+
+
+def _ended(job: dict) -> tuple[str, str | None]:
+    """v_run's (status, reason) for a run whose worker job ended, as its row reads once run-sync wrote the job."""
+    if job.get("cancelled"):
+        return "dropped", None
+    if job.get("rc") == 0:
+        return ("done", None) if job.get("result") else ("stopped", "result_missing")
+    return "stopped", "failed"
+
+
+def never_started_limit() -> float:
+    """Seconds a run may stay never started with no worker job file before the check reads it stopped (lina#606)."""
+    return float(current().section("work").get("run_never_started_s") or 86400)
+
+
+def worker_runs(recs: dict, rows) -> dict:
+    """Each run's (status, reason) as the check reads it: v_run's, except a run v_run still reads live that an open
+    item links and whose worker job file says it ended, which reads as run-sync would leave it (lina#605), or that was
+    never started, has no job file and is older than ``never_started_limit``, which reads stopped (lina#606). Nothing
+    is written, so ``check --dry`` leaves the store as it was and a job with no run row adds none."""
+    from hermes_cli.work.run import worker_job
+    runs = {rid: (code, reason) for rid, code, reason, _ in rows}
+    created = {rid: iso_ts(at) for rid, _, _, at in rows}
+    linked = {x[4:] for r in recs.values() if r.get("state") == "open" for x in r.get("links") or []
+              if x.startswith("omo:")}
+    at, limit = now(), never_started_limit()
+    for rid in linked:
+        status = runs.get(rid, (None, None))[0]
+        if status not in RUN_ACTIVE:
+            continue
+        job = worker_job(rid)
+        if job and job.get("ended"):
+            runs[rid] = _ended(job)
+        elif job is None and status == "planned" and created[rid] and at - created[rid] >= limit:
+            runs[rid] = ("stopped", t("시작 안 됨, 작업 파일 없음"))
+    return runs
 
 
 def _evaluate_all(recs: dict, ids: list[str], ctx: dict, st: dict) -> dict:
