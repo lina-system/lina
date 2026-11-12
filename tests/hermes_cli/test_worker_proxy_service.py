@@ -3,6 +3,7 @@ restarts the local service ``worker.proxy.service`` names (default ``magpie``), 
 does, and neither restarts while a run holds a slot on the node. systemd and launchd are local fakes.
 """
 
+import fcntl
 import json
 import subprocess
 import textwrap
@@ -88,3 +89,24 @@ def test_an_ocx_node_restarts_its_ocx_as_service_ocx_does(node, systemd, monkeyp
     assert node()("service", "proxy", "restart") == {"service": "proxy", "kind": "ocx", "action": "restart",
                                                      "state": "running (1.0.0, port 10100)"}
     assert not [argv for argv in systemd.calls if "restart" in argv]
+
+
+@pytest.mark.parametrize("proxy_yaml", ["{kind: magpie}", None])
+def test_no_slot_is_admitted_while_the_proxy_restarts(node, systemd, monkeypatch, tmp_path, proxy_yaml):
+    """admit() and reserve() take the slot lock; the restart holds it from the busy check to its end."""
+    probes = []
+
+    def restart_probe(*_args):
+        with (tmp_path / "node" / "worker" / "slots.lock").open("w") as handle:
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                probes.append("held")
+            else:
+                probes.append("free")
+        return {}
+
+    monkeypatch.setattr(lina_runners, "_ocx_act", restart_probe)
+    monkeypatch.setattr(proxy_service, "_magpie_restart", lambda unit: (restart_probe() or True, ""))
+    node(proxy_yaml)("service", "proxy", "restart")
+    assert probes == ["held"]

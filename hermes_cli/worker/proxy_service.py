@@ -89,14 +89,15 @@ def act(worker_root: Path, action: str, ocx_act) -> dict:
     head = {"service": "proxy", "kind": kind}
     if action == "status":
         return {**head, "action": "status", **state(worker_root)}
-    held = slots.held(worker_root)
-    if held:
-        return {**head, "action": "error", "busy": held,
-                "reason": f"{held} run(s) active on this node: the {kind} restart waits until they end"}
-    if kind == proxy.OCX:
-        return {**ocx_act("restart"), **head}
-    unit = device.node_proxy(worker_root).service
-    done, said = _magpie_restart(unit)
-    if not done:
-        return {**head, "action": "error", "reason": said or f"magpie service {unit} did not restart"}
-    return {**head, "action": "restart", "name": unit, "state": magpie_state(unit)}
+    with slots._locked(worker_root):  # admit and reserve take this lock: no slot is granted between the check and the restart
+        held = slots.held(worker_root)
+        if held:
+            return {**head, "action": "error", "busy": held,
+                    "reason": f"{held} run(s) active on this node: the {kind} restart waits until they end"}
+        if kind == proxy.OCX:
+            return {**ocx_act("restart"), **head}
+        unit = device.node_proxy(worker_root).service
+        done, said = _magpie_restart(unit)
+        if not done:
+            return {**head, "action": "error", "reason": said or f"magpie service {unit} did not restart"}
+        return {**head, "action": "restart", "name": unit, "state": magpie_state(unit)}
