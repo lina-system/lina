@@ -33,11 +33,12 @@ Run on the node, as the user the worker runs as.
 
 2. **Connect the agents to the node's magpie** with magpie's own (official) connection commands for claude, codex and
    omo. They add magpie's provider and leave the node's other proxy settings alone.
-3. **Move omo's routes:** `lina omo routing plan`, review it, then `lina omo routing apply` (lina#587). The connection
-   command for omo changes only omo's default model; its role and category routes stay on OCX until this step.
-4. **Set the kind** in the node's LINA `config.yaml`: `worker.proxy.kind: magpie` (and `remote_id` when the node's
+3. **Set the kind** in the node's LINA `config.yaml`: `worker.proxy.kind: magpie` (and `remote_id` when the node's
    magpie names its link to the hub something other than `hub`). The next run on the node opens its session as
    `magpie` with `<remote_id>/<provider>/<id>`; runs already going keep their session.
+4. **Move omo's routes:** `lina omo routing plan`, review it, then `lina omo routing apply` (see below). The
+   connection command for omo changes only omo's default model; its role and category routes stay on OCX until this
+   step.
 5. **Check one real call:** submit one small run to the node (`--host <node>`) and see it end; then find the hub's
    usage line for the node's key on the hub's magpie (the call must show there, not on OCX).
 
@@ -55,7 +56,19 @@ it is not replaced by another model. Pick the model without `-fast`, or run it o
    (cd ~/.omo && sha256sum -c --ignore-missing "$backup"/SHA256SUMS)   # the restored files match the backup
    ```
 
-3. `lina omo routing check` reports the OCX routes again; one real call through the node shows on OCX.
+3. `lina omo routing check` reports the OCX routes again (or, without the backup, `lina omo routing apply` writes them
+   back); one real call through the node shows on OCX.
+
+## omo's role and category routes
+
+`lina omo routing plan|apply|check` follows `worker.proxy.kind` (lina#587). On a `magpie` node ocx-omo reads
+`providers.magpie.models` of omo's `models.json` (written by magpie's connection command; LINA does not try OCX's
+integration there) and writes the same 14 routes with names `magpie/<remote_id>/<provider>/<id>`, through the same
+name table. omo's recommended order and reasoning strength and LINA's policy extras stay as they are; a model the
+proxy lacks (the `-fast` tiers) and the second of two OCX namespaces with one magpie provider (`google`,
+`google-antigravity`) are left out and listed under `not routed`. `check` keeps its exit codes (0 in step, 10 changes
+to review, 2 error); right after the kind changes every route shows as changed until `apply`. Applying on a `magpie`
+node and then again on an `ocx` node gives back the OCX routes exactly, each apply keeping its `omo.jsonc` backup.
 
 The run records, the settings check and the run page show the same model names before and after: the identity does
 not depend on the proxy.

@@ -7,7 +7,10 @@ import { loadCatalog } from "./catalog.js";
 import { currentEntries, editRouting, nativeOverrideWarnings, readConfig, writeConfig } from "./config.js";
 import { OcxOmoError } from "./errors.js";
 import { parseJsonc } from "./jsonc.js";
-import { buildPlan, formatEntries, type Entry, type Plan, type Policy } from "./plan.js";
+import { loadNames } from "./names.js";
+import {
+  buildPlan, formatEntries, MAGPIE_PROVIDER, OCX_TARGET, type Entry, type Plan, type Policy, type Target,
+} from "./plan.js";
 import { readState, writeState, type State } from "./state.js";
 import { loadUpstream, type Chains, type Rung } from "./upstream.js";
 
@@ -30,6 +33,9 @@ Options:
   --config <path>    omo config (default: <home>/.omo/omo.jsonc)
   --policy <path>    Policy (default: <home>/.omo/ocx-omo/policy.json, else the bundled policy)
   --state <path>     Baseline (default: <home>/.omo/ocx-omo/state.json)
+  --proxy <kind>     ocx (default): routes through OCX's opencodex provider; magpie: through the node's magpie
+  --remote-id <id>   magpie: the id of the magpie link whose models are routed to (default: hub)
+  --names <path>     magpie: the name table from OCX namespaces to magpie providers (required with magpie)
   --json             Machine-readable output
 `;
 
@@ -41,6 +47,9 @@ const OPTIONS = {
   config: { type: "string" },
   policy: { type: "string" },
   state: { type: "string" },
+  proxy: { type: "string" },
+  "remote-id": { type: "string" },
+  names: { type: "string" },
   json: { type: "boolean" },
   help: { type: "boolean", short: "h" },
 } as const;
@@ -48,12 +57,25 @@ const OPTIONS = {
 type Context = {
   policy: Policy;
   plan: Plan;
+  /** The provider prefix the output leaves out: the policy's for OCX, `magpie` for magpie. */
+  provider: string;
+  target: Target;
   chains: Chains;
   omoVersion: string;
   configPath: string;
   statePath: string;
   json: boolean;
 };
+
+function targetOf(values: ReturnType<typeof parse>["values"]): Target {
+  const kind = values.proxy ?? "ocx";
+  if (kind === "ocx") return OCX_TARGET;
+  if (kind !== "magpie") throw new OcxOmoError(`--proxy: ocx or magpie, not ${kind}`);
+  const remoteId = values["remote-id"] ?? "hub";
+  if (!remoteId || remoteId.includes("/")) throw new OcxOmoError(`--remote-id: a name without '/', not ${remoteId}`);
+  if (!values.names) throw new OcxOmoError("--proxy magpie needs --names <path> (the name table)");
+  return { kind, remoteId, names: loadNames(values.names) };
+}
 
 function load(values: ReturnType<typeof parse>["values"]): Context {
   const home = values.home ?? homedir();
@@ -62,11 +84,17 @@ function load(values: ReturnType<typeof parse>["values"]): Context {
   const policy = existsSync(policyPath)
     ? (parseJsonc(readFileSync(policyPath, "utf8"), policyPath) as Policy)
     : (JSON.parse(readFileSync(DEFAULT_POLICY, "utf8")) as Policy);
+  const target = targetOf(values);
   const upstream = loadUpstream(values["omo-task"]);
-  const catalog = loadCatalog(values.models ?? join(home, ".omo/agent/models.json"), policy.provider);
+  const models = values.models ?? join(home, ".omo/agent/models.json");
+  const catalog = target.kind === "magpie"
+    ? loadCatalog(models, MAGPIE_PROVIDER, "run magpie's connection command for omo")
+    : loadCatalog(models, policy.provider);
   return {
     policy,
-    plan: buildPlan(upstream.chains, policy, catalog),
+    plan: buildPlan(upstream.chains, policy, catalog, target),
+    provider: target.kind === "magpie" ? MAGPIE_PROVIDER : policy.provider,
+    target,
     chains: upstream.chains,
     omoVersion: upstream.version,
     configPath: values.config ?? join(home, ".omo/omo.jsonc"),
@@ -88,12 +116,12 @@ function chainOf(chains: Chains, path: string): Rung[] {
 }
 
 function printRoutes(context: Context, config: Record<string, unknown>): void {
-  const { plan, policy } = context;
+  const { plan, provider } = context;
   for (const [path, route] of Object.entries(plan.routes)) {
     const current = currentEntries(config, path);
     const mark = same(current, route.models) ? " " : "*";
-    console.log(`${mark} ${path}: ${formatEntries(route.models, policy.provider)}`);
-    if (mark === "*" && current.length) console.log(`    now: ${formatEntries(current, policy.provider)}`);
+    console.log(`${mark} ${path}: ${formatEntries(route.models, provider)}`);
+    if (mark === "*" && current.length) console.log(`    now: ${formatEntries(current, provider)}`);
     if (route.skipped.length) console.log(`    not routed: ${route.skipped.join(", ")}`);
   }
 }
@@ -105,7 +133,8 @@ function runPlan(context: Context): number {
     console.log(JSON.stringify({ omoVersion: context.omoVersion, routes: context.plan.routes, warnings }, null, 2));
     return 0;
   }
-  console.log(`omo ${context.omoVersion}: proposed routing (* differs from ${context.configPath})`);
+  const through = context.target.kind === "magpie" ? ` through magpie (${context.target.remoteId})` : "";
+  console.log(`omo ${context.omoVersion}: proposed routing${through} (* differs from ${context.configPath})`);
   printRoutes(context, parsed);
   for (const warning of warnings) console.log(`warning: ${warning}`);
   return 0;
@@ -139,7 +168,7 @@ function runApply(context: Context, only: string | undefined): number {
 }
 
 function runCheck(context: Context): number {
-  const { plan, policy } = context;
+  const { plan, provider } = context;
   const state = readState(context.statePath);
   if (!state) {
     console.log("no baseline yet: review `ocx-omo plan`, then run `ocx-omo apply`");
@@ -175,8 +204,8 @@ function runCheck(context: Context): number {
       console.log(`  upstream after:  ${after || "(removed)"}`);
     }
     const entries: Entry[] = plan.routes[path]?.models ?? [];
-    console.log(`  routing before:  ${formatEntries(state.routing[path] ?? [], policy.provider) || "(none)"}`);
-    console.log(`  routing after:   ${formatEntries(entries, policy.provider) || "(none)"}`);
+    console.log(`  routing before:  ${formatEntries(state.routing[path] ?? [], provider) || "(none)"}`);
+    console.log(`  routing after:   ${formatEntries(entries, provider) || "(none)"}`);
   }
   console.log(`apply with: ocx-omo apply --only ${changed.join(",")}`);
   return EXIT_PENDING;
