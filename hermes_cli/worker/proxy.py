@@ -6,7 +6,7 @@ worker:
   proxy:
     kind: magpie          # ocx (default) or magpie: the node's local magpie, installed separately
     remote_id: hub        # the id the node's magpie gives its remote link to the hub (default hub)
-    health: http://127.0.0.1:<port>/healthz   # optional; kept for the health report (lina#586)
+    health: http://127.0.0.1:3425/v1/models   # optional: the address the node's proxy check asks (lina#586)
 ```
 
 How a node is moved to magpie and back: ``docs/worker-proxy-switch.md``. LINA only reads this section; it never
@@ -28,7 +28,7 @@ KINDS = (OCX, MAGPIE)
 class Proxy:
     kind: str = OCX
     remote_id: str = "hub"  # on a magpie node, model ids read `<remote_id>/<provider>/<model>`
-    health: str | None = None  # read and kept, used by the health report (lina#586)
+    health: str | None = None  # the address device.model_check_url asks instead of the kind's default (lina#586)
 
 
 def of(worker: dict) -> Proxy:
