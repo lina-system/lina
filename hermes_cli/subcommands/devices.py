@@ -60,9 +60,10 @@ def build_devices_parser(subparsers) -> None:
     sign_in.add_argument("node", nargs="?")
     sign_in.add_argument("runner", nargs="?")
     sign_in.add_argument("--json", action="store_true")
-    service = sub.add_parser("service", help="Status or restart of a device's OCX or worker through the service layer")
+    service = sub.add_parser("service", help="Status or restart of a device's OCX, worker or model proxy (by its "
+                                             "kind: ocx or the node's local magpie service) through the service layer")
     service.add_argument("name")
-    service.add_argument("service", choices=("ocx", "worker"))
+    service.add_argument("service", choices=("ocx", "worker", "proxy"))
     service.add_argument("action", choices=("status", "restart"))
     service.add_argument("--json", action="store_true")
     parser.set_defaults(func=_cmd_devices)

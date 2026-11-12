@@ -106,11 +106,14 @@ def test_an_ocx_node_asks_healthz_and_reports_both_fields(node, endpoint):
         f"model path does not answer ({endpoint.base}/healthz: HTTP 503)"
 
 
-def test_a_magpie_node_is_up_on_200_with_models(node, endpoint):
+def test_a_magpie_node_is_up_on_200_with_models(node, endpoint, monkeypatch):
+    monkeypatch.setattr("hermes_cli.worker.proxy_service.magpie_state", lambda unit: f"running ({unit})")
     url = f"{endpoint.base}/v1/models"
     call = node(f"{{kind: magpie, health: '{url}'}}")
     assert call("probe", "", "claude")["model_path"] == "ok"
-    assert call("hello")["capabilities"]["proxy"] == {"kind": "magpie", "health": 200, "models": 2}
+    assert call("hello")["capabilities"]["proxy"] == {
+        "kind": "magpie", "health": 200, "models": 2, "remote_id": "hub",
+        "service": {"name": "magpie", "state": "running (magpie)"}}
 
 
 @pytest.mark.parametrize("status", [404, 503])
@@ -126,7 +129,8 @@ def test_a_magpie_node_that_answers_nothing_is_down(node):
     url = _closed("/v1/models")
     call = node(f"{{kind: magpie, health: '{url}'}}")
     assert call("probe", "", "claude")["model_path_why"] == f"model path does not answer (magpie {url}: HTTP none)"
-    assert call("hello")["capabilities"]["proxy"] == {"kind": "magpie", "health": None, "models": 0}
+    proxy = call("hello")["capabilities"]["proxy"]
+    assert {key: proxy[key] for key in ("kind", "health", "models")} == {"kind": "magpie", "health": None, "models": 0}
 
 
 def test_a_magpie_node_with_an_empty_model_list_is_down(node, endpoint):

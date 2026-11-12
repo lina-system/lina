@@ -445,15 +445,18 @@ def model_path(worker_root: Path, name: str = "", spec: dict | None = None) -> d
 
 def proxy_report(worker_root: Path, ocx: dict) -> dict | None:
     """``hello``'s ``capabilities.proxy``: ``{kind, health}`` (health: the HTTP status of the node's proxy check, None
-    when nothing answers), ``version`` where known and, for ``magpie``, ``models``. An ``ocx`` node reports the OCX
+    when nothing answers), ``version`` where known and, for ``magpie``, ``models``, ``remote_id`` (its link to the hub)
+    and ``service`` ``{name, state}`` of its local magpie service (lina#589). An ``ocx`` node reports the OCX
     its ``capabilities.ocx`` (*ocx*) names, with the same health and version; one that reports no OCX (``external``
     false and no ``version``) reports no proxy, so it is never passed for one. No key is read."""
     if node_proxy(worker_root).kind == proxy.OCX:
         if not (ocx.get("external") is True or ocx.get("version") is not None):
             return None
         return {"kind": proxy.OCX, "health": ocx.get("health"), "version": ocx.get("version")}
+    from hermes_cli.worker import proxy_service
     check = proxy_check(worker_root)
-    return {"kind": check["kind"], "health": check["health"], "models": check["models"]}
+    return {"kind": check["kind"], "health": check["health"], "models": check["models"],
+            "remote_id": node_proxy(worker_root).remote_id, "service": proxy_service.state(worker_root)}
 
 
 def probe_failed(base: Path, worker: dict, name: str) -> str | None:

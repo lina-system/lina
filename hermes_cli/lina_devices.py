@@ -227,11 +227,12 @@ def sign_in(base: Path | None = None, *, node: str | None = None, runner: str | 
 def service_call(dev: settings.Device, worker_root: Path, which: str, action: str) -> dict:
     """OCX or worker status/restart on *dev* (lina#222), always through the node's ``service`` verb: the worker
     restart keeps #218's compare-and-act with the instance its ``hello`` reports now; OCX goes to the node's service
-    layer (``lina_runners.node_service``)."""
+    layer (``lina_runners.node_service``), and so does ``proxy``, the node's own model proxy service by its kind
+    (lina#589)."""
     transport = for_device(dev, worker_root)
-    if which == "ocx":
-        reply = transport.call(["service", "ocx", action])
-        return reply.json() or {"service": "ocx", "action": "error",
+    if which in ("ocx", "proxy"):
+        reply = transport.call(["service", which, action])
+        return reply.json() or {"service": which, "action": "error",
                                 "reason": reply.err.strip()[-160:] or f"exit {reply.code}"}
     reply = transport.refresh(timeout=60)
     descriptor = transport.descriptor or {}

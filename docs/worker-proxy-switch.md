@@ -11,6 +11,7 @@ worker:
     kind: magpie        # ocx (default) or magpie
     remote_id: hub      # the id the node's magpie gives its remote link to the hub (default hub)
     health: http://127.0.0.1:3425/v1/models   # optional: the address of the proxy check (lina#586)
+    service: magpie     # the node's local magpie service: systemd user unit / launchd label (default magpie)
 ```
 
 ## The check the bid reads
@@ -27,8 +28,19 @@ whose list has at least one model. A node that fails is passed with the kind and
 prove the node's link to the hub. The real-call probe (`hermes_cli/lina_runner_probe.py`, run by the daily runner sync, lina#531) and step 5 below stay the
 proof that a call goes through. The check reads no key and never calls the hub.
 
-LINA does not install, configure or restart magpie: it is installed on the node separately and only read here. No
-step below touches the node's OCX settings or the OCX service; OCX keeps running, so going back is a config change.
+LINA does not install or configure magpie and never touches its accounts or its link to the hub: it is installed on
+the node separately and only read here. No step below touches the node's OCX settings or the OCX service; OCX keeps
+running, so going back is a config change.
+
+## The device screen (lina#589)
+
+`GET /api/lina/devices` gives each node a `proxy`: `ocx` as before (health and version); `magpie` its link to the hub
+(`link`, the `remote_id`), the model count of its local `/v1/models` and the state of its local magpie service
+(`worker.proxy.service`); null for a node that reports no proxy. On a magpie node the runners that reach models through
+the proxy show `signIn: magpie` and their sign-in is refused (409): their accounts are signed in on the hub's magpie
+(`proxy.signIn: hub`), not on the node. The restart action `{"service": "proxy"}` (and `lina devices service <node>
+proxy restart`) restarts only the node's own proxy service by its kind, the OCX or the local magpie service, and the
+node refuses it while a run is active on it.
 
 ## Switch a node to magpie
 
