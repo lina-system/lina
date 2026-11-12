@@ -17,7 +17,8 @@ export type RoutePlan = { models: Entry[]; skipped: string[] };
 export type Plan = { routes: Record<string, RoutePlan>; warnings: string[] };
 /**
  * The proxy the routes go through (lina#587): OCX's own provider, or a node's magpie, whose catalog names a model
- * `<remoteId>/<provider>/<id>` and whose provider is the OCX namespace's per the name table.
+ * `<remoteId>/<provider>/<id>` and whose provider is the OCX namespace's per the name table. An empty `remoteId`
+ * (lina#623) is a node whose own magpie holds the models: its catalog names them `<provider>/<id>`.
  */
 export type Target = { kind: "ocx" } | { kind: "magpie"; remoteId: string; names: Names };
 export const OCX_TARGET: Target = { kind: "ocx" };
@@ -53,7 +54,8 @@ function resolveMagpie(name: string, policy: Policy, catalog: Catalog, remoteId:
     const base = namespace ? `${namespace}/${name}` : name;
     if (ocxIds(base, name).some((id) => policy.exclude.includes(id))) continue;
     const provider = magpieProvider(names, namespace, name);
-    const model = provider === undefined ? undefined : catalog.get(`${remoteId}/${provider}/${name}`);
+    const id = remoteId ? `${remoteId}/${provider}/${name}` : `${provider}/${name}`;
+    const model = provider === undefined ? undefined : catalog.get(id);
     if (model) resolved.push({ model: `${MAGPIE_PROVIDER}/${model.id}`, entry: model });
   }
   return resolved;

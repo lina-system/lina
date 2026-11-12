@@ -97,6 +97,26 @@ def test_absent_config_is_ocx_and_a_wrong_kind_is_refused_by_its_key():
         proxy.of({"proxy": {"kind": "openrouter"}})
 
 
+def test_an_absent_remote_id_is_hub_and_an_empty_one_is_kept():
+    assert proxy.of({"proxy": {"kind": "magpie"}}).remote_id == "hub"
+    assert proxy.of({"proxy": {"kind": "magpie", "remote_id": ""}}).remote_id == ""
+
+
+@pytest.mark.parametrize("remote_id", ["a/b", "/", 1, ["hub"]])
+def test_a_remote_id_with_a_slash_or_not_a_text_is_refused(remote_id):
+    with pytest.raises(RunnerError, match="worker.proxy.remote_id"):
+        proxy.of({"proxy": {"kind": "magpie", "remote_id": remote_id}})
+
+
+@pytest.mark.parametrize("written", NAMES)
+def test_a_node_whose_own_magpie_holds_the_models_opens_the_plain_name_with_the_same_identity(written):
+    identity, _, (_, hub_id) = NAMES[written]
+    provider, model_id = models.through_proxy(models.parse(written, WORKER), proxy.Proxy("magpie", ""))
+
+    assert (provider, model_id) == ("magpie", identity) == ("magpie", hub_id.removeprefix("hub/"))
+    assert "/".join(models.canonical(provider, model_id)) == "/".join(models.canonical("magpie", hub_id)) == identity
+
+
 def test_an_older_record_in_ocx_names_is_read_through_the_table():
     job = {"model": {"provider": "opencodex", "id": "anthropic/claude-opus-5-5", "thinking": "high"}}
 
@@ -112,6 +132,7 @@ def _runner(root):
 @pytest.mark.parametrize(("config", "session"), [
     (None, ["opencodex", "anthropic/claude-opus-5-5", "high"]),
     ("worker:\n  proxy: {kind: magpie}\n", ["magpie", "hub/claude/claude-opus-5-5", "high"]),
+    ('worker:\n  proxy: {kind: magpie, remote_id: ""}\n', ["magpie", "claude/claude-opus-5-5", "high"]),
 ])
 def test_the_omo_session_opens_through_this_nodes_proxy(tmp_path, monkeypatch, config, session):
     if config:

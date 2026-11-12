@@ -34,7 +34,8 @@ Options:
   --policy <path>    Policy (default: <home>/.omo/ocx-omo/policy.json, else the bundled policy)
   --state <path>     Baseline (default: <home>/.omo/ocx-omo/state.json)
   --proxy <kind>     ocx (default): routes through OCX's opencodex provider; magpie: through the node's magpie
-  --remote-id <id>   magpie: the id of the magpie link whose models are routed to (default: hub)
+  --remote-id <id>   magpie: the id of the magpie link whose models are routed to (default: hub);
+                     "" when the node's own magpie holds the models (names magpie/<provider>/<id>)
   --names <path>     magpie: the name table from OCX namespaces to magpie providers (required with magpie)
   --json             Machine-readable output
 `;
@@ -72,7 +73,7 @@ function targetOf(values: ReturnType<typeof parse>["values"]): Target {
   if (kind === "ocx") return OCX_TARGET;
   if (kind !== "magpie") throw new OcxOmoError(`--proxy: ocx or magpie, not ${kind}`);
   const remoteId = values["remote-id"] ?? "hub";
-  if (!remoteId || remoteId.includes("/")) throw new OcxOmoError(`--remote-id: a name without '/', not ${remoteId}`);
+  if (remoteId.includes("/")) throw new OcxOmoError(`--remote-id: a name without '/' (or "" for local), not ${remoteId}`);
   if (!values.names) throw new OcxOmoError("--proxy magpie needs --names <path> (the name table)");
   return { kind, remoteId, names: loadNames(values.names) };
 }
@@ -133,7 +134,7 @@ function runPlan(context: Context): number {
     console.log(JSON.stringify({ omoVersion: context.omoVersion, routes: context.plan.routes, warnings }, null, 2));
     return 0;
   }
-  const through = context.target.kind === "magpie" ? ` through magpie (${context.target.remoteId})` : "";
+  const through = context.target.kind === "magpie" ? ` through magpie (${context.target.remoteId || "local"})` : "";
   console.log(`omo ${context.omoVersion}: proposed routing${through} (* differs from ${context.configPath})`);
   printRoutes(context, parsed);
   for (const warning of warnings) console.log(`warning: ${warning}`);

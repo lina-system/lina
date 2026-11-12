@@ -549,6 +549,13 @@ MAGPIE_CAPS = {"ocx": {"external": False, "version": None, "health": None},
                          "service": {"name": "magpie", "state": "running"}}}
 
 
+@pytest.mark.parametrize(("reported", "link"), [({"remote_id": ""}, "local"), ({"remote_id": "link-a"}, "link-a"),
+                                                ({}, "hub")])
+def test_a_magpie_node_s_link_is_local_when_its_own_magpie_holds_the_models(reported, link):
+    fact = {key: value for key, value in MAGPIE_CAPS["proxy"].items() if key != "remote_id"}
+    assert lina_board_devices.proxy_view({"capabilities": {"proxy": {**fact, **reported}}})["link"] == link
+
+
 def _machine(client, name):
     return next(m for m in _devices(client)["machines"] if m["name"] == name)
 

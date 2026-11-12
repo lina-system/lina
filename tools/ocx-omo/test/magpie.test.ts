@@ -116,6 +116,50 @@ describe("magpie plan from the fixture catalog", () => {
   });
 });
 
+/** lina#623: the catalog of a node whose own magpie holds the models, listed plainly (`<provider>/<id>`). */
+const plainCatalog: Catalog = new Map([...magpieCatalog].map(([id, model]) => {
+  assert.ok(id.startsWith("hub/") && model.id === id, id);
+  return [id.slice("hub/".length), { ...model, id: id.slice("hub/".length) }];
+}));
+const unprefixed = (plan: Plan): Plan => JSON.parse(JSON.stringify(plan).replaceAll('"magpie/hub/', '"magpie/'));
+
+describe("magpie plan with an empty remote id (the node's own magpie)", () => {
+  test("writes magpie/<provider>/<id> from a plain catalog, route by route as through the hub's prefix", () => {
+    const plan = buildPlan(chains, policy, plainCatalog, magpie(""));
+    assert.deepEqual(plan, unprefixed(magpiePlan));
+    assert.ok(references(plan).length > 0);
+    for (const { model } of references(plan)) assert.match(model, /^magpie\/(claude|codex|antigravity|grok)\/[^/]+$/);
+  });
+
+  test("each form reads only its own catalog", () => {
+    assert.equal(references(buildPlan(chains, policy, magpieCatalog, magpie(""))).length, 0);
+    assert.equal(references(buildPlan(chains, policy, plainCatalog, magpie("hub"))).length, 0);
+  });
+
+  describe("cli", () => {
+    const home = mkdtempSync(join(tmpdir(), "ocx-omo-local-"));
+    after(() => rmSync(home, { recursive: true, force: true }));
+    const models = join(home, "models.json");
+    writeFileSync(models, JSON.stringify({ providers: { magpie: { models: [...plainCatalog.values()] } } }));
+    const run = (...args: string[]) =>
+      spawnSync(process.execPath, [CLI, "plan", "--home", home, "--omo-task", OMO_TASK, "--models", models,
+        "--proxy", "magpie", "--names", NAMES_PATH, ...args], { encoding: "utf8" });
+
+    test("an empty --remote-id plans the plain names", () => {
+      const planned = run("--remote-id", "", "--json");
+      assert.equal(planned.status, 0, planned.stderr);
+      assert.deepEqual(JSON.parse(planned.stdout).routes, unprefixed(magpiePlan).routes);
+      assert.match(run("--remote-id=").stdout, /through magpie \(local\)/);
+    });
+
+    test("still refuses a remote id with '/' with exit 2", () => {
+      const refused = run("--remote-id", "a/b");
+      assert.equal(refused.status, 2);
+      assert.match(refused.stderr, /--remote-id/);
+    });
+  });
+});
+
 describe("loadNames", () => {
   const dir = mkdtempSync(join(tmpdir(), "ocx-omo-names-"));
   after(() => rmSync(dir, { recursive: true, force: true }));

@@ -37,7 +37,8 @@ worker:
   proxy:                                     # THIS node's model proxy, in the node's own config.yaml (lina#585);
     kind: ocx                                # ocx (default, also when absent) or magpie (installed separately);
     remote_id: hub                           # magpie: the id of its remote link to the hub (model ids read
-                                             # <remote_id>/<provider>/<id>); health: optional address of the
+                                             # <remote_id>/<provider>/<id>; "" on the node whose own magpie
+                                             # holds them: <provider>/<id>); health: optional address of the
                                              # proxy check (ocx /healthz, magpie /v1/models, lina#586);
                                              # service: magpie's local unit / launchd label the device
                                              # screen restarts (default magpie, lina#589).
