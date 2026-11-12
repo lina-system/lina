@@ -10,8 +10,22 @@ worker:
   proxy:
     kind: magpie        # ocx (default) or magpie
     remote_id: hub      # the id the node's magpie gives its remote link to the hub (default hub)
-    health: http://127.0.0.1:<port>/healthz   # optional, read by the health report (lina#586)
+    health: http://127.0.0.1:3425/v1/models   # optional: the address of the proxy check (lina#586)
 ```
+
+## The check the bid reads
+
+Before a node takes work for a runner that reaches models through its proxy (omo, and claude, codex and their ACP
+adapters), the node asks its proxy, by kind (lina#586). `ocx` asks `/healthz` for 200, as before. `magpie` has no
+`/healthz` (it answers 404). It asks `http://127.0.0.1:3425/v1/models` (or `worker.proxy.health`) and needs a 200
+whose list has at least one model. A node that fails is passed with the kind and the address in its reason
+(`model path does not answer (magpie http://127.0.0.1:3425/v1/models: HTTP none)`, or `model path lists no model
+(...)`). The node's hello reports `capabilities.proxy {kind, health}` (and `models` for magpie), and
+`lina worker hosts` and `lina devices` show it as `proxy magpie 200, 23 models`.
+
+**Limit:** a local `/v1/models` 200 shows only that the node's magpie runs and knows the hub's models; it does not
+prove the node's link to the hub. The real-call probe (`hermes_cli/lina_runner_probe.py`, run by the daily runner sync, lina#531) and step 5 below stay the
+proof that a call goes through. The check reads no key and never calls the hub.
 
 LINA does not install, configure or restart magpie: it is installed on the node separately and only read here. No
 step below touches the node's OCX settings or the OCX service; OCX keeps running, so going back is a config change.

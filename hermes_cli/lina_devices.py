@@ -115,7 +115,8 @@ def readiness(dev: settings.Device, worker_root: Path) -> dict:
     runner = runners.default_name(worker)
     found = probe(dev, worker_root, runner)
     row = {"name": dev.name, "host": dev.host, "cap": dev.cap, "runner": runner, "ssh": found["ssh"],
-           "free_gb": found.get("free_gb"), "running": found.get("running"), "serve": found.get("serve")}
+           "free_gb": found.get("free_gb"), "running": found.get("running"), "serve": found.get("serve"),
+           "proxy": bidding.proxy_fact(found)}
     reachable = found["ssh"] and not found.get("protocol_error")
     hello = _file_node_hello(dev, worker_root) if reachable and dev.kind == settings.FILE_KIND else {}
     row["omo"] = hello.get("omo") if dev.kind == settings.FILE_KIND else None
@@ -144,7 +145,7 @@ def render(row: dict) -> str:
     omo = f" · omo {row['omo']}" if row.get("omo") is not None else ""  # a file node: its omo version
     return (f"{row['name']:<14} {row['host']:<14} cap {row['cap']} · running {row.get('running', '-')} · ssh "
             f"{'ok' if row['ssh'] else 'unreachable'}{omo} · runner {row['runner']} · "
-            f"free disk {row.get('free_gb', '-')}GB · "
+            f"{bidding.proxy_text({'proxy': row.get('proxy')})} · free disk {row.get('free_gb', '-')}GB · "
             + ("ready" if row["ready"] else f"not ready: {row['why']}"))
 
 

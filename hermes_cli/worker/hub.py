@@ -699,7 +699,7 @@ class Hub:
         for row in table:
             self.out(f"{row['host']:<14} cap {row['cap']} · running {row.get('running', '-')} · load "
                      f"{row.get('load', '-')}/{row.get('cores', '-')} cores · free disk {row.get('free_gb', '-')}GB · "
-                     f"runner {row.get('runner', '-')}" + (f" · {row['why']}" if row.get("why") else " · can take work")
+                     f"runner {row.get('runner', '-')} · {bidding.proxy_text(row)}" + (f" · {row['why']}" if row.get("why") else " · can take work")
                      + (f" · cooling off after {row['cooling']} quick failures (named runs still start)"
                         if row.get("cooling") else ""))
         queued = [job["id"] for job in self.store.all() if job.get("state") == "queued"]
