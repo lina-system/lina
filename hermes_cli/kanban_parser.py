@@ -85,7 +85,8 @@ _TENANT = _arg("--tenant", help="Tenant namespace")
 _PRIORITY = _arg("--priority", type=int, default=0, help="Priority tiebreaker")
 _WAIT_FOR_HELP = ("Event that wakes the task by itself on a dispatcher tick: card:<id> (that card "
                   "is done), review:<id> (that review card has its result), pr:<url|owner/repo#n> "
-                  "(the PR's required checks finished) or until:<epoch|ISO-8601>.")
+                  "(the PR's required checks finished), merged:<url|owner/repo#n> (the PR is merged) "
+                  "or until:<epoch|ISO-8601>.")
 _RECLAIM_REASON = _reason("Human-readable reason (recorded on the reclaimed event)")
 _NOTIFY_TARGET = (
     _arg("--platform", required=True),
@@ -340,9 +341,11 @@ _SPECS = [
         _TASK_ID,
         _arg("reason", nargs="*", help="Reason/timing note (also appended as a comment)"),
         _bulk_ids("schedule"),
-        _arg("--wait-for", metavar="EVENT", help=_WAIT_FOR_HELP + " Without it the task waits "
-             "for an explicit unblock."),
-    ], help="Park one or more tasks in Scheduled (waiting on time, not human input)"),
+        _arg("--wait-for", metavar="EVENT", help=_WAIT_FOR_HELP + " Also run:<worker run id> (the "
+             "worker hub wakes it after the run ends) or unit:<name> (that unit unblocks it). Without "
+             "it the reason must name a worker run id or SCHEDULED_UNTIL=<time>; a park with nothing "
+             "that wakes it is refused."),
+    ], help="Park one or more tasks in Scheduled until their waker wakes them"),
     _cmd("unblock", [
         _reason("Optional reason/note — recorded as a comment before unblocking. Quote multi-word reasons."),
         _TASK_IDS,

@@ -447,7 +447,10 @@ def _cmd_list(args: argparse.Namespace) -> int:
             include_archived=args.archived, order_by=getattr(args, "sort", None),
             workflow_template_id=args.workflow_template_id, current_step_key=args.current_step_key,
         )
-    if _json_out(args, [_task_to_dict(t) for t in tasks]):
+        from hermes_cli.kanban_db_park import task_overdue
+        overdue = {t.id: why for t in tasks if (why := task_overdue(conn, t.id, t.status))}
+    if _json_out(args, [{**_task_to_dict(t), **({"wake_overdue": overdue[t.id]} if t.id in overdue else {})}
+                        for t in tasks]):
         return 0
     # Passive discoverability: only multi-board users see which board this is.
     try:
@@ -462,7 +465,7 @@ def _cmd_list(args: argparse.Namespace) -> int:
         print("(no matching tasks)")
         return 0
     for t in tasks:
-        print(_fmt_task_line(t))
+        print(_fmt_task_line(t) + (f"  ⚠ {overdue[t.id]}" if t.id in overdue else ""))
     return 0
 
 
@@ -1085,9 +1088,11 @@ def _cmd_schedule(args: argparse.Namespace) -> int:
     ids = _bulk_ids(args)
     suffix = f": {reason}" if reason else ""
     with kbc.connect_closing() as conn:
-        wait_for, error = _wait_for_arg(conn, args)
-        if error:
-            return _err(error)
+        from hermes_cli.kanban_db_park import resolve_park
+        try:
+            wait_for = resolve_park(conn, reason, getattr(args, "wait_for", None) or None)
+        except ValueError as exc:
+            return _err(f"kanban schedule: {exc}")
         op = _commented(conn, reason, author, "SCHEDULED", lambda tid: kb.schedule_task(
             conn, tid, reason=reason, expected_run_id=_worker_run_id_for(tid), wait_for=wait_for))
         return _bulk_apply(ids, op, lambda tid: f"Scheduled {tid}{suffix}", lambda tid: f"cannot schedule {tid}")
