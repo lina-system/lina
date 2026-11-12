@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from hermes_cli.work import ledger
 from hermes_cli.work.common import Lock, iso, load_json, now, paths, save_json, warn
-from hermes_cli.work.evaluate import ALERT, evaluate, item_name
+from hermes_cli.work.evaluate import ALERT, RUN_ACTIVE, evaluate, item_name
 from hermes_cli.work.kinds import TODO, kind_now
 from hermes_cli.work.links import KANBAN_REOPEN, kanban_read, kanban_state_word, link_label
 from hermes_cli.work.locale import status, t
@@ -47,11 +47,36 @@ def build_ctx(recs: dict):
     from hermes_cli.work.sources import sessions_index
     sess, sess_id = sessions_index()
     st = load_json(paths()["state"], {})
-    runs = {rid: (code, reason) for rid, code, reason in
-            ledger.db().execute("SELECT id, status, reason FROM v_run").fetchall()}
+    runs = worker_runs(recs, ledger.db().execute("SELECT id, status, reason FROM v_run").fetchall())
     ctx = {"recs": recs, "sess": sess, "sess_id": sess_id, "gh": st.get("gh_cache", {}), "prev": st.get("items", {}),
            "runs": runs}
     return ctx, st
+
+
+def _ended(job: dict) -> tuple[str, str | None]:
+    """v_run's (status, reason) for a run whose worker job ended, as its row reads once run-sync wrote the job."""
+    if job.get("cancelled"):
+        return "dropped", None
+    if job.get("rc") == 0:
+        return ("done", None) if job.get("result") else ("stopped", "result_missing")
+    return "stopped", "failed"
+
+
+def worker_runs(recs: dict, rows) -> dict:
+    """Each run's (status, reason) as the check reads it (lina#605): v_run's, except a run v_run still reads live that
+    an open item links and whose worker job file says it ended, which reads as run-sync would leave it. Nothing is
+    written, so ``check --dry`` leaves the store as it was and a job with no run row adds none."""
+    from hermes_cli.work.run import worker_job
+    runs = {rid: (code, reason) for rid, code, reason in rows}
+    linked = {x[4:] for r in recs.values() if r.get("state") == "open" for x in r.get("links") or []
+              if x.startswith("omo:")}
+    for rid in linked:
+        if runs.get(rid, (None, None))[0] not in RUN_ACTIVE:
+            continue
+        job = worker_job(rid)
+        if job and job.get("ended"):
+            runs[rid] = _ended(job)
+    return runs
 
 
 def _evaluate_all(recs: dict, ids: list[str], ctx: dict, st: dict) -> dict:
