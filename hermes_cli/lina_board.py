@@ -326,7 +326,7 @@ def quota(now: float | None = None) -> dict:
     OCX could not be read)."""
     from hermes_cli.lina_board_quota import view
     now, root, errors = time.time() if now is None else now, _root(), []
-    data, at = _outside("quota-view", root, errors, lambda _errs: view(root, now))
+    data, at = _outside("quota-view", root, errors, lambda errs: view(root, now, errs))
     return {"version": API_VERSION, "at": min(now, at or now), "errors": errors,
             "quota": data["quota"] if data else [],
             "missing": data["missing"] if data else None}

@@ -1,0 +1,131 @@
+{
+  "period": "today",
+  "since": "2026-11-12T00:00:00Z",
+  "calls": 7,
+  "errors": 0,
+  "input": 1200,
+  "output": 300,
+  "cache_read": 5000,
+  "cache_write": 100,
+  "reasoning": 0,
+  "cost": 0.42,
+  "unpriced": 0,
+  "bucket": "hour",
+  "series": [],
+  "agents": [
+    {
+      "id": "omo",
+      "name": "omo",
+      "calls": 7,
+      "errors": 0,
+      "input": 1200,
+      "output": 300,
+      "cache_read": 5000,
+      "cache_write": 100,
+      "reasoning": 0,
+      "cost": 0.42,
+      "unpriced": 0
+    }
+  ],
+  "models": [
+    {
+      "id": "m1",
+      "provider": "claude",
+      "model": "claude-opus-5-5",
+      "name": "claude-opus-5-5",
+      "sub": "Claude",
+      "calls": 4,
+      "errors": 0,
+      "input": 1000,
+      "output": 200,
+      "cache_read": 5000,
+      "cache_write": 100,
+      "reasoning": 0,
+      "cost": 0.4,
+      "unpriced": 0
+    },
+    {
+      "id": "m2",
+      "provider": "codex",
+      "model": "gpt-6-astra",
+      "name": "gpt-6-astra",
+      "calls": 3,
+      "errors": 0,
+      "input": 200,
+      "output": 100,
+      "cache_read": 0,
+      "cache_write": 0,
+      "reasoning": 0,
+      "cost": 0.02,
+      "unpriced": 0
+    }
+  ],
+  "providerKeys": [],
+  "accounts": [
+    {
+      "id": "a1",
+      "provider": "claude",
+      "account": "owner@example.invalid",
+      "name": "owner@example.invalid",
+      "calls": 4,
+      "errors": 0,
+      "input": 1000,
+      "output": 200,
+      "cache_read": 5000,
+      "cache_write": 100,
+      "reasoning": 0,
+      "cost": 0.4,
+      "unpriced": 0
+    },
+    {
+      "id": "a2",
+      "provider": "codex",
+      "account": "work",
+      "name": "work",
+      "calls": 3,
+      "errors": 0,
+      "input": 200,
+      "output": 100,
+      "cache_read": 0,
+      "cache_write": 0,
+      "reasoning": 0,
+      "cost": 0.02,
+      "unpriced": 0
+    }
+  ],
+  "callerKeys": [
+    {
+      "id": "k1",
+      "callerKeyId": "key-1",
+      "callerKeyName": "node-a",
+      "name": "node-a",
+      "icon": "generic",
+      "calls": 5,
+      "errors": 0,
+      "input": 900,
+      "output": 250,
+      "cache_read": 4000,
+      "cache_write": 100,
+      "reasoning": 0,
+      "cost": 0.3,
+      "unpriced": 0
+    },
+    {
+      "id": "k2",
+      "callerKeyId": "key-2",
+      "callerKeyName": "node-b",
+      "name": "node-b",
+      "icon": "generic",
+      "calls": 2,
+      "errors": 0,
+      "input": 300,
+      "cost": 0.12,
+      "unpriced": 0,
+      "own": {}
+    }
+  ],
+  "sessions": [],
+  "sessionCount": 0,
+  "path": "~/.magpie/usage.jsonl",
+  "someNewField": true
+}

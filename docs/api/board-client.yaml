@@ -1140,18 +1140,27 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/QuotaAccount"
+        proxy:
+          type: string
+          enum: [ocx, magpie]
+          description: The proxy this service was read from; present only when more than one is read (lina#588).
     UsageTokens:
       type: object
+      description: Token counts; null only from magpie, when it does not give that count (unknown, never 0).
       required: [total, input, output, cacheRead]
       properties:
         total:
           type: integer
+          nullable: true
         input:
           type: integer
+          nullable: true
         output:
           type: integer
+          nullable: true
         cacheRead:
           type: integer
+          nullable: true
     UsageRow:
       type: object
       description: Requests, tokens and OCX's estimated cost in USD (null when OCX prices none of them).
@@ -1159,6 +1168,7 @@ components:
       properties:
         requests:
           type: integer
+          nullable: true
         tokens:
           $ref: "#/components/schemas/UsageTokens"
         costUsd:
@@ -1176,7 +1186,9 @@ components:
           description: OCX's accountLogLabel as given (may be a hash).
         machine:
           type: string
-          description: The name after `link:` of the machine's OCX access key.
+          description: >-
+            The name after `link:` of the machine's OCX access key; from magpie, the caller key name the machine
+            calls with (lina#588).
     UsageView:
       type: object
       required: [version, at, range, generatedAt, requests, tokens, costUsd, byModel, byProvider, byAccount, byMachine]
@@ -1193,8 +1205,29 @@ components:
           nullable: true
         requests:
           type: integer
+          nullable: true
         tokens:
           $ref: "#/components/schemas/UsageTokens"
+        proxy:
+          type: string
+          enum: [ocx, magpie]
+          description: >-
+            The proxy the figures above were read from; present only when `worker.proxy` reads magpie (lina#588).
+            With more than one, `proxies` holds each one's view, or `data: null` and `unknown` for one unread.
+        proxies:
+          type: array
+          items:
+            type: object
+            required: [kind, data]
+            properties:
+              kind:
+                type: string
+                enum: [ocx, magpie]
+              data:
+                type: object
+                nullable: true
+              unknown:
+                type: string
         costUsd:
           type: number
           nullable: true

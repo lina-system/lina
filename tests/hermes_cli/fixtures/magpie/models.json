@@ -1,0 +1,30 @@
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "hub/claude/claude-opus-5-5",
+      "object": "model",
+      "owned_by": "magpie",
+      "context_length": 200000
+    },
+    {
+      "id": "hub/codex/gpt-6-astra",
+      "object": "model",
+      "owned_by": "magpie"
+    },
+    {
+      "id": "claude/claude-fable-5",
+      "object": "model"
+    },
+    {
+      "id": "someplace/odd-model",
+      "object": "model",
+      "future_field": {
+        "x": 1
+      }
+    },
+    {
+      "object": "model"
+    }
+  ]
+}
