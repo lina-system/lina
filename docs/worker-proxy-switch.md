@@ -114,3 +114,15 @@ A count or window magpie does not give is `null` (unknown), never 0. A magpie th
 answer as an unread OCX does (503, or a quota error); with both kinds read, `lina models`, the models and usage
 routes and `GET /api/lina/quota` still show the other kind and mark magpie's part `unknown` (the quota as one error),
 while the board snapshot's quota part is one error, as when OCX is unread.
+
+## Notes from the first moves (2026-11-12)
+
+- **omo's shared RPC daemon keeps the old catalog.** If it still holds OCX's model catalog after the routes moved, stop
+  it when the node has no open session (`omo host stop`); the next run starts it with the new `models.json`.
+- **8 GB nodes sit close to the memory floor.** A bid also needs `worker.min_free_mem_gb` (default 4 GB) of available
+  memory. On a node like build-m1 that floor is near what is free with the OS and magpie running, so a pass with
+  `memory N GB < 4GB` in `lina worker hosts` is the memory floor, not the proxy.
+- **A node where another user's magpie already holds port 3425** (bots-linux) gets a different port for its own
+  magpie, for example `MAGPIE_ADDR=127.0.0.1:3428` in the magpie unit's drop-in, and the same `MAGPIE_ADDR` in the
+  environment of the connection commands, so magpie's official commands use that address. Set `worker.proxy.health`
+  to `http://127.0.0.1:3428/v1/models` on that node.
