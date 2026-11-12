@@ -47,7 +47,10 @@ refreshes hello and refuses a changed instance without acting. The internal
 The verb also takes `service <ocx|worker> <action> [instance_id]` (#222):
 `worker status|stop|restart` (stop and restart through the same instance gate)
 and `ocx status|restart` through the node's service layer
-(`lina_runners.node_service`); the older form still means the worker. Its
+(`lina_runners.node_service`), and `proxy status|restart` (#589): the node's own
+model proxy service by its `worker.proxy.kind`, its OCX as `ocx` does or its
+local magpie service (`worker.proxy.service`, default `magpie`), refused with
+`busy: <n>` while a run holds a slot on the node; the older form still means the worker. Its
 effect stays `destructive`, the strongest of the actions it carries.
 Identity publication and compare-and-stop share a file lock, so a newly published
 instance cannot be stopped using the previous record. Restart starts the service

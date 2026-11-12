@@ -11,10 +11,13 @@ worker:
                                   # default: the origin of `health`, else magpie's default port on 127.0.0.1
     key_env: MAGPIE_KEY   # optional; the name of the variable in `.env` holding a gateway key for those reads
     read: [ocx, magpie]   # optional; the proxies those screens read, side by side (default: `kind` alone)
+    service: magpie       # the node's own magpie service unit (systemd user unit / launchd label; default magpie)
 ```
 
 How a node is moved to magpie and back: ``docs/worker-proxy-switch.md``. LINA only reads this section; it never
-installs, configures or restarts magpie. Model names per kind: ``models.through_proxy``.
+installs or configures magpie, and never touches its accounts; the device screen's restart (lina#589,
+``proxy_service``) restarts only the node's own local service named here. Model names per kind:
+``models.through_proxy``.
 """
 
 from __future__ import annotations
@@ -28,6 +31,7 @@ OCX = "ocx"
 MAGPIE = "magpie"
 KINDS = (OCX, MAGPIE)
 _ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_UNIT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._@\-]{0,127}$")
 
 
 @dataclass(frozen=True)
@@ -38,6 +42,7 @@ class Proxy:
     url: str | None = None  # magpie's gateway for the read-only screens (lina#588)
     key_env: str | None = None  # the variable holding the gateway key; the key itself is a secret in `.env`
     read: tuple[str, ...] = ()  # the proxies the screens read; empty means `kind` alone
+    service: str = MAGPIE  # on a magpie node, its local service unit / label the device screen restarts (lina#589)
 
     def reads(self) -> tuple[str, ...]:
         """The proxies the usage, quota and model screens read, in order (lina#588)."""
@@ -50,7 +55,7 @@ def of(worker: dict) -> Proxy:
     if section is None:
         return Proxy()
     if not isinstance(section, dict):
-        raise RunnerError(f"worker.proxy: a mapping with kind, remote_id and health, not {section!r}")
+        raise RunnerError(f"worker.proxy: a mapping with kind, remote_id, health and service, not {section!r}")
     kind = section.get("kind")
     kind = OCX if kind is None else kind
     if kind not in KINDS:
@@ -68,7 +73,11 @@ def of(worker: dict) -> Proxy:
     key_env = section.get("key_env")
     if key_env is not None and not (isinstance(key_env, str) and _ENV_NAME.fullmatch(key_env)):
         raise RunnerError(f"worker.proxy.key_env: the name of an environment variable, not {key_env!r}")
-    return Proxy(kind, remote_id, health or None, url or None, key_env, _read(section.get("read")))
+    service = section.get("service")
+    service = MAGPIE if service is None else service
+    if not isinstance(service, str) or not _UNIT.match(service):
+        raise RunnerError(f"worker.proxy.service: a service unit name (letters, digits, . _ @ -), not {service!r}")
+    return Proxy(kind, remote_id, health or None, url or None, key_env, _read(section.get("read")), service)
 
 
 def _read(value) -> tuple[str, ...]:

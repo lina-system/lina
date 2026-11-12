@@ -38,7 +38,9 @@ worker:
     kind: ocx                                # ocx (default, also when absent) or magpie (installed separately);
     remote_id: hub                           # magpie: the id of its remote link to the hub (model ids read
                                              # <remote_id>/<provider>/<id>); health: optional address of the
-                                             # proxy check (ocx /healthz, magpie /v1/models, lina#586).
+                                             # proxy check (ocx /healthz, magpie /v1/models, lina#586);
+                                             # service: magpie's local unit / launchd label the device
+                                             # screen restarts (default magpie, lina#589).
                                              # Switch and rollback per node: docs/worker-proxy-switch.md
   runners:
     omo: {type: omo}                         # built in: LINA's pinned omo (lina#34)

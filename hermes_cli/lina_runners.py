@@ -55,7 +55,8 @@ HELLO_TIMEOUT_S = 20.0
 _VERSION = re.compile(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.\-]+)?")
 SIGN_IN_OK = ("signed_in", "api_key", "ocx", "none")
 BLOCK_KEYS = ("sign_in", "models", "route", "probe")  # a config block's parts beside ``install`` (lina#531)
-SERVICE_ACTIONS = {"ocx": ("status", "restart"), "worker": ("status", "stop", "restart")}
+SERVICE_ACTIONS = {"ocx": ("status", "restart"), "worker": ("status", "stop", "restart"),
+                   "proxy": ("status", "restart")}
 # downloads.cursor.com answers 403 to urllib's default ``Python-urllib`` agent.
 USER_AGENT = "lina-runners"
 
@@ -678,12 +679,15 @@ def _ocx_act(action: str) -> dict:
 def node_service(worker_root: Path, service: str, action: str, instance_id: str = "") -> dict:
     """The node side of ``lina devices service`` (lina#222): status and restart of OCX and the worker through the
     service layer (lina#31). The worker restart keeps #218's compare-and-act on *instance_id*; OCX has no instance,
-    its state comes from the service layer."""
+    its state comes from the service layer. ``proxy`` is the node's own model proxy service by its kind
+    (``worker.proxy_service``, lina#589)."""
     from hermes_cli import lina_services
-    from hermes_cli.worker import protocol
+    from hermes_cli.worker import protocol, proxy_service
     if action not in SERVICE_ACTIONS.get(service, ()):
         return {"service": service, "action": "error",
-                "reason": "service expects ocx status|restart or worker status|stop|restart"}
+                "reason": "service expects ocx|proxy status|restart or worker status|stop|restart"}
+    if service == "proxy":
+        return proxy_service.act(worker_root, action, _ocx_act)
     if service == "ocx":
         if action == "status":
             return {"service": "ocx", "action": "status", "state": lina_services.state(lina_services.BY_NAME["ocx"])}

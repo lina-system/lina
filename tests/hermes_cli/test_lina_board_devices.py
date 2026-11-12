@@ -72,7 +72,8 @@ class Contact:
         if self.name == "old-d":
             self.descriptor = {"action": "error", "reason": "unknown verb hello"}
         else:
-            self.descriptor = {"protocol": {"min": 1, "max": 1}, "capabilities": {"runners": HELLO[self.name]}}
+            self.descriptor = {"protocol": {"min": 1, "max": 1},
+                               "capabilities": {"runners": HELLO[self.name], **self.nodes.caps.get(self.name, {})}}
         return Reply(0, json.dumps(READY).encode())
 
     def refresh(self, timeout=120):
@@ -82,6 +83,7 @@ class Contact:
 class Nodes:
     def __init__(self, monkeypatch):
         self.calls: list[tuple[str, str]] = []
+        self.caps: dict[str, dict] = {}  # a node's hello capabilities beyond its runner rows (ocx, proxy)
         self.omo = {"build-a": {"current": OMO, "daemon": {"running": True}},
                     "store-b": {"current": "0.0.1", "daemon": {"running": True}}}
         self.omo_reads: list[str] = []
@@ -537,3 +539,82 @@ def test_a_runner_cell_says_signing_in_while_its_sign_in_runs_and_not_after(acti
     after = client.get("/api/lina/devices")
     assert signing(after) == set()
     assert after.headers["etag"] != during.headers["etag"]
+
+
+# lina#589: the node's model proxy by kind, its restart and where its accounts are signed in.
+OCX_CAPS = {"ocx": {"external": False, "version": "1.0.0", "health": 200},
+            "proxy": {"kind": "ocx", "health": 200, "version": "1.0.0"}}
+MAGPIE_CAPS = {"ocx": {"external": False, "version": None, "health": None},
+               "proxy": {"kind": "magpie", "health": 200, "models": 23, "remote_id": "hub",
+                         "service": {"name": "magpie", "state": "running"}}}
+
+
+def _machine(client, name):
+    return next(m for m in _devices(client)["machines"] if m["name"] == name)
+
+
+def test_an_ocx_node_shows_its_ocx_and_its_runners_as_before(root, nodes, ssh, client):
+    nodes.caps["build-a"] = OCX_CAPS
+    build = _machine(client, "build-a")
+
+    assert build["proxy"] == {"kind": "ocx", "health": 200, "version": "1.0.0", "models": None, "link": None,
+                              "service": None, "signIn": "node"}
+    signs = {name: cell[2] for name, cell in _cells(build).items()}
+    assert signs == {"omo": "ocx", "codex": "ocx", "claude": "ocx", "grok": "signed_out", "dsh": "unknown",
+                     "cursor-agent": "api_key", "mine": None}
+
+
+def test_a_magpie_node_shows_its_link_to_the_hub_model_count_and_service_and_no_node_sign_in(root, nodes, ssh,
+                                                                                               client):
+    nodes.caps["build-a"] = MAGPIE_CAPS
+    build = _machine(client, "build-a")
+
+    assert build["proxy"] == {"kind": "magpie", "health": 200, "version": None, "models": 23, "link": "hub",
+                              "service": {"name": "magpie", "state": "running"}, "signIn": "hub"}
+    signs = {name: cell[2] for name, cell in _cells(build).items()}
+    assert signs == {"omo": "magpie", "codex": "magpie", "claude": "magpie", "grok": "signed_out", "dsh": "unknown",
+                     "cursor-agent": "api_key", "mine": None}
+
+
+def test_a_node_reporting_no_proxy_shows_none_and_an_older_node_its_ocx(root, nodes, ssh, client):
+    nodes.caps["store-b"] = {"ocx": {"external": False, "version": None, "health": None}}
+    nodes.caps["build-a"] = {"ocx": {"external": True, "health": 503}}  # an older node: no capabilities.proxy
+    machines = {m["name"]: m for m in _devices(client)["machines"]}
+
+    assert machines["store-b"]["proxy"] is None and machines["old-d"]["proxy"] is None
+    assert machines["gone-c"]["proxy"] is None, "an unreachable node shows no proxy, not a guessed one"
+    assert machines["build-a"]["proxy"] == {"kind": "ocx", "health": 503, "version": None, "models": None,
+                                            "link": None, "service": None, "signIn": "node"}
+
+
+def test_a_proxy_restart_goes_to_the_node_s_own_proxy_service_and_is_logged(actions, client):
+    actions.service_reply = {"service": "proxy", "kind": "magpie", "action": "restart", "name": "magpie",
+                             "state": "running"}
+    body = _action(client.post("/api/lina/devices/build-a/restart", json={"service": "proxy"}), 200)
+
+    assert body["state"] == "restarted" and actions.services == [("build-a", "proxy", "restart")]
+    assert [(line["service"], line["state"]) for line in actions.log()] == [("proxy", "restarted")]
+
+
+def test_a_proxy_restart_while_a_run_is_active_on_the_node_is_409_with_its_reason(actions, client):
+    reason = "1 run(s) active on this node: the magpie restart waits until they end"
+    actions.service_reply = {"service": "proxy", "kind": "magpie", "action": "error", "busy": 1, "reason": reason}
+    reply = client.post("/api/lina/devices/build-a/restart", json={"service": "proxy"})
+
+    assert (reply.status_code, reply.json()["detail"]) == (409, reason)
+    assert [(line["state"], line["reason"]) for line in actions.log()] == [("refused", reason)]
+
+
+def test_sign_in_through_the_proxy_is_refused_on_a_magpie_node_and_other_runners_still_start(actions, nodes, start,
+                                                                                             client, root):
+    nodes.caps["build-a"] = MAGPIE_CAPS
+    refused = client.post("/api/lina/devices/build-a/sign-in", json={"runner": "codex"})
+    assert (refused.status_code, refused.json()["detail"]) == (
+        409, "build-a reaches codex through magpie: its account is signed in on the hub's magpie, not on the node")
+    assert start.calls == [] and actions.log()[0]["state"] == "refused"
+
+    _action(client.post("/api/lina/devices/build-a/sign-in", json={"runner": "grok"}), 202)
+    assert start.calls == [("build-a", "grok", root.path)]
+
+    nodes.caps["build-a"] = OCX_CAPS
+    _action(client.post("/api/lina/devices/build-a/sign-in", json={"runner": "codex"}), 202)
