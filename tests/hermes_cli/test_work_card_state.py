@@ -1,6 +1,7 @@
 """A kanban card is the to-do's runner, so its own state is the to-do's: a card nobody can read is 모름 (never 끝남,
 never 하는 중), a blocked card is waited on, and a card that ended leaves the check or asks for a confirmation
-(#249). A wait the agent set after reading the evidence outranks the confirm nudge (lina#510)."""
+(#249). A wait the agent set after reading the evidence outranks the confirm nudge (lina#510). A stopped run that a later run of the same to-do redid is not blocked
+work (lina#607)."""
 
 import sqlite3
 from contextlib import closing
@@ -20,6 +21,31 @@ def card_store(work: WorkEnv, cards: dict[str, tuple[str, int | None]]) -> None:
         db.executemany("INSERT INTO tasks VALUES (?, ?, ?)", [(k, s, d) for k, (s, d) in cards.items()])
         db.commit()
     links._KANBAN_CACHE.clear()
+
+
+LIVE = "2999-01-01T00:00:00Z"
+RUNS = {
+    "failed": {"started_at": "2026-01-01T00:00:00Z", "ended_at": "2026-01-01T01:00:00Z", "exit_code": 1},
+    "accepted": {"started_at": "2026-01-02T00:00:00Z", "ended_at": "2026-01-02T01:00:00Z", "exit_code": 0,
+                 "result_path": "out/report.md"},
+    "live": {"started_at": "2026-01-03T00:00:00Z", "last_activity_at": LIVE},
+}
+
+
+def runs_on(work: WorkEnv, todo: str, *kinds: str) -> list[str]:
+    """Link one worker run per kind to *todo*, in order, and give each run row that kind's end (or liveness)."""
+    from hermes_cli.work import ledger
+    ids = [f"OT-RUN{n}" for n in range(len(kinds))]
+    for run_id in ids:
+        work.ok("link", todo, "omo:" + run_id)
+    db = ledger.open_db()
+    try:
+        for run_id, kind in zip(ids, kinds):
+            cols = RUNS[kind]
+            db.execute(f"UPDATE run SET {', '.join(f'{c} = ?' for c in cols)} WHERE id = ?", (*cols.values(), run_id))
+    finally:
+        db.close()
+    return ids
 
 
 def computed(work: WorkEnv, item: str) -> dict:
@@ -115,3 +141,50 @@ def test_a_wait_set_after_the_evidence_outranks_the_confirm_nudge(tmp_path, monk
     work.ok("check", "--quiet")
     # Then the confirm nudge comes back
     assert computed(work, todo)["status"] == "evidence_wait"
+
+
+@pytest.mark.parametrize("card,line", [(True, "끝남, 검사가 안 통과"), (False, "할 일은 다 닫혔는데 검사가 안 통과")],
+                         ids=["card_ended", "no_card"])
+def test_a_failed_run_redone_by_an_accepted_run_is_not_blocked_work(tmp_path, monkeypatch, card, line):
+    # Given a to-do whose first run failed and whose next run was accepted (and, in one case, whose card ended)
+    work = WorkEnv(tmp_path, monkeypatch)
+    todo = goal_and_todo(work, check="false")
+    if card:
+        card_store(work, {"t_11111111": ("done", work.clock[0] - 60)})
+        work.ok("link", todo, "kanban:t_11111111")
+    runs_on(work, todo, "failed", "accepted")
+    # When
+    work.ok("check", "--quiet")
+    # Then the check is what is left, and the redone run is named nowhere as blocked work
+    row = computed(work, todo)
+    assert (row["status"], row["reasons"], row["warn"]) == ("check_left", ["검사 남음"], [])
+    assert row["line"].endswith(line)
+
+
+def test_a_failed_run_with_no_later_run_still_counts_as_blocked_work(tmp_path, monkeypatch):
+    # Given a to-do whose runs failed, were accepted, then failed again, and whose card ended
+    work = WorkEnv(tmp_path, monkeypatch)
+    todo = goal_and_todo(work, check="false")
+    card_store(work, {"t_11111111": ("done", work.clock[0] - 60)})
+    work.ok("link", todo, "kanban:t_11111111")
+    first, _, last = runs_on(work, todo, "failed", "accepted", "failed")
+    # When
+    work.ok("check", "--quiet")
+    # Then only the last failed run, which nothing redid, is blocked work
+    row = computed(work, todo)
+    assert row["status"] == "stalled"
+    assert row["warn"] == [f"막힌 작업: 작업 {last}"]
+    assert first not in row["line"]
+
+
+def test_a_failed_run_followed_by_a_live_run_is_not_blocked_work(tmp_path, monkeypatch):
+    # Given a to-do whose first run failed and whose next run is still going
+    work = WorkEnv(tmp_path, monkeypatch)
+    todo = goal_and_todo(work, check="false")
+    _, live = runs_on(work, todo, "failed", "live")
+    # When
+    work.ok("check", "--quiet")
+    # Then the live run is the work, and the failed one raises no warning
+    row = computed(work, todo)
+    assert (row["status"], row["warn"]) == ("working", [])
+    assert live in row["line"]
