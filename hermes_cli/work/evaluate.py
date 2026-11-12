@@ -229,12 +229,18 @@ SCANNERS = {"gh": _gh, "ms": _ms, "session": _session, "kanban": _kanban, "omo":
 
 
 def scan_links(r: dict, c: dict, ctx: dict) -> Scan:
+    """A stopped run that a later run of the same to-do redid (one that ended done, or is live) is no longer blocked
+    work and counts toward nothing: runs are linked in the order they were handed out (lina#607)."""
     s = Scan()
     for link in r.get("links") or []:
         td = {"link": link, "label": link_label(link), "state": "", "active": False}
         fn = SCANNERS.get(link.split(":", 1)[0])
+        finished = s.finished
         if fn:
             fn(link, td, c, ctx, s)
+        if link.startswith("omo:") and (td["active"] or s.finished > finished):
+            s.total -= len(s.stuck)
+            s.stuck.clear()
         c["todos"].append(td)
     return s
 
