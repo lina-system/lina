@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import json
 
-from hermes_cli import lina_runner_models, lina_runner_probe, lina_runner_routes, lina_runners
+from hermes_cli import lina_ocx, lina_runner_models, lina_runner_probe, lina_runner_routes, lina_runners
 from hermes_cli import lina_runner_sync_state as state
 
 MODELS = "models.json"
@@ -41,6 +41,9 @@ def probe(run, pin: lina_runners.RunnerPin) -> dict:
 def models(run, name: str, pin: lina_runners.RunnerPin, rec: dict) -> bool:
     """Refresh the hub's model list when OCX's list or the runner's version moved; True when it was refreshed."""
     if lina_runner_models.ocx_client(pin) is None:
+        return False
+    if lina_ocx.external(run.root) is not None:
+        rec["models"] = {"state": "external", "reason": "ocx.external is set: the operator's OCX writes the model list"}
         return False
     try:
         listed = run.env.ocx_models(run.root)
