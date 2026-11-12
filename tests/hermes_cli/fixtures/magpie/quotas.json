@@ -1,0 +1,67 @@
+{
+  "object": "list",
+  "data": [
+    {
+      "provider": "claude",
+      "name": "owner@example.invalid",
+      "kind": "subscription",
+      "plan": "max",
+      "user": "owner@example.invalid",
+      "windows": [
+        {
+          "name": "5 hours",
+          "used": 12,
+          "remaining": 88,
+          "resetsAt": "2026-11-12T15:00:00Z"
+        },
+        {
+          "name": "7 days",
+          "used": 40,
+          "remaining": 60,
+          "resetsAt": "2026-11-15T00:00:00Z",
+          "holdsWhy": "synthetic"
+        },
+        {
+          "name": "7 days · Fable",
+          "used": 5,
+          "remaining": 95
+        }
+      ],
+      "readAt": "2026-11-12T10:00:00Z",
+      "lastServedAt": "2026-11-12T10:05:00Z"
+    },
+    {
+      "provider": "codex",
+      "name": "work",
+      "kind": "subscription",
+      "plan": "pro",
+      "windows": [
+        {
+          "name": "5 hours",
+          "remaining": 70
+        },
+        {
+          "name": "7 days"
+        }
+      ],
+      "readAt": "2026-11-12T09:00:00Z",
+      "asOf": "2026-11-12T09:00:00Z",
+      "readDeferred": true
+    },
+    {
+      "provider": "grok",
+      "name": "spare",
+      "kind": "subscription",
+      "plan": "basic",
+      "windows": [],
+      "readDeferred": true
+    },
+    {
+      "provider": "openrouter",
+      "name": "key",
+      "kind": "balance",
+      "windows": [],
+      "balance": "$12 left"
+    }
+  ]
+}

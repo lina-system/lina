@@ -9,6 +9,12 @@ import sys
 
 def _view(args) -> int:
     from hermes_cli.lina_models import query, render
+    from hermes_cli.lina_models_proxy import cli_lines, view_parts
+    parts = view_parts(args.models_action)  # lina#588: magpie, or both, when worker.proxy says so
+    if parts is not None:
+        for line in cli_lines(args.models_action, args.json, parts):
+            print(line)
+        return 0
     data = query(args.models_action)
     lines = [json.dumps(data, indent=2)] if args.json else render(args.models_action, data)
     for line in lines:
@@ -48,11 +54,15 @@ def _run(args) -> int:
 
 
 def _cmd_models(args) -> None:
+    from hermes_cli.lina_magpie import MagpieError
     from hermes_cli.lina_ocx import OcxError
     args.models_action = args.models_action or "list"
     args.json = getattr(args, "json", False)
     try:
         sys.exit(_run(args))
+    except MagpieError as exc:
+        print(f"unknown: {exc}")
+        sys.exit(1)
     except OcxError as exc:
         print(f"OCX: {exc}")
         sys.exit(1)

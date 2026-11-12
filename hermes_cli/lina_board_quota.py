@@ -8,6 +8,11 @@ puts no quota in the plain list. OCX keeps each account's quota for 10 minutes (
 its OAuth token, and ``QUOTA_EVERY = 600`` keeps LINA at one such read per 10 minutes. The rate needs history, so
 each read appends one row per account window to ``board/quota.jsonl`` under the LINA root, at most every ten minutes, and rows older than 14 days are dropped. Rate rules (the board's
 ``model/fleet.py``): over the last three hours inside one reset period, at least 30 minutes of records.
+
+When ``worker.proxy`` reads magpie (lina#588, ``lina_models_proxy``), its quota cards (``/v1/magpie/quotas``, what
+magpie last read) come in as accounts of the same shape (``lina_magpie.account``) and go through the same view and
+history. With more than one proxy read each service carries ``proxy: <kind>``; a proxy that cannot be read adds an
+error and shows nothing (unknown), while the others still show.
 """
 
 from __future__ import annotations
@@ -128,8 +133,9 @@ def quota_view(accounts: list[dict], history: list[dict], now: float) -> list[di
         by_window.setdefault((row.get("provider"), row.get("id"), row.get("window")), []).append(row)
     groups: dict[str, list[dict]] = {}
     for acct in accounts:
-        if not windows(acct) and acct.get("type") != "api-key" and not acct.get("needsReauth"):
-            continue  # OCX reads nothing for it; API keys and accounts to sign in again stay listed
+        if not windows(acct) and acct.get("type") != "api-key" and not acct.get("needsReauth") \
+                and not acct.get("proxy"):
+            continue  # OCX reads nothing for it; API keys, accounts to sign in again and magpie's cards stay listed
         name = service_of(acct.get("provider"))
         group = groups.setdefault(name, [])
         group.append(_account(acct, by_window, len(group) + 1, name, now))
@@ -185,22 +191,52 @@ def missing(accounts: list[dict]) -> list[str]:
 
 
 def read(root: Path, now: float | None = None) -> list[dict]:
-    """The quota view, reading OCX at most every ten minutes per LINA root (raises ``lina_ocx.OcxError``)."""
+    """The quota view, reading OCX at most every ten minutes per LINA root (raises ``lina_ocx.OcxError``, also when
+    one of several proxies read fails: the board snapshot then shows its quota part as unread)."""
     return view(root, now)["quota"]
 
 
-def view(root: Path, now: float | None = None) -> dict:
-    """``{quota, missing}``: the quota view and the services without an account."""
+def _ocx_accounts(root: Path) -> list[dict]:
     from hermes_cli.lina_models import query
     from hermes_cli.lina_ocx import external
+    data = query("quota" if external(root) else "accounts", root)
+    return [a for a in (data.get("accounts") if isinstance(data, dict) else None) or [] if isinstance(a, dict)]
+
+
+def _accounts(kind: str, root: Path, proxy, now: float, log: QuotaLog) -> list[dict]:
+    """One proxy's accounts, read at most every ten minutes per LINA root; a failed read is not kept."""
+    from hermes_cli import lina_magpie
+    key = root if kind == "ocx" else (root, kind)
+    cached = _CACHE.get(key)
+    if cached is None or now - cached[0] >= QUOTA_EVERY:
+        accounts = _ocx_accounts(root) if kind == "ocx" else lina_magpie.quota_accounts(proxy)
+        log.add(accounts, now)
+        _CACHE[key] = cached = (now, accounts)
+    return cached[1]
+
+
+def view(root: Path, now: float | None = None, errors: list[dict] | None = None) -> dict:
+    """``{quota, missing}``: the quota view and the services without an account. With more than one proxy read, one
+    that fails adds ``{source, message}`` to *errors* (raised when there is no list, or when none answered)."""
+    from hermes_cli.lina_models_proxy import node_proxy
+    from hermes_cli.lina_ocx import OcxError
     now = time.time() if now is None else now
+    proxy = node_proxy(root)
+    kinds = proxy.reads()
+    read: dict[str, list[dict]] = {}
     with _LOCK:
-        cached = _CACHE.get(root)
         log = QuotaLog(root / "board" / "quota.jsonl")
-        if cached is None or now - cached[0] >= QUOTA_EVERY:
-            data = query("quota" if external(root) else "accounts", root)
-            accounts = [a for a in (data.get("accounts") if isinstance(data, dict) else None) or [] if isinstance(a, dict)]
-            log.add(accounts, now)
-            _CACHE[root] = cached = (now, accounts)
+        for kind in kinds:
+            try:
+                read[kind] = _accounts(kind, root, proxy, now, log)
+            except OcxError as exc:
+                if errors is None or len(kinds) == 1 or (not read and kind == kinds[-1]):
+                    raise
+                errors.append({"source": f"quota-{kind}", "message": f"unknown: {exc}"[:300]})
         history = [row for row in log.rows(now) if now - row["at"] <= QUOTA_SPAN + QUOTA_EVERY]
-    return {"quota": quota_view(cached[1], history, now), "missing": missing(cached[1])}
+    quota = []
+    for kind, accounts in read.items():
+        services = quota_view(accounts, history, now)
+        quota += [{**service, "proxy": kind} for service in services] if len(kinds) > 1 else services
+    held = missing([acct for accounts in read.values() for acct in accounts])
+    return {"quota": quota, "missing": held if len(read) == len(kinds) else None}  # unknown while one is unread
