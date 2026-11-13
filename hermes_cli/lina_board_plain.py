@@ -372,10 +372,11 @@ _TODO_HEADING = re.compile(r"^##\s+To-?dos\s*$", re.IGNORECASE | re.MULTILINE)
 
 
 def is_work_card(goal_mode: int | bool, body: str | None, status: str) -> bool:
-    """A card the app lists as work, and this writer keeps lines for (lina#290): a goal-mode card, or
-    any non-archived card whose body has a ``## To-dos`` section. A goal card above it is not required;
-    ``work_api`` selects the same set."""
-    return status != "archived" and (bool(goal_mode) or bool(_TODO_HEADING.search(body or "")))
+    """A card the app lists as work, and this writer keeps lines for (lina#290): a goal-mode card, any
+    non-archived card whose body has a ``## To-dos`` section, and every blocked or triage card, which the owner may
+    have to answer or sort (lina#664). A goal card above it is not required; ``work_api`` selects the same set."""
+    return status != "archived" and (bool(goal_mode) or bool(_TODO_HEADING.search(body or ""))
+                                      or status in ("blocked", "triage"))
 
 
 def _boards(kanban_db) -> list[str]:
