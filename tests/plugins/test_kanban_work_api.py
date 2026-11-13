@@ -54,6 +54,11 @@ def client(tmp_path, monkeypatch):
     home.mkdir()
     monkeypatch.setenv("HERMES_HOME", str(home))
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    # The work record (lina#666) in the scratch sqlite store, never the platform's postgres.
+    (home / "config.yaml").write_text(
+        f"desk: {{path: {tmp_path}}}\nwork:\n  locale: ko\n  owner: {{id: owner, name: owner}}\n"
+        f"  agents: {{alpha: alpha}}\n  session_queue: {tmp_path / 'queue'}\n  store: {{backend: sqlite}}\n",
+        encoding="utf-8")
     kb.init_db()
     spec = importlib.util.spec_from_file_location(
         "hermes_dashboard_plugin_kanban_work_test", REPO / "plugins/kanban/dashboard/plugin_api.py")
@@ -84,6 +89,22 @@ def _goal(conn, work_ids, title="Synthetic goal"):
 def _running(conn, tid):
     assert kb.claim_task(conn, tid) is not None
     return tid
+
+
+def _record(*args: str) -> str:
+    """One ``lina work`` command against the scratch record; returns its output."""
+    import contextlib
+    import io
+
+    from hermes_cli.work import env, main
+    out = io.StringIO()
+    env.reset()
+    try:
+        with contextlib.redirect_stdout(out):
+            main(list(args))
+    finally:
+        env.reset()
+    return out.getvalue()
 
 
 def _card_json(client, tid, schema="WorkCardDetail"):
@@ -401,3 +422,48 @@ def test_a_dependency_block_classified_in_place_waits_on_the_owner(client, conn)
     card = _card_json(client, tid)
     assert (card["state"], card["reason"], card["waitingOn"], card["retry"]) == (
         "stopped", "blocked_by_item", "owner", "none")
+
+
+def test_a_card_carries_the_goal_title_of_the_record_work_that_links_it(client, conn):
+    """lina#666: a record to-do linking ``kanban:<card>`` gives that card its goal's title as ``goalTitle``; a card no
+    record item links has null, in the list and in the detail."""
+    linked = _card(conn, "a card the record links")
+    unlinked = _card(conn, "a card nothing links")
+    _record("add", "목표", "--by", "alpha", "--area", "Dev", "--title", "빌드 기기 정리", "--basis", "기기 정리해 줘",
+            "--done", "빌드 기기가 모두 가동된다", "--check", "false")
+    _record("add", "할 일", "--by", "alpha", "--goal", "G1", "--title", "기기 1 점검", "--why", "멈추지 않게",
+            "--done", "기기가 답한다", "--check", "false", "--link", f"kanban:{linked}")
+
+    listed = _valid("WorkCardList", client.get(f"{WORK}/cards").json())
+    assert {c["id"]: c["goalTitle"] for c in listed["cards"]} == {linked: "빌드 기기 정리", unlinked: None}
+    assert "errors" not in listed
+    assert _card_json(client, linked)["goalTitle"] == "빌드 기기 정리"
+
+
+def test_an_unreadable_record_leaves_goal_titles_null_and_still_serves_the_cards(client, conn, monkeypatch):
+    """lina#666: the record failing to read costs only ``goalTitle`` (null) and names itself in ``errors``."""
+    from hermes_cli.work import ledger
+    tid = _card(conn, "served without its goal")
+
+    def unreadable():
+        raise RuntimeError("store is down")
+    monkeypatch.setattr(ledger, "read_all", unreadable)
+
+    r = client.get(f"{WORK}/cards")
+    assert r.status_code == 200, r.text
+    listed = _valid("WorkCardList", r.json())
+    assert [(c["id"], c["goalTitle"]) for c in listed["cards"]] == [(tid, None)]
+    assert [e["source"] for e in listed["errors"]] == ["work"]
+
+
+def test_a_blocked_card_without_goal_or_todos_is_served_stopped_and_triage_planned(client, conn):
+    """lina#664: a blocked card is work whatever its body (stopped, with its reason, waitingOn and retry), and so is a
+    triage card (planned); a ready card with neither goal mode nor To-dos is still not work."""
+    blocked = kb.create_task(conn, title="order gate", assignee=AGENT, body="plain body")
+    assert kb.block_task(conn, blocked, reason="which vendor?", kind="needs_input")
+    triage = kb.create_task(conn, title="remote control idea", assignee=AGENT, triage=True)
+    kb.create_task(conn, title="plain ready card", assignee=AGENT)
+
+    listed = _valid("WorkCardList", client.get(f"{WORK}/cards").json())
+    rows = {c["id"]: (c["state"], c["reason"], c["waitingOn"], c["retry"]) for c in listed["cards"]}
+    assert rows == {blocked: ("stopped", "decision", "owner", "none"), triage: ("planned", "triage", None, None)}
