@@ -9,8 +9,8 @@ and `deliver: local` (the output is saved in the job's run, not sent). Running i
 |---|---|---|
 | `learned-collect` | `5 * * * *` | `lina learned collect` |
 | `learned-card` | `5 11 * * *` | `lina learned card --day yesterday --send` |
-| `agent-review` | `30 23 * * *` | one daily review turn per agent, started through that agent's gateway |
-| `undo-snapshot` | `45 23 * * *` | `lina undo snapshot` |
+| `agent-review` | `40 23 * * *` | one daily review turn per agent, started through that agent's gateway |
+| `undo-snapshot` | `50 23 * * *` | `lina undo snapshot` |
 
 Change a time with `lina cron edit <job_id> --schedule '<cron expression>'`; `lina cron list` shows the ids.
 
@@ -55,7 +55,7 @@ and `lina undo apply <change_id>` puts the earlier copy back, as long as the fil
 
 ## Switching from the old timers
 
-Switch on one day, before 23:30 and before the old review timer's time that day, in one sitting:
+Switch on one day, before 23:40 (the review time of both the old timer and the LINA job), in one sitting:
 
 1. Turn off the old daily review timer and the old undo snapshot timer on the hub.
 2. Run `lina cron ops` on the hub.

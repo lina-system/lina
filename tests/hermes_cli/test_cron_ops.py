@@ -47,8 +47,8 @@ def test_install_creates_script_jobs_that_run_the_lina_commands(monkeypatch):
     assert {name: (j["schedule"]["expr"], j["no_agent"], j["deliver"]) for name, j in jobs.items()} == {
         "learned-collect": ("5 * * * *", True, "local"),
         "learned-card": ("5 11 * * *", True, "local"),
-        "agent-review": ("30 23 * * *", True, "local"),
-        "undo-snapshot": ("45 23 * * *", True, "local")}
+        "agent-review": ("40 23 * * *", True, "local"),
+        "undo-snapshot": ("50 23 * * *", True, "local")}
     for job in jobs.values():
         assert _run_script(job["script"]) == 0
     assert _run_script(jobs["undo-snapshot"]["script"], "--dry-run") == 0

@@ -37,8 +37,8 @@ JOBS = (
     OpsJob("learned-collect", "5 * * * *", ("learned", "collect"), "learned collect, hourly at :05"),
     OpsJob("learned-card", "5 11 * * *", ("learned", "card", "--day", "yesterday", "--send"),
            "launchd ai.hermes.learned-card, daily 11:05"),
-    OpsJob("agent-review", "30 23 * * *", (), "the old daily review timer", entry="start_reviews"),
-    OpsJob("undo-snapshot", "45 23 * * *", ("undo", "snapshot"), "the old daily undo snapshot timer"),
+    OpsJob("agent-review", "40 23 * * *", (), "the old daily review timer", entry="start_reviews"),
+    OpsJob("undo-snapshot", "50 23 * * *", ("undo", "snapshot"), "the old daily undo snapshot timer"),
 )
 
 _SCRIPT = '''"""Cron job {name}: `lina {command}` (written by `lina cron ops`)."""
