@@ -467,3 +467,34 @@ def test_a_blocked_card_without_goal_or_todos_is_served_stopped_and_triage_plann
     listed = _valid("WorkCardList", client.get(f"{WORK}/cards").json())
     rows = {c["id"]: (c["state"], c["reason"], c["waitingOn"], c["retry"]) for c in listed["cards"]}
     assert rows == {blocked: ("stopped", "decision", "owner", "none"), triage: ("planned", "triage", None, None)}
+
+
+def test_a_stopped_row_asks_the_owner_with_the_first_korean_sentence_of_its_block_reason(client, conn):
+    """lina#690: a card stopped on the owner carries ``ask``: the first sentence of its block reason without card ids,
+    run ids or URLs, at most 60 characters; null for an English-only reason and on a stop nobody has to answer. The
+    detail carries the row's."""
+    long = "배포 키를 새로 받을지 지금 키를 그대로 쓸지 오늘 안에 정해 주세요 그래야 다음 배포를 예정대로 열 수 있고 알림도 멈추지 않아요"
+    reasons = {
+        "stripped": ("새 배포 키를 받을지 정해 주세요 (카드 t_492a3297, OT-SIO1114051903, https://example.com/runs/7). "
+                     "아니면 다음 주로 미뤄도 돼요.", "needs_input"),
+        "cut": (long, "needs_input"),
+        "inbox line": ("agent-a · 갈림길 · hermes:t_0000a001 캐시를 둘지 버릴지 골라 주세요? 급하지 않아요.", None),
+        "english": ("Pick the banner colour for card t_0000a001. See https://example.com/a.", "needs_input"),
+        "no text": ("   ", "needs_input"),
+    }
+    ids = {}
+    for name, (reason, kind) in reasons.items():
+        ids[name] = kb.create_task(conn, title=name, assignee=AGENT, body="plain body")
+        assert kb.block_task(conn, ids[name], reason=reason, kind=kind)
+    waits = kb.create_task(conn, title="waits on a card", assignee=AGENT, body="## To-dos\n- [ ] import\n")
+    assert kb.block_task(conn, waits, reason="가져오기 카드를 기다려요.", kind="needs_input",
+                         wait_for={"kind": "card", "task_id": ids["cut"]})
+
+    rows = {c["id"]: c for c in _valid("WorkCardList", client.get(f"{WORK}/cards").json())["cards"]}
+    asks = {name: rows[tid]["ask"] for name, tid in ids.items()}
+    assert asks == {"stripped": "새 배포 키를 받을지 정해 주세요.", "cut": long[:59].rstrip() + "…",
+                    "inbox line": "캐시를 둘지 버릴지 골라 주세요?", "english": None, "no text": None}
+    assert len(asks["cut"]) <= 60
+    assert (rows[waits]["waitingOn"], rows[waits]["ask"]) == (None, None)
+    for tid in [*ids.values(), waits]:
+        assert _card_json(client, tid)["ask"] == rows[tid]["ask"]

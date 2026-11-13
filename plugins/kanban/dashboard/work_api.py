@@ -3,9 +3,9 @@
 Mounted by ``plugin_api.py`` under ``/api/plugins/kanban/work`` (behind the dashboard auth gate).
 A work card is a goal-mode card, any card whose body has a ``## To-dos`` section (lina#290), or any
 blocked or triage card (lina#664); a goal card above it, when there is one, is its link-child. A listed
-card carries the title of the work record's goal that links it (``goalTitle``, lina#666). Reads open the
-board read-only; the one write (answer) reuses ``add_comment`` and ``unblock_task``. ``work_state`` is
-the only place the five app states are computed. The schema the app's client generator reads is
+card carries the title of the work record's goal that links it (``goalTitle``, lina#666), a Hermes board's card too
+(lina#690). Reads open the board read-only; the one write (answer) reuses ``add_comment`` and ``unblock_task``.
+``work_state`` is the only place the five app states are computed. The schema the app's client generator reads is
 ``docs/api/work-client.yaml``.
 """
 
@@ -16,7 +16,7 @@ import sqlite3
 import time
 from contextlib import closing, contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Iterator, Optional
+from typing import Any, Callable, Iterator, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
@@ -54,6 +54,14 @@ _KIND_STOPS = {"needs_input": ("decision", "owner", "none"), "capability": ("fee
 _INBOX_LINE = re.compile(r"^[^·\n]+?\s·\s(?P<kind>.+?)\s·\s")
 _INBOX_REASONS = {"갈림길": "decision", "질문": "decision", "검토": "review", "돈·바깥": "feedback",
                   "끝 조건": "feedback"}
+# The owner's one line on a stopped card (lina#690): what a block reason loses before it is shown, where its first
+# sentence ends, and the brackets a lost token leaves empty.
+ASK_CHARS = 60
+_ASK_DROP = re.compile(r"https?://[^\s()\[\]<>]*[^\s()\[\]<>.,;:!?]"
+                       r"|(?:카드\s*)?\b(?:hermes:)?t_[0-9A-Za-z]+\b|\bOT-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*\b")
+_SENTENCE_END = re.compile(r"(?<=[.!?。？！])\s|\n")
+_EMPTY_BRACKETS = re.compile(r"[(\[][\s,;·]*[)\]]")
+_HANGUL = re.compile(r"[가-힣]")
 # Worker run IDs pasted into comments: omo jobs, single-issue runs, ``lina worker`` runs.
 _WORKER_ID_PATTERNS = (
     ("omo", re.compile(r"\b(OT-[A-Z0-9]{6,})\b")),
@@ -211,12 +219,16 @@ def _latest_block_payload(events: list[kanban_db.Event]) -> dict[str, Any]:
     return (ev.payload or {}) if ev else {}
 
 
+def _park_event(events: list[kanban_db.Event]) -> Optional[kanban_db.Event]:
+    return next((e for e in reversed(events) if e.kind in _PARK_EVENT_KINDS), None)
+
+
 def _block_stop(task: kanban_db.Task, events: list[kanban_db.Event]) -> tuple[Optional[str], ...]:
     """``(reason, waitingOn, retry)`` of a blocked card, from its latest block event (its kind, else the card's
     ``block_kind``), never from the title. A recorded wait is woken by the dispatcher; a typed kind reads by
     :data:`_KIND_STOPS`; an untyped block's text is the goal loop's ``gate`` / ``budget``, an owner-inbox line, or a
     plain sentence for the owner. A card with no block event and no kind is all None."""
-    event = next((e for e in reversed(events) if e.kind in _PARK_EVENT_KINDS), None)
+    event = _park_event(events)
     if event is not None and event.kind == "gave_up":
         return "failed", "owner", "none"
     payload = (event.payload or {}) if event else {}
@@ -240,16 +252,40 @@ def _block_stop(task: kanban_db.Task, events: list[kanban_db.Event]) -> tuple[Op
     return None, None, None
 
 
+def _ask(text: str) -> Optional[str]:
+    """The owner's one line from a block reason (lina#690): an owner-inbox line's summary, else the reason, without
+    card ids, run ids and URLs; its first sentence, at most :data:`ASK_CHARS` characters. None when no Korean is left:
+    an English-only reason is a worker's note, not a line for the owner."""
+    inbox = _INBOX_LINE.match(text)
+    text = _ASK_DROP.sub(" ", text[inbox.end():] if inbox else text).strip()
+    first = _EMPTY_BRACKETS.sub(" ", _SENTENCE_END.split(text, maxsplit=1)[0])
+    first = re.sub(r"\s+([.,!?？])", r"\1", " ".join(re.sub(r"[`*_>#]+", " ", first).split())).strip(" :·,-")
+    if not _HANGUL.search(first):
+        return None
+    return first if len(first) <= ASK_CHARS else first[:ASK_CHARS - 1].rstrip() + "…"
+
+
 def stop_fields(facts: CardFacts, state: str) -> dict[str, Optional[str]]:
-    """``waitingOn`` and ``retry`` of a card (lina#629): a blocked card's by :func:`_block_stop`, a scheduled card's
-    ``retry: scheduled``; null on every other card (a running card with no live run included: who acts is not
+    """``waitingOn``, ``retry`` and ``ask`` of a card (lina#629, lina#690): a blocked card's by :func:`_block_stop`,
+    and when the owner has to act, the one line :func:`_ask` makes of its latest block event's reason; a scheduled
+    card's ``retry: scheduled``; null on every other card (a running card with no live run included: who acts is not
     known)."""
     if facts.task.status == "scheduled":
-        return {"waitingOn": None, "retry": "scheduled"}
+        return {"waitingOn": None, "retry": "scheduled", "ask": None}
     if state != "stopped" or facts.task.status != "blocked":
-        return {"waitingOn": None, "retry": None}
+        return {"waitingOn": None, "retry": None, "ask": None}
     _, waiting_on, retry = _block_stop(facts.task, facts.events)
-    return {"waitingOn": waiting_on, "retry": retry}
+    event = _park_event(facts.events)
+    reason = str(((event.payload or {}) if event else {}).get("reason") or "")
+    return {"waitingOn": waiting_on, "retry": retry, "ask": _ask(reason) if waiting_on == "owner" else None}
+
+
+def card_stop(facts: CardFacts, now: int) -> dict[str, Optional[str]]:
+    """``state``, ``reason``, ``waitingOn``, ``retry`` and ``ask`` of a card: the one place the list row and the detail
+    (the row and more, :func:`card_detail`) take why a card stopped and who acts, on LINA's board and the Hermes board
+    alike (lina#690)."""
+    state, reason = work_state(facts, now)
+    return {"state": state, "reason": reason, **stop_fields(facts, state)}
 
 
 def work_state(facts: CardFacts, now: Optional[int] = None) -> tuple[str, Optional[str]]:
@@ -396,11 +432,10 @@ def card_times(facts: CardFacts) -> dict[str, Optional[int]]:
 
 def card_summary(facts: CardFacts, now: int, goal_title: Optional[str] = None) -> dict[str, Any]:
     from hermes_cli.lina_board_plain import board_key, lookup  # checked model-written lines (lina#151), cache only
-    state, reason = work_state(facts, now)
     todos = parse_todos(facts.task.body, _latest_gate_results(facts.events))
     return {
         "id": facts.task.id, "title": facts.task.title, "goalTitle": goal_title, **_agent_fields(facts),
-        "state": state, "reason": reason, **stop_fields(facts, state),
+        **card_stop(facts, now),
         "elapsedSeconds": _elapsed_seconds(facts.task, now), "todoProgress": {"done": sum(t["done"] for t in todos), "total": len(todos)},
         "now": now_line(facts), **card_times(facts),
         "plain": lookup("card", [facts.task.id], board=board_key(facts.board))[facts.task.id],
@@ -448,13 +483,16 @@ def _goal_dict(conn: sqlite3.Connection, goal: kanban_db.Task, work_ids: list[st
     return goal_view(goal_facts, work, now)
 
 
-def goal_view(goal_facts: CardFacts, work: list[CardFacts], now: int) -> dict[str, Any]:
+def goal_view(goal_facts: CardFacts, work: list[CardFacts], now: int,
+              goal_title: Callable[[str], Optional[str]] = lambda _card_id: None) -> dict[str, Any]:
+    """A goal card with its work cards; *goal_title* gives a work card's ``goalTitle`` by its id (null on LINA's board,
+    where the goal row is the goal; the Hermes board's from the record, lina#690)."""
     goal = goal_facts.task
     state, reason = work_state(goal_facts, now)
     return {
         "id": goal.id, "title": goal.title, **_agent_fields(goal_facts), "state": state, "reason": reason,
         "elapsedSeconds": _elapsed_seconds(goal, now),
-        "workCards": [card_summary(f, now) for f in work],
+        "workCards": [card_summary(f, now, goal_title(f.task.id)) for f in work],
         "evidence": [e for e in map(_evidence, [goal_facts, *work]) if e is not None],
     }
 
@@ -490,16 +528,23 @@ def _own_goals(board: Optional[str], now: int) -> dict[str, list]:
         return {"goals": goals}
 
 
+def _with_record_errors(reply: dict, titles: GoalTitles) -> dict:
+    return dict(reply, errors=[*reply.get("errors", []), *titles.errors]) if titles.errors else reply
+
+
 @router.get("/goals")
 def list_goals(board: Optional[str] = Query(None)):
-    now, board = int(time.time()), _board_slug(board)
-    return hermes_rows.add(_own_goals(board, now), board, lambda src: hermes_rows.goals(src, now))
+    now, board, titles = int(time.time()), _board_slug(board), GoalTitles()
+    reply = hermes_rows.add(_own_goals(board, now), board,
+                            lambda src, src_board: hermes_rows.goals(src, now, titles, src_board))
+    return _with_record_errors(reply, titles)
 
 
 @router.get("/goals/{goal_id}")
 def get_goal(goal_id: str, board: Optional[str] = Query(None)):
     if is_hermes(goal_id):
-        return hermes_rows.one(goal_id, lambda src, i: hermes_rows.goal(src, i, int(time.time())))
+        return hermes_rows.one(goal_id, lambda src, i, src_board: hermes_rows.goal(src, i, int(time.time()),
+                                                                                    GoalTitles(), src_board))
     board = _board_slug(board)
     with _read_conn(board) as conn:
         goal = _require_card(conn, goal_id)
@@ -514,22 +559,22 @@ def list_cards(agent: Optional[str] = Query(None), state: Optional[str] = Query(
                board: Optional[str] = Query(None)):
     if state is not None and state not in WORK_STATES:
         raise HTTPException(status_code=400, detail=f"state must be one of {list(WORK_STATES)}")
-    now, board = int(time.time()), _board_slug(board)
-    return hermes_rows.add(_own_cards(board, now, agent, state), board,
-                           lambda src: hermes_rows.cards(src, now, agent, state))
+    now, board, titles = int(time.time()), _board_slug(board), GoalTitles()
+    reply = hermes_rows.add(_own_cards(board, now, agent, state, titles), board,
+                            lambda src, src_board: hermes_rows.cards(src, now, agent, state, titles, src_board))
+    return _with_record_errors(reply, titles)
 
 
-def _record_goal_titles(board: Optional[str]) -> dict[str, str]:
-    """``{card_id: goal title}`` of one board's cards from the work record (lina#666): an item that links
-    ``kanban:<card>`` (a link without a board is the default board's) gives the card its goal's title, a goal its own
-    and a to-do its parent goal's; the first such item in record order wins (one goal is one to-do, lina#655). Dropped
-    items give none. Read the way ``/api/lina/work/items`` reads the record (``lina_board_items._read``)."""
+def _record_goal_titles() -> dict[tuple[str, str], str]:
+    """``{(board, card_id): goal title}`` from the work record (lina#666): an item that links ``kanban:<card>`` (a link
+    without a board is the default board's) gives the card its goal's title, a goal its own and a to-do its parent
+    goal's; the first such item in record order wins (one goal is one to-do, lina#655). Dropped items give none. Read
+    the way ``/api/lina/work/items`` reads the record (``lina_board_items._read``)."""
     from hermes_cli.lina_board import _WORK_LOCK, _root
     from hermes_cli.work import env, ledger
     from hermes_cli.work.evaluate import item_name
     from hermes_cli.work.links import kanban_parts
-    wanted = board or kanban_db.DEFAULT_BOARD
-    titles: dict[str, str] = {}
+    titles: dict[tuple[str, str], str] = {}
     with _WORK_LOCK:
         env.bind(env.load(_root()))
         try:
@@ -541,47 +586,58 @@ def _record_goal_titles(board: Optional[str]) -> dict[str, str]:
                     continue
                 for link in r.get("links") or []:
                     link_board, card = kanban_parts(str(link))
-                    if card and (link_board or kanban_db.DEFAULT_BOARD) == wanted:
-                        titles.setdefault(card.lower(), item_name(goal))
+                    if card:
+                        titles.setdefault((link_board or kanban_db.DEFAULT_BOARD, card.lower()), item_name(goal))
         finally:
             ledger.close()
             env.reset()
     return titles
 
 
-def _goal_titles(board: Optional[str], errors: list[dict]) -> dict[str, str]:
-    """:func:`_record_goal_titles`, or ``{}`` with a ``work`` entry in *errors* when the record cannot be read: the
-    cards are served with ``goalTitle`` null."""
-    from hermes_cli.lina_board import _source
-    return _source("work", errors, lambda: _record_goal_titles(board)) or {}
+class GoalTitles:
+    """One request's goal titles from the work record (:func:`_record_goal_titles`), read on first use and only once,
+    for LINA's and the Hermes board's cards alike (lina#690). A record that cannot be read gives every card a null
+    ``goalTitle`` and one ``work`` entry in :attr:`errors`; the cards are still served."""
+
+    def __init__(self) -> None:
+        self.errors: list[dict] = []
+        self._titles: Optional[dict[tuple[str, str], str]] = None
+
+    def get(self, card_id: str, *boards: Optional[str]) -> Optional[str]:
+        """The title of the goal whose item links *card_id* on the first of *boards* that has one (None is the
+        default board)."""
+        if self._titles is None:
+            from hermes_cli.lina_board import _source
+            self._titles = _source("work", self.errors, _record_goal_titles) or {}
+        found = (self._titles.get((board or kanban_db.DEFAULT_BOARD, card_id.lower())) for board in boards)
+        return next((title for title in found if title is not None), None)
 
 
-def _own_cards(board: Optional[str], now: int, agent: Optional[str], state: Optional[str]) -> dict[str, list]:
+def _own_cards(board: Optional[str], now: int, agent: Optional[str], state: Optional[str],
+               titles: GoalTitles) -> dict[str, list]:
     with _read_conn(board) as conn:
         if conn is None:
             return {"cards": []}
-        errors: list[dict] = []
-        titles = _goal_titles(board, errors)
         cards = []
         for task in filter(None, (kanban_db.get_task(conn, i) for i in _work_card_ids(conn))):
             facts = _facts(conn, task, board)
             if agent is not None and _implementer(facts) != agent:
                 continue
-            summary = card_summary(facts, now, titles.get(task.id.lower()))
+            summary = card_summary(facts, now, titles.get(task.id, board))
             if state is None or summary["state"] == state:
                 cards.append(summary)
-        return {"cards": cards, **({"errors": errors} if errors else {})}
+        return {"cards": cards}
 
 
 @router.get("/cards/{card_id}")
 def get_card(card_id: str, board: Optional[str] = Query(None)):
     if is_hermes(card_id):
-        return hermes_rows.one(card_id, lambda src, i: hermes_rows.card(src, i, int(time.time())))
+        return hermes_rows.one(card_id, lambda src, i, src_board: hermes_rows.card(src, i, int(time.time()),
+                                                                                    GoalTitles(), src_board))
     board = _board_slug(board)
     with _read_conn(board) as conn:
         task = _require_card(conn, card_id)
-        title = _goal_titles(board, []).get(task.id.lower())
-        return card_detail(_facts(conn, task, board), int(time.time()), title)
+        return card_detail(_facts(conn, task, board), int(time.time()), GoalTitles().get(task.id, board))
 
 
 def question_rows(facts: CardFacts) -> list[dict[str, Any]]:
@@ -605,7 +661,7 @@ def _own_inbox(board: Optional[str], now: int) -> dict[str, list]:
 @router.get("/inbox")
 def get_inbox(board: Optional[str] = Query(None)):
     now = int(time.time())
-    return hermes_rows.add(_own_inbox(board, now), board, lambda src: hermes_rows.inbox(src, now))
+    return hermes_rows.add(_own_inbox(board, now), board, lambda src, _src_board: hermes_rows.inbox(src, now))
 
 
 class AnswerBody(BaseModel):
