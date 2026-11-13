@@ -16,8 +16,11 @@ info:
     they are. The owner's window on one agent (`/agents/{agent}/talk`) runs turns in the same app conversation with
     no to-do: its first line is "[LINA app]" and nothing is carried into the messenger chat; this window is not the
     messenger chat. The web server sends each agent's gateway the key in its environment variable
-    LINA_GATEWAY_KEY_<AGENT> (the agent name in upper case), else the shared API_SERVER_KEY; a key never appears in
-    any response, and a refused key answers 502 `gateway_refused_key`.
+    LINA_GATEWAY_KEY_<AGENT> (the agent name in upper case, a character a variable name cannot hold as `_`), else the
+    same variable in its own .env, else the shared API_SERVER_KEY. Creating an agent writes its profile's
+    API_SERVER_KEY and that variable together (hermes_cli/lina_gateway_key.py); `lina doctor` names an agent whose two
+    keys differ. A key never appears in any response, and a refused key answers 502 `gateway_refused_key`, whose
+    message says the key is the cause.
 servers:
   - url: /api/lina
 paths:
@@ -155,7 +158,8 @@ components:
     RefusedKey:
       description: >
         The agent's gateway refused the key (`gateway_refused_key`, message "the gateway refused the key for
-        <agent>"); the key itself is never in the body.
+        <agent>: the web server's LINA_GATEWAY_KEY_<AGENT> does not match the API_SERVER_KEY in <agent>'s profile .env
+        (lina doctor names the mismatch)"); the key itself is never in the body.
       content:
         application/json:
           schema:

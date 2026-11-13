@@ -39,6 +39,7 @@ After difficult/iterative tasks, offer to save as a skill. If a skill you loaded
     - computer-use: Drive the desktop background-first; escalate on signal.
     - hermes-agent: Configure and operate the agent and its shared workspace.
     - kanban-work-plan: Split a goal into gated kanban work cards.
+    - lina-owner-rules: Standing rules the owner set for every agent on LINA.
     - long-task-sessions: Run long tasks with checkpoints and restart recovery.
   creative:
     - claude-design: Design one-off HTML artifacts (landing, deck, prototype).

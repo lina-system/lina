@@ -26,12 +26,13 @@ def discard_unpublished_vault_key(ref: Optional[dict]) -> None:
         delete_key(ref)
 
 
-def finish_profile_layout(profile_dir: Path, *, no_skills: bool, clone_all: bool,
+def finish_profile_layout(profile_dir: Path, *, name: str, no_skills: bool, clone_all: bool,
                            description: Optional[str], soul: Optional[str] = None) -> None:
-    """Seed files a fresh profile owns from day one; runs on the staging tree before publish."""
+    """Seed files a fresh profile owns from day one; runs on the staging tree before publish. *name* is the
+    profile's final name, under which the web server's ``.env`` gets the profile's gateway key."""
     from hermes_cli.profiles import (
         _seed_file_if_missing, _PLACEHOLDER_ENV, NO_BUNDLED_SKILLS_MARKER,
-        _migrate_profile_config_if_outdated, write_profile_meta,
+        _get_default_hermes_home, _migrate_profile_config_if_outdated, write_profile_meta,
     )
     if soul is not None:
         (profile_dir / "SOUL.md").write_text(soul, encoding="utf-8")
@@ -41,6 +42,11 @@ def finish_profile_layout(profile_dir: Path, *, no_skills: bool, clone_all: bool
     # had no file until first write and the profile silently inherited shell API keys —
     # read by users as "the new profile reads the root .env". Skipped when a clone copied one.
     _seed_file_if_missing(profile_dir / ".env", _PLACEHOLDER_ENV, 0o600)
+    # The profile's gateway door refuses every key but its own, and the app's talk routes send the web server's
+    # copy (lina#643); a key already there (a --clone-channels copy) is kept. Written before the publish rename: after it, a failure
+    # would take the published clone's keychain entry down with the staging tree.
+    from hermes_cli.lina_gateway_key import provision
+    provision(profile_dir, name, _get_default_hermes_home())
 
     # Default SOUL.md to customize immediately (skipped when a clone already provided one).
     with contextlib.suppress(Exception):  # best-effort — don't fail profile creation over this

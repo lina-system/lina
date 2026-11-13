@@ -147,11 +147,12 @@ class TestCreateProfile:
         env_path = profile_dir / ".env"
         assert env_path.exists()
         content = env_path.read_text(encoding="utf-8-sig")
-        # Placeholder only — no credentials leak in from anywhere.
+        # Placeholder plus the profile's own new gateway key (lina#643) — no credentials leak in from anywhere.
         assert all(
             line.startswith("#") or not line.strip()
-            for line in content.splitlines()
+            for line in content.splitlines() if not line.startswith("API_SERVER_KEY=")
         )
+        assert content.count("API_SERVER_KEY=") == 1
         mode = stat.S_IMODE(env_path.stat().st_mode)
         assert mode == 0o600
 
@@ -230,7 +231,8 @@ class TestCreateProfile:
         cloned_config = yaml.safe_load((profile_dir / "config.yaml").read_text(encoding="utf-8-sig"))
         assert cloned_config["_config_version"] == DEFAULT_CONFIG["_config_version"]
         assert cloned_config["model"] == "test"
-        assert (profile_dir / ".env").read_text(encoding="utf-8-sig").strip() == "KEY=val"
+        lines = (profile_dir / ".env").read_text(encoding="utf-8-sig").splitlines()
+        assert [line for line in lines if not line.startswith("API_SERVER_KEY=")] == ["KEY=val"]  # + its own key
         assert (profile_dir / "SOUL.md").read_text(encoding="utf-8-sig") == "Be helpful."
 
     def test_clone_config_copies_only_the_active_memory_providers_config(self, profile_env):
@@ -1682,7 +1684,8 @@ class TestEdgeCases:
         cloned_config = yaml.safe_load((target_dir / "config.yaml").read_text(encoding="utf-8-sig"))
         assert cloned_config["_config_version"] == DEFAULT_CONFIG["_config_version"]
         assert cloned_config["model"] == "cloned"
-        assert (target_dir / ".env").read_text(encoding="utf-8-sig").strip() == "SECRET=yes"
+        lines = (target_dir / ".env").read_text(encoding="utf-8-sig").splitlines()
+        assert [line for line in lines if not line.startswith("API_SERVER_KEY=")] == ["SECRET=yes"]  # + its own key
 
 
 

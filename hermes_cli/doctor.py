@@ -57,6 +57,7 @@ from hermes_cli.doctor_state import (
     _check_outbound_lock,
     _check_plugins_disabled_by_update,
     _check_plugins_in_both_lists,
+    _check_agent_gateway_keys,
     _check_profiles,
     _check_skills_hub,
     _check_state_db,
@@ -130,7 +131,7 @@ DOCTOR_CHECKS = (
     ('Memory Provider', _check_memory_provider), (None, _check_plugins_disabled_by_update),
     (None, _check_plugins_in_both_lists),
     ('NeMo Relay Plugins', _check_relay_plugins),
-    (None, _check_profiles),
+    (None, _check_profiles), (None, _check_agent_gateway_keys),
 )
 
 

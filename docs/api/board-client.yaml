@@ -59,7 +59,8 @@ paths:
       operationId: getDevices
       summary: >
         The devices of devices.workers by role (lina#234): the nodes (work, files) with readiness, load, runners and,
-        with a metrics reader, usage; the person devices with their status and tool versions only.
+        with a metrics reader, usage; the person devices with their status and tool versions only; with
+        devices.metrics.power set, the hub's power equipment (lina#483, read only).
       parameters:
         - $ref: "#/components/parameters/IfNoneMatch"
       responses:
@@ -1509,6 +1510,115 @@ components:
           description: Machines only Beszel watches; down, then warn, then ok, each by name.
           items:
             $ref: "#/components/schemas/MonitoredMachine"
+        power:
+          $ref: "#/components/schemas/PowerView"
+    PowerView:
+      type: object
+      additionalProperties: false
+      description: >
+        The hub's power equipment (lina#483), only when the worker config sets devices.metrics.power, the path of the
+        watch service's state file. Read only: no route sends anything to the devices. A missing or unreadable file
+        carries no numbers (never zeros); a record or value too old to trust is stale with its age.
+      required: [state, at, age, why, alerts, stations, hub]
+      properties:
+        state:
+          type: string
+          enum: [ok, stale, missing, broken]
+          description: missing (no file), broken (not a JSON object), stale (see why) or ok.
+        at:
+          type: number
+          nullable: true
+          description: When the watch wrote its last record (epoch seconds); null with no file or no time in it.
+        age:
+          type: number
+          nullable: true
+          description: Seconds since that record.
+        why:
+          type: string
+          nullable: true
+          enum: [stopped, cloud, null]
+          description: >
+            stopped (no record for 10 minutes or a record without a time), cloud (the watch could not read the
+            cloud); null when ok, missing or broken.
+        alerts:
+          type: array
+          description: The watch's active alert keys as it writes them (power, temp:<key>, offline:<key>, watch:cloud,
+            watch:mqtt:<key>, ...).
+          items:
+            type: string
+        stations:
+          type: array
+          description: One entry per power station, by key.
+          items:
+            $ref: "#/components/schemas/PowerStation"
+        hub:
+          $ref: "#/components/schemas/PowerHub"
+    PowerStation:
+      type: object
+      additionalProperties: false
+      description: A station without a battery (battery false) reports only connected; its numbers are null.
+      required: [key, name, connected, battery, batteryPercent, inputW, outputW, charge, remainingS, temperature,
+                 age, stale]
+      properties:
+        key:
+          type: string
+        name:
+          type: string
+        connected:
+          type: boolean
+          nullable: true
+          description: Its cloud (Wi-Fi) link.
+        battery:
+          type: boolean
+        batteryPercent:
+          type: number
+          nullable: true
+        inputW:
+          type: number
+          nullable: true
+        outputW:
+          type: number
+          nullable: true
+        charge:
+          type: string
+          nullable: true
+          enum: [charging, on_battery, full, idle, null]
+          description: full is on outside power and not charging.
+        remainingS:
+          type: number
+          nullable: true
+          description: Time left on battery, only while on_battery.
+        temperature:
+          type: number
+          nullable: true
+          description: Degrees Celsius.
+        age:
+          type: number
+          nullable: true
+          description: Seconds since the station's last value reached the watch.
+        stale:
+          type: boolean
+          description: The value is older than 15 minutes, its age is unknown, or the section is stale.
+    PowerHub:
+      type: object
+      nullable: true
+      additionalProperties: false
+      description: The hub's own wall adapter, battery and uplink, as the watch reads them.
+      required: [wallAdapter, batteryPercent, uplink, stale]
+      properties:
+        wallAdapter:
+          type: boolean
+          nullable: true
+        batteryPercent:
+          type: number
+          nullable: true
+        uplink:
+          type: string
+          nullable: true
+          enum: [wired, hotspot, null]
+        stale:
+          type: boolean
+          description: The watch stopped, so this line is as old as its last record.
     QuotaView:
       type: object
       required: [version, at, errors, quota, missing]

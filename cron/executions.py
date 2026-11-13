@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import math
 import os
+import re
 import sqlite3
 import threading
 import time
@@ -37,7 +38,10 @@ LIVE_OWNER_STALE_CLAIM_FLOOR_SECONDS = 7200.0
 # ``cancelled``: an operator stopped the run (``hermes cron cancel``, removing the job mid-run).
 # ``missed``: never started — one row books every occurrence the scheduler skipped past.
 _TERMINAL_STATES = ("completed", "failed", "unknown", "cancelled", "missed")
-_STATUS_CHECK = "('claimed','running','completed','failed','unknown','cancelled','missed')"
+# ``dry_run``: ``hermes cron run --dry-run`` resolved the job and executed nothing (lina#639). It is
+# not an attempt: kept out of _TERMINAL_STATES and out of every "latest attempt" read, so a dry run
+# booked during a live run can never make that run's claim look finished.
+_STATUS_CHECK = "('claimed','running','completed','failed','unknown','cancelled','missed','dry_run')"
 # Outcomes the attempt's own firer booked: receipt recovery, the external-worker waiter and the
 # dead-owner sweep must treat these as final, never replay or re-book them.
 FIRER_FINISHED_STATES = frozenset({"completed", "failed", "cancelled"})
@@ -106,7 +110,7 @@ def _initialize_schema(conn: sqlite3.Connection) -> None:
 
 
 def _widen_status_check(conn: sqlite3.Connection) -> None:
-    """Rebuild a ledger created before ``cancelled``/``missed`` existed: SQLite cannot alter a
+    """Rebuild a ledger created before the newest status (``dry_run``) existed: SQLite cannot alter a
     CHECK constraint in place. Copies every column the old table has; runs once per file, and
     re-reads the schema under the write lock so two processes opening it together rebuild once."""
     def current_sql() -> Optional[str]:
@@ -114,16 +118,16 @@ def _widen_status_check(conn: sqlite3.Connection) -> None:
             "SELECT sql FROM sqlite_master WHERE type='table' AND name='executions'").fetchone()
         return row[0] if row is not None else None
 
-    if "'missed'" in (current_sql() or "'missed'"):
+    if "'dry_run'" in (current_sql() or "'dry_run'"):
         return
     conn.commit()
     conn.execute("BEGIN IMMEDIATE")
     try:
-        old_sql = current_sql() or "'missed'"
-        if "'missed'" not in old_sql:
+        old_sql = current_sql() or "'dry_run'"
+        if "'dry_run'" not in old_sql:
             columns = ", ".join(r[1] for r in conn.execute("PRAGMA table_info(executions)"))
             conn.execute("ALTER TABLE executions RENAME TO executions_pre_widen")
-            conn.execute(old_sql.replace("'unknown')", "'unknown','cancelled','missed')", 1))
+            conn.execute(re.sub(r"status IN\s*\([^)]*\)", f"status IN {_STATUS_CHECK}", old_sql, count=1))
             conn.execute(
                 f"INSERT INTO executions ({columns}) SELECT {columns} FROM executions_pre_widen")
             conn.execute("DROP TABLE executions_pre_widen")
@@ -237,7 +241,7 @@ def _prune_unlocked(conn: sqlite3.Connection) -> None:
     conn.execute(
         """DELETE FROM executions WHERE id IN (
              SELECT id FROM executions
-             WHERE status IN ('completed','failed','unknown','cancelled','missed')
+             WHERE status IN ('completed','failed','unknown','cancelled','missed','dry_run')
              ORDER BY julianday(finished_at) DESC, finished_at DESC,
                       julianday(claimed_at) DESC, claimed_at DESC, id DESC LIMIT -1 OFFSET ?
            )""",
@@ -401,6 +405,25 @@ def record_missed_occurrences(
         record = _fetch(conn, execution_id)
     _emit_execution_state(record)
     return record
+
+
+def record_dry_run(job_id: str, *, error: Optional[str]) -> dict[str, Any]:
+    """Book one terminal ``dry_run`` row: nothing ran, so it is neither a success nor a failure of the
+    job. ``error`` carries what would have failed at run time. No state event or run metric is
+    emitted, since no run happened."""
+    now = _hermes_now().isoformat()
+    execution_id = uuid.uuid4().hex
+    pid = os.getpid()
+    with _transaction() as conn:
+        conn.execute(
+            """INSERT INTO executions
+               (id, job_id, source, process_id, pid, process_started_at,
+                status, claimed_at, finished_at, error)
+               VALUES (?, ?, 'dry-run', ?, ?, ?, 'dry_run', ?, ?, ?)""",
+            (execution_id, str(job_id), _PROCESS_ID, pid, _process_start_time(pid), now, now, error),
+        )
+        _prune_unlocked(conn)
+        return _fetch(conn, execution_id)  # type: ignore[return-value]
 
 
 def recover_receipted_execution(execution_id, job_id, *, success, error=None, delivery_outcome=None):
@@ -674,8 +697,7 @@ def get_execution(execution_id: str) -> Optional[dict[str, Any]]:
 
 
 def latest_execution(job_id: str) -> Optional[dict[str, Any]]:
-    rows = list_executions(job_id=job_id, limit=1)
-    return rows[0] if rows else None
+    return latest_executions([job_id]).get(str(job_id))
 
 
 def live_inflight_execution(job_id: str) -> Optional[dict[str, Any]]:
@@ -689,7 +711,7 @@ def live_inflight_execution(job_id: str) -> Optional[dict[str, Any]]:
     # a long run is still live (machine slept through its next slots) must not hide that run.
     with _transaction() as conn:
         row = conn.execute(
-            """SELECT * FROM executions WHERE job_id=? AND status != 'missed'
+            """SELECT * FROM executions WHERE job_id=? AND status NOT IN ('missed', 'dry_run')
                ORDER BY julianday(claimed_at) DESC, claimed_at DESC, id DESC LIMIT 1""",
             (job_id,),
         ).fetchone()
@@ -748,7 +770,7 @@ def latest_executions(job_ids: list[str]) -> dict[str, dict[str, Any]]:
                              PARTITION BY job_id
                              ORDER BY julianday(claimed_at) DESC, claimed_at DESC, id DESC
                            ) AS rn
-                    FROM executions WHERE job_id IN ({placeholders}))
+                    FROM executions WHERE job_id IN ({placeholders}) AND status != 'dry_run')
                   WHERE rn=1)""",
             clean,
         ).fetchall()

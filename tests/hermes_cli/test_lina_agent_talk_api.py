@@ -205,7 +205,9 @@ def test_a_refused_key_answers_without_the_key(work, mux, client, monkeypatch, c
     for resp in answers:
         assert resp.status_code == 502
         assert _valid("Error", resp.json())["error"] == {
-            "code": "gateway_refused_key", "message": "the gateway refused the key for alpha"}
+            "code": "gateway_refused_key",
+            "message": "the gateway refused the key for alpha: the web server's LINA_GATEWAY_KEY_ALPHA does not match "
+                       "the API_SERVER_KEY in alpha's profile .env (lina doctor names the mismatch)"}
         assert "fake-key" not in resp.text
     assert "fake-key" not in caplog.text and mux.agents["alpha"].turns == []
 

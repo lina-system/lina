@@ -700,3 +700,21 @@ def _check_profiles(should_fix: bool, f: Finding) -> None:
     for line in duplicate_credential_findings():
         check_warn("Duplicate platform credential across profiles", f"({line})")
         f.manual_issues.append(line)
+
+
+@doctor_check("")
+def _check_agent_gateway_keys(should_fix: bool, f: Finding) -> None:
+    """Each agent whose gateway would refuse the web server's key (lina#643): the app's talk door then answers
+    502 ``gateway_refused_key``. Names only, never a value."""
+    from hermes_cli.lina_gateway_key import mismatched
+    from hermes_cli.profiles import _get_default_hermes_home, list_profiles
+    named = [(p.name, p.path) for p in list_profiles() if not p.is_default]
+    if not named:
+        return
+    found = mismatched(_get_default_hermes_home(), named)
+    for agent, reason in found:
+        line = f"agent '{agent}': {reason}"
+        check_warn("Gateway key the app cannot use", f"({line})")
+        f.manual_issues.append(line)
+    if not found:
+        check_ok("Every agent's gateway key matches the web server's")

@@ -40,7 +40,7 @@ from typing import Any, Callable, Optional
 log = logging.getLogger(__name__)
 
 ACCEPTED = ("run:<worker run id>", "card:<card id>", "review:<card id>", "until:<epoch seconds or ISO-8601>",
-            "pr:<PR URL or owner/repo#n> (its required checks finished)", "merged:<PR URL or owner/repo#n>",
+            "pr:<PR URL or owner/repo#n> (its checks finished)", "merged:<PR URL or owner/repo#n>",
             "unit:<name of the unit that unblocks it>")
 REFUSAL = ("a park needs something that wakes it. Pass wait_for as one of: " + "; ".join(ACCEPTED)
            + ". A worker run id or SCHEDULED_UNTIL=<time> in the reason is accepted too. Nothing changed.")

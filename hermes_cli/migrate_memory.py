@@ -10,6 +10,7 @@ from argparse import Namespace
 from dataclasses import asdict
 from pathlib import Path
 
+from hermes_cli.lina_gateway_key import provision, same_env_but_key
 from hermes_cli.migrate_memory_agent import migrate_agent
 from hermes_cli.migrate_memory_copy import _safe, snapshot
 from hermes_cli.migrate_memory_external import migrate_external
@@ -54,7 +55,8 @@ def _publish_files(copied: Path, destination: Path, *, lcm_store: bool = False) 
             files.append(str(relative))
             continue
         if target.exists():
-            if target.is_symlink() or target.read_bytes() != path.read_bytes():
+            if target.is_symlink() or (target.read_bytes() != path.read_bytes() and not (
+                    relative == Path(".env") and same_env_but_key(path, target))):
                 raise ValueError(f"destination file differs: {relative}")
         else:
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -129,6 +131,7 @@ def _profile(args) -> dict:
         work_report = migrate_work(copied.work_db, home, args.profile, args.agent)
         work_report["counted"] = True
     files = _publish_files(copied.profile_dir, destination, lcm_store=copied.lcm_db is not None)
+    provision(destination, args.agent, home)
     if copied.lcm_db is not None and "config.yaml" not in files:
         from hermes_cli.config import atomic_config_write
         atomic_config_write(destination / "config.yaml", {"context": {"engine": "lcm-x"}, "lcm": {"store_backend": "postgres"}})

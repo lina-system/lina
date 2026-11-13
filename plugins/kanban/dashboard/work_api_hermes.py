@@ -133,7 +133,7 @@ def add(out: dict, board: Optional[str], read: Callable[[list[dict]], dict[str, 
     part = None if running is None or running.src.command is None else running.part("cards")
     shows = None if part is None else hermes.served(part, errors)
     extra = {} if shows is None else _source(hermes.SOURCE, errors, lambda: read(shows)) or {}
-    return dict(out, **{key: out[key] + rows for key, rows in extra.items()}, errors=errors,
+    return dict(out, **{key: out[key] + rows for key, rows in extra.items()}, errors=[*out.get("errors", []), *errors],
                 **({} if part is None else {"hermesAt": part.at}))
 
 
