@@ -2042,7 +2042,9 @@ components:
         sockets) and optional since=<cursor>. Without since the first message is a ChangeBatch with the tail cursor
         and no events; with a kept since it is the missed events; otherwise one ChangeResync. Then a ChangeBatch
         whenever something changed, at most every 300 ms, and one ChangeResync when a store that was down when the
-        cursor was taken reads again.
+        cursor was taken reads again. A stream with nothing to send sends a ChangeBatch with no events at its cursor
+        every 3 s (lina#692), so idle limits on the way do not close it; a client may treat a longer silence as a
+        dead socket.
       oneOf:
         - $ref: "#/components/schemas/ChangeBatch"
         - $ref: "#/components/schemas/ChangeResync"

@@ -11,7 +11,8 @@ Four append-only stores are tailed, each by its own position, and the four posit
   ``kind`` is ``revised``, ``rolled_back`` or ``outside`` and ``id`` the revision (``r42``).
 
 Each socket polls with one connection per store on its own single-thread executor (the kanban plugin's tailer
-pattern), at most every ``BATCH_SECONDS``. No ``since``: the first message is the tail with no events. A ``since``
+pattern), at most every ``BATCH_SECONDS``; with nothing to send for ``KEEPALIVE_SECONDS`` it sends an empty batch at its
+cursor, so no idle limit on the way closes it. No ``since``: the first message is the tail with no events. A ``since``
 that does not decode, points past what a store holds, was taken from another store (each position travels with its
 store's identity, see the identities in ``Stream``) or has rows missing right after it, gets one ``resync``. Events name
 what changed (``source``, ``kind``, ``id``, ``at``) and carry no item bodies; the client refetches the snapshot.
@@ -41,6 +42,10 @@ from fastapi import WebSocket, WebSocketDisconnect, status
 from hermes_cli.lina_board import _WORK_LOCK, _root, _worker_base
 
 BATCH_SECONDS = 0.3
+# A stream with nothing to say sends an empty batch at its cursor this often (lina#692): a silent socket is closed by
+# an idle limit on the way (a front proxy, the client's own read timeout), and uvicorn sends no ping on a loopback
+# bind. Shorter than the 5 s the app's reconnects were seen at, less its 1 s first backoff.
+KEEPALIVE_SECONDS = 3.0
 PAGE = 200
 CURSOR_PREFIX = "c3."  # c1 had positions only, c2 no settings source: an old cursor gets one resync
 UNKNOWN = "?"  # the identity of a source that could not be read when its position was taken
@@ -417,12 +422,16 @@ async def serve(ws: WebSocket) -> None:
     stream = Stream(_root())
     try:
         cursor = await _first(ws, stream)
+        sent = time.monotonic()
         while await _wait(ws, BATCH_SECONDS):
             cursor, events, resync = await stream.run(stream.fetch, cursor)
             if resync:
                 await ws.send_json({"cursor": encode(cursor), "resync": True})
-            elif events:
+            elif events or time.monotonic() - sent >= KEEPALIVE_SECONDS:
                 await ws.send_json({"cursor": encode(cursor), "events": events})
+            else:
+                continue
+            sent = time.monotonic()
     except (WebSocketDisconnect, asyncio.CancelledError):
         return
     except Exception:  # one socket's failure must never take the dashboard worker down
