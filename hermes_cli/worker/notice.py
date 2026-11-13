@@ -151,6 +151,9 @@ def deliver(job: dict, text: str, tag: str, notices_dir: Path, command: list[str
     (notices_dir / f"{job['id']}-{tag}-{int(time.time())}.md").write_text(text, encoding="utf-8")
     if not command:
         return Sent(True, "kept in hub/notices (no worker.notice.command configured)")
+    from agent.outbound_lock import check_outbound
+    if refusal := check_outbound("agent", job["bot"], door="worker notice"):
+        return Sent(False, refusal)
     argv = [str(each).format(agent=job["bot"], id=job["id"]) for each in command]
     if job.get("dry_notify"):
         return Sent(True, "DRY " + shlex.join(argv))

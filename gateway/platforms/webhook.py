@@ -969,6 +969,9 @@ class WebhookAdapter(BasePlatformAdapter):
         if not _REPO_RE.fullmatch(repo):
             logger.error("[webhook] invalid repo format: %r", repo)
             return SendResult(success=False, error="Invalid repo format")
+        from agent.outbound_lock import check_outbound
+        if refusal := check_outbound("github_comment", f"{repo}#{pr_int}", door="webhook deliver"):
+            return SendResult(success=False, error=refusal)
         try:
             # Off-loop: `gh` does network I/O up to its 30s timeout; inline it froze every adapter and
             # timer on the gateway event loop.

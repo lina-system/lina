@@ -221,6 +221,7 @@ def message_agent_tool(target: str = "", message: str = "", task_id: Optional[st
         return _err(f"Bot Mode gate check failed: {exc}")
     from hermes_cli.observability.shared_metrics_signals import record_feature_used
     record_feature_used("bot_mode", hermes_home=home)
+    from agent.outbound_lock import check_outbound
 
     root, me = _hermes_root(Path(home)), _self_profile_name(Path(home))
     roster_homes = dict(_roster(root))
@@ -254,6 +255,8 @@ def message_agent_tool(target: str = "", message: str = "", task_id: Optional[st
         if peer_name not in peers:
             return _roster_err(f"No registered peer named '{peer_name}'.")
         dm_target = f"{peer_name}/{peer_profile}" if peer_profile else peer_name
+        if refusal := check_outbound("agent", dm_target, door="message_agent"):
+            return _err(refusal)
         # A peer dm crosses installs: qualify the id with this host so the peer's own '<me>' stays distinct.
         from agent.turn_author import bot_author_id, local_origin
         peer_author = {**author, "id": bot_author_id(me, local_origin())}
@@ -273,6 +276,8 @@ def message_agent_tool(target: str = "", message: str = "", task_id: Optional[st
     # hands out for a colliding row, and stamps on replies. Resolved locally first, a local bot whose friendly
     # name slugs to 'hermes-mini' captured it. An '@' name no connection answers to still resolves locally.
     if "@" in raw_target.strip().lstrip("@"):
+        if refusal := check_outbound("agent", raw_target, door="message_agent"):
+            return _err(refusal)
         # The sender's own relay folder, as below: the default's would relay a named bot's DM as the default.
         relayed = _try_relay_delivery(Path(home), raw_target, content, me, **delivery)
         if relayed is not None:
@@ -286,6 +291,8 @@ def message_agent_tool(target: str = "", message: str = "", task_id: Optional[st
         # Unknown locally, or same-name target on ANOTHER connection (this gateway's 'default'
         # messaging the cloud 'default'): every Desktop-connected gateway is reachable via the
         # relay roster, so try that before reporting a resolution failure / self-message.
+        if refusal := check_outbound("agent", raw_target, door="message_agent"):
+            return _err(refusal)
         relayed = _try_relay_delivery(Path(home), raw_target, content, me, **delivery)
         if relayed is not None:
             return relayed
@@ -294,6 +301,8 @@ def message_agent_tool(target: str = "", message: str = "", task_id: Optional[st
         return _roster_err(f"No teammate named '{raw_target}' on this install, on a connected "
                            "machine, or on a registered peer. Pick a name from the roster "
                            "(roles are listed in your system prompt).")
+    if refusal := check_outbound("agent", resolved, door="message_agent"):
+        return _err(refusal)
     # Local teammates are admitted through the profile authority; the argv only names the
     # profile for the runner's lock/home lookups and is never executed.
     return _start_delivery([_hermes_cli(), "-p", resolved], content, f"@{_handle(resolved, roster)}",
@@ -529,6 +538,7 @@ def _admit_live_dm(profile_home: Path | None, dm_file: str, author: Optional[dic
 
         identity = dict(delivery_id=intent["delivery_id"], author=intent.get("author"))
         try:
+            # outbound.allow was checked by message_agent_tool, which spawned this runner.
             record = deliver_to_live_owner(home, intent["owner"], intent["message"], **identity)
         except GatewayRPCError as exc:
             if str(exc) != HELD_NOT_SENT or exc.data.get("admitted") is not False:

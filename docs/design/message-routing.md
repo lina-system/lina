@@ -209,6 +209,49 @@ agent's message without `reply_to`) on a finished place is stored and starts not
   `docs/design/hermes-patterns.md` P1; held outbound drafts in lina#301). No message satisfies an approval, the owner's
   included: an approval is given only through lina#322's approval path. An agent's message never approves anything.
 
+### Outbound allowlist (built: lina#638)
+
+A test copy of an agent must not reach real people, whatever its copied jobs, skills or prompts say. The profile's
+`config.yaml` key `outbound.allow` (read with the managed overlay applied) lists the only destinations a message may
+leave to; unset or an empty list means unrestricted, and any other value that names no usable destination (`false`,
+`0`, `{}`, a list of blanks) allows nothing. Entries are `<platform>:<chat id>` (a `:<thread id>` suffix limits it to one thread, parsed like a
+`send_message` target) and `agent:<name>` (a local profile, a peer `<peer>` with all its agents, or `<peer>/<agent>`):
+
+```yaml
+outbound:
+  allow:
+    - telegram:123456789
+    - agent:owner-bot
+```
+
+The check is `agent/outbound_lock.py::check_outbound`, and it runs on the resolved target (after alias and home-channel
+resolution). The doors that call it: the `send_message` tool, `hermes send` and the kanban notifier
+(`tools/send_message_tool.py`); every public gateway adapter coroutine that takes a `chat_id` or `parent_chat_id`, defined or
+inherited, so a new adapter method is guarded without being listed; only content-free reads, presence signals,
+removals and interrupt control are exempt (`agent/outbound_lock.py::NOT_OUTBOUND`). That covers replies, streamed edits,
+notices, prompts and pickers, native task cards, played TTS, draft seals, handoff and `/branch` threads, webhook
+cross-platform delivery and cron's live lane (`BasePlatformAdapter.__init_subclass__`; the thread checked is the one
+the adapter posts to, after Slack's `reply_in_thread` resolution; a refused edit ends the stream and a refused task card
+stops the card, both with no fallback send); cron delivery, including
+`deliver: <platform>` home channels and `bot-chat:<profile>` (`cron/scheduler_delivery_outbound.py`; `bot-chat` and
+`bot-chat:<own profile>` stay on this agent), and a parked Bot Chat record when it is drained (`cron/bot_chat_legacy.py`); `hermes peer
+dm`/`run`; `message_agent`; the webhook `github_comment` deliver; and worker end notices.
+`tests/agent/test_outbound_lock_doors.py` drives each door with a fake transport: a refused target makes no outbound
+call, an allowed one exactly one. A channel-name entry resolves through each profile's own channel directory. The agent's own
+local chat, its own Bot Chat and the API server's answer to its caller are not outbound.
+
+Whose list applies: the active profile's. Under multiplexing a shared bot's event runs in the profile it was
+routed to, and the reply the adapter sends after the handler returned (final text, attachments, inline command
+replies, a busy follow-up's reply) is checked against that routed profile's list too: those paths bind the
+event's source (`agent/outbound_lock.py::delivering_for`) and the guard reads the routed profile from its identity.
+Only the policy read moves; the delivery ledger stays in the launch home.
+
+A refused send fails and nothing leaves the process. The error reads `Refused by outbound.allow: telegram:222 is not in
+the outbound.allow list in <home>/config.yaml, so nothing was sent (<door>).` It is logged once per target, counted in
+`<home>/outbound_refusals.json`, and reported by `lina doctor`. A refused cron target is listed in the job's
+`last_delivery_refused`, and the run's delivery error names the key. An edit to the list applies to the next send
+without a restart.
+
 ## 7. Agent to agent
 
 Agents talk to each other through the same model: a message on a place, delivered to the place's owner, answered on
