@@ -112,6 +112,15 @@ def _no_detached_commit_graph_writer(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_host_beszel(monkeypatch, tmp_path_factory):
+    """The devices view reads Beszel's default database when the config names none: on the hub, that is the live
+    one. Tests read only the databases they make."""
+    from hermes_cli.worker import board
+
+    monkeypatch.setattr(board, "BESZEL_DEFAULT", tmp_path_factory.getbasetemp() / "no-beszel.db")
+
+
+@pytest.fixture(autouse=True)
 def _no_live_magpie_service_probe(monkeypatch):
     """``hello`` reads the node's magpie service state with ``systemctl --user show`` / ``launchctl print``: in a test,
     that asks the host's real service manager, and the subprocess wait loop calls ``time.sleep``, which hub tests

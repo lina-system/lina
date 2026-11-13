@@ -2,8 +2,9 @@
 states, and the devices of ``devices.workers`` as machines with their readiness and load.
 
 A device's readiness is the bidding probe's (``bidding.probe_all``). CPU, memory, disk and temperature come from an
-optional metrics reader: Beszel's database, read only, when ``devices.metrics.beszel`` names it. Without one the list
-still shows each device's readiness and load.
+optional metrics reader: Beszel's database, read only, named by ``devices.metrics.beszel`` or else found at Beszel's
+own default path (``BESZEL_DEFAULT``, where the hub's Beszel keeps it and the old board read it). Without one the
+list still shows each device's readiness and load, and each reading is null with its reason (``metricsWhy``).
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ from __future__ import annotations
 import calendar
 import json
 import re
+import socket
 import sqlite3
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -25,6 +27,7 @@ from hermes_cli.worker.report import MODES
 RECENT_S = 2 * 86400
 NOW_LINE_CHARS = 120
 CPU_HOT_S, QUIET_S = 300, 300
+BESZEL_DEFAULT = Path("/srv/beszel/beszel_data/data.db")
 _MODE_PREFIX = re.compile(r"^(?:" + "|".join(sorted(map(re.escape, MODES.values()), key=len, reverse=True)) + r")\s+")
 
 
@@ -50,10 +53,30 @@ def work_state(job: dict, live: dict | None = None) -> tuple[str, str | None]:
     return "in_progress", None
 
 
-def waiting_on(job: dict, state: str, reason: str | None) -> str | None:
-    """Who the run waits on: a finished run's verdict belongs to the agent that handed it out
-    (``agent:<name>``, lina#295), never to the owner; None when it waits on nobody's verdict."""
-    return f"agent:{job['bot']}" if (state, reason) == ("waiting", "review") and job.get("bot") else None
+def waiting_on(job: dict, state: str, reason: str | None, replaced: bool = False) -> str | None:
+    """Who acts next on the run: a finished run's verdict belongs to the agent that handed it out
+    (``agent:<name>``, lina#295), never to the owner. A stopped run (lina#629) waits on that agent too, or on the
+    owner when no agent handed it out; nobody when a later run of its to-do replaced it or it was cancelled."""
+    if (state, reason) == ("waiting", "review"):
+        return f"agent:{job['bot']}" if job.get("bot") else None
+    if state != "stopped" or replaced or reason == "cancelled":
+        return None
+    return f"agent:{job['bot']}" if job.get("bot") else "owner"
+
+
+def replaced_runs(jobs: list[dict]) -> set[str]:
+    """The runs a later run of the same to-do followed (*jobs* in creation order, as ``Store.all`` gives them).
+    Members of one batch (``group``) share a to-do and are no retries of each other."""
+    later: dict[str, list[str | None]] = {}
+    replaced: set[str] = set()
+    for job in reversed(jobs):
+        todo = job.get("todo")
+        if todo:
+            group = job.get("group")
+            if any(not group or other != group for other in later.get(todo, ())):
+                replaced.add(job["id"])
+            later.setdefault(todo, []).append(group)
+    return replaced
 
 
 def _title(job: dict) -> str:
@@ -115,7 +138,9 @@ def cards(worker_root: Path, now: float) -> list[dict]:
     two days, newest first. A run handed out from a Hermes card is listed here with its card and board."""
     store = Store(worker_root)
     ends = _ends(store)
-    jobs = [job for job in store.all() if (not job.get("card") or kanban_link.on_hermes(job["card"]))
+    every = store.all()
+    replaced = replaced_runs(every)
+    jobs = [job for job in every if (not job.get("card") or kanban_link.on_hermes(job["card"]))
             and _recent(job, ends.get(job["id"]), now)]
     receipts = record.receipts_by_task(store)
     lives = _shared_lives(worker_root, jobs)
@@ -126,11 +151,12 @@ def cards(worker_root: Path, now: float) -> list[dict]:
         live = lives.get(job["id"])
         state, reason = work_state(job, live)
         out.append({"id": job["id"], "title": _title(job), "state": state, "reason": reason, "agent": job.get("bot"),
-                    "waitingOn": waiting_on(job, state, reason),
+                    "waitingOn": waiting_on(job, state, reason, job["id"] in replaced),
+                    "retry": ("scheduled" if job["id"] in replaced else "none") if state == "stopped" else None,
                     "kind": job.get("mode"), "todo": job.get("todo"), "host": job.get("host"),
                     "startedAt": job.get("started"), "endedAt": record.ended_at(job, receipts.get(job["id"], [])),
                     "now": _now_line(live) if state in ("in_progress", "waiting") and live else None,
-                    "card": (job.get("card") or {}).get("task"), "board": (job.get("card") or {}).get("board"),
+                    "card": record.card_id(job), "board": (job.get("card") or {}).get("board"),
                     "model": record.served_model(job), "settingsRevision": record.settings_revision(job),
                     "plain": plain[job["id"]]})
     return out
@@ -176,7 +202,20 @@ def beszel_path(base: Path | None = None) -> Path | None:
     devices = settings._config(base).get("devices")
     metrics = devices.get("metrics") if isinstance(devices, dict) else None
     path = metrics.get("beszel") if isinstance(metrics, dict) else None
-    return Path(str(path)).expanduser() if path else None
+    if path:
+        return Path(str(path)).expanduser()
+    return BESZEL_DEFAULT if BESZEL_DEFAULT.is_file() else None
+
+
+def metric_names(dev: settings.Device) -> tuple[str, ...]:
+    """The Beszel system names a device may go by: its name, its ssh alias and the alias's first label
+    (``lina-hub`` for ``lina-hub.example.ts.net``); this machine's host name for ``host: local``."""
+    host = socket.gethostname() if dev.local else dev.host
+    return tuple(dict.fromkeys((dev.name, host, host.split(".")[0])))
+
+
+def metric_of(metrics: dict[str, dict] | None, dev: settings.Device) -> dict | None:
+    return next((metrics[key] for key in metric_names(dev) if key in (metrics or {})), None)
 
 
 def cpu_hot(series: list, now: float) -> bool:
@@ -214,19 +253,46 @@ def _probe_reasons(dev: settings.Device, probe: dict, min_free_gb: int) -> tuple
     return False, [word for failed, word in checks if failed]
 
 
-def machine(dev: settings.Device, probe: dict, metric: dict | None, now: float, min_free_gb: int) -> dict:
+def readings(metric: dict | None, source: bool) -> dict:
+    """CPU, memory, disk and temperature percents and their reading time, as Beszel last read them, and why they
+    are null: ``no_source`` (no Beszel database named or found, or it could not be read), ``unknown`` (Beszel has no
+    system for the machine) or ``down`` (Beszel reports it down). A number is never made up."""
+    down = (metric or {}).get("status") == "down"
+    info = {} if metric is None or down else metric.get("info") or {}
+    why = None if metric is not None and not down else "down" if metric is not None else "unknown" if source \
+        else "no_source"
+    return {"cpu": _number(info.get("cpu")), "memory": _number(info.get("mp")), "disk": _number(info.get("dp")),
+            "temp": _number(info.get("dt")), "metricsAt": (metric or {}).get("updated"), "metricsWhy": why}
+
+
+def machine(dev: settings.Device, probe: dict, metric: dict | None, now: float, min_free_gb: int,
+            source: bool = True) -> dict:
     """One device: state ok / warn / down with the first reason as one word, its load and, with metrics, CPU,
-    memory, disk and temperature percents."""
+    memory, disk and temperature percents (served also when ssh does not reach it: they are Beszel's)."""
     down, why = _probe_reasons(dev, probe, min_free_gb)
-    info = (metric or {}).get("info") or {}
     if metric is not None and not down:
         metric_down, more = _metric_reasons(metric, now)
         down, why = metric_down, (more if metric_down else why + [w for w in more if w not in why])
     return {"name": dev.name, "state": "down" if down else "warn" if why else "ok", "why": why[0] if why else None,
-            "cpu": None if down else _number(info.get("cpu")), "memory": None if down else _number(info.get("mp")),
-            "disk": None if down else _number(info.get("dp")), "temp": None if down else _number(info.get("dt")),
+            **readings(metric, source),
             "load": _number(probe.get("load")), "cores": probe.get("cores"), "running": probe.get("running"),
-            "cap": dev.cap, "freeGb": probe.get("free_gb"), "metricsAt": (metric or {}).get("updated")}
+            "cap": dev.cap, "freeGb": probe.get("free_gb")}
+
+
+def monitored(metrics: dict[str, dict] | None, devs: list[settings.Device], now: float) -> list[dict]:
+    """The Beszel systems no entry of ``devices.workers`` goes by (lina#662: the always-on file and bots machines,
+    a powered-off Mac, ...), role ``monitored``: their state by Beszel alone and their readings; down first, then
+    warnings, then by name. A system paused in Beszel is a retired machine and left out, as the old board did."""
+    claimed = {name for dev in devs for name in metric_names(dev)}
+    rows = []
+    for name, metric in (metrics or {}).items():
+        if name in claimed or metric.get("status") == "paused":
+            continue
+        down, why = _metric_reasons(metric, now)
+        rows.append({"name": name, "role": "monitored", "state": "down" if down else "warn" if why else "ok",
+                     "why": why[0] if why else None, **readings(metric, True)})
+    order = ("down", "warn", "ok")
+    return sorted(rows, key=lambda row: (order.index(row["state"]), row["name"]))
 
 
 def machines(worker_root: Path, metrics: dict[str, dict] | None, now: float) -> list[dict]:
@@ -237,7 +303,7 @@ def machines(worker_root: Path, metrics: dict[str, dict] | None, now: float) -> 
     name = runners.default_name(worker)
     probes = bidding.probe_all(devs, worker_root, repo=None, runner=name, runner_spec=runners.specs(worker).get(name))
     min_free = int(settings.setting("min_free_gb", worker=worker))
-    rows = [machine(dev, probe, (metrics or {}).get(dev.name) or (metrics or {}).get(dev.host), now, min_free)
+    rows = [machine(dev, probe, metric_of(metrics, dev), now, min_free, metrics is not None)
             for dev, probe in zip(devs, probes)]
     order = ("down", "warn", "ok")
     return sorted(rows, key=lambda row: order.index(row["state"]))

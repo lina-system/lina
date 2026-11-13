@@ -36,3 +36,5 @@ How a change reaches `dev`. GitHub enforces the required checks; the rest is the
 | Merge | `lina-merge <owner/repo> <pr> [--wait <min>]` | `lina work merge <repo> <pr>` |
 | Audit closed issues | | `lina work audit` |
 | P2/P3 follow-ups | `review-followups` | `lina work merge` (step 8) |
+
+**P2/P3 rule decided by the owner (#539, not built yet).** P2/P3 findings still never block a merge, so a pull request stays short. Right after the merge, the same worker run that wrote the pull request (it still holds the context) gets one follow-up round: fix the small P2/P3 findings, or answer each with `won't fix: <reason>`. The result is one small follow-up pull request through the usual path, blocked only by P0/P1; its own P2/P3 findings are fixed in it or declined, and never start a second round. A finding neither fixed nor declined in that round becomes one ordinary issue with a milestone, a size and a runner label. There are no bundle issues: when #539 lands, step 8 and this row change to that path.

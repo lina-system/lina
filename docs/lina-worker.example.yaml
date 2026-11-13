@@ -45,6 +45,10 @@ worker:
                                              # screen restarts (default magpie, lina#589).
                                              # Node setup: docs/worker-proxy-switch.md
   runners:
+    # Which copy a bare argv[0] starts (lina#238, docs/lina-runners.md): a name pinned in pm/lina-deps.json
+    # (codex-acp, grok, ...) starts $LINA_HOME/bin/runners/<name> once that shim is an executable file (after
+    # `lina runners install <name>`), and the name on PATH before that. A path (anything with a separator) or a
+    # name LINA does not pin (opencode here, lina-dsh-acp) is run as written.
     omo: {type: omo}                         # built in: LINA's pinned omo (lina#34)
     claude:
       type: acp
