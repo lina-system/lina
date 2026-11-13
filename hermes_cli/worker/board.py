@@ -62,14 +62,17 @@ def waiting_on(job: dict, state: str, reason: str | None, replaced: bool = False
 
 
 def replaced_runs(jobs: list[dict]) -> set[str]:
-    """The runs a later run of the same to-do followed (*jobs* in creation order, as ``Store.all`` gives them)."""
-    later: set[str] = set()
+    """The runs a later run of the same to-do followed (*jobs* in creation order, as ``Store.all`` gives them).
+    Members of one batch (``group``) share a to-do and are no retries of each other."""
+    later: dict[str, list[str | None]] = {}
     replaced: set[str] = set()
     for job in reversed(jobs):
-        if job.get("todo"):
-            if job["todo"] in later:
+        todo = job.get("todo")
+        if todo:
+            group = job.get("group")
+            if any(not group or other != group for other in later.get(todo, ())):
                 replaced.add(job["id"])
-            later.add(job["todo"])
+            later.setdefault(todo, []).append(group)
     return replaced
 
 

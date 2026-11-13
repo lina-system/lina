@@ -355,3 +355,17 @@ def test_a_stopped_run_says_who_acts_next_and_whether_a_later_run_replaced_it(wo
         "run-5": ("stopped", "cancelled", None, "none"),
         "run-6": ("waiting", "review", "agent:alpha", None),
     }
+
+
+def test_sibling_runs_of_one_batch_do_not_replace_each_other(work, fakes, client):
+    """lina#629: the members of a batch share a to-do and a group; a failed member is no retry of its later sibling,
+    so it still waits on its agent, while a run outside the group that came later does replace it."""
+    fakes.job("run-1", state="failed", todo="T9", group="OG1", created=NOW - 3000, ended=NOW - 2900)
+    fakes.job("run-2", state="done", todo="T9", group="OG1", created=NOW - 2990, ended=NOW - 2800)
+    fakes.job("run-3", state="failed", todo="T8", group="OG2", created=NOW - 2000, ended=NOW - 1900)
+    fakes.job("run-4", state="done", todo="T8", created=NOW - 1800, ended=NOW - 1700)
+
+    board = _valid("BoardSnapshot", client.get("/api/lina/board").json())
+
+    served = {c["id"]: (c["waitingOn"], c["retry"]) for c in board["cards"] if c["state"] == "stopped"}
+    assert served == {"run-1": ("agent:alpha", "none"), "run-3": (None, "scheduled")}
