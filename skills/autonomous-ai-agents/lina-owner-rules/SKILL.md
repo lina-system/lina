@@ -2,7 +2,7 @@
 name: lina-owner-rules
 description: "Standing rules the owner set for every agent on LINA."
 version: 1.0.0
-author: LINA
+author: Jun, LINA
 license: AGPL-3.0
 platforms: [linux, macos, windows]
 metadata:
@@ -28,6 +28,13 @@ or wait on a blocked item. Also when anyone asks what the owner's rules are.
 Issue references point to `lina-system/lina` (`lina#<n>`) and `lina-system/lina-app`
 (`lina-app#<n>`). Read one with `terminal`: `gh issue view <n> -R lina-system/lina`.
 
+## How to Run
+
+1. Find the rule below that matches the work in front of you.
+2. Follow it as written. A rule that points to an issue is read there, not guessed.
+3. Where a documented default and the live setting differ, follow the rule and report the
+   difference.
+
 ## Quick Reference
 
 | Documented default | Value |
@@ -35,7 +42,7 @@ Issue references point to `lina-system/lina` (`lina#<n>`) and `lina-system/lina-
 | Scheduled (cron) sessions | the Sonnet model at medium effort |
 | Memory compaction threshold | 0.5 (`compression.threshold: 0.50`) |
 
-## Rules
+## Procedure
 
 1. **Reviewer agent.** The reviewer agent takes no work. It only approves or sends back the
    cards in the review column, each against the done condition of its goal kind.

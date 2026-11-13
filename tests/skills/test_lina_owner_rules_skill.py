@@ -13,7 +13,7 @@ SKILL = load("lina-owner-rules")
 
 
 def test_document_contract():
-    assert_contract(SKILL, complete_sections=False)
+    assert_contract(SKILL, complete_sections=True)
 
 
 def _subparser(parser: argparse.ArgumentParser, name: str) -> argparse.ArgumentParser:
