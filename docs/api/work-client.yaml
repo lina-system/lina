@@ -185,7 +185,34 @@ components:
       nullable: true
       description: >
         One word after the state, when there is one: the column for planned; review or gate
-        for waiting; the block kind, gate, budget or unresponsive for stopped.
+        for waiting; for stopped, unresponsive (running with no live run), or what the latest block
+        event says (lina#629), in the store's reason words. By the event's kind (else the card's
+        block kind): needs_input decision, capability feedback, transient hold, dependency
+        blocked_by_item; a block that records a wait (wait_for) blocked_by_item when it waits on
+        another card or its review, else hold. An untyped block by its text: gate or budget for the
+        goal loop's stops; an owner-inbox line `<agent> · <kind> · <summary>` by its kind
+        (갈림길 and 질문 decision, 검토 review, 돈·바깥 and 끝 조건 feedback); any other sentence decision
+        when it ends with a question mark, else feedback. Null when the card has no block event
+        and no block kind.
+    WaitingOn:
+      type: string
+      nullable: true
+      description: >
+        Who has to act next on a stopped card (lina#629): owner when a person has to answer or act
+        (decision, feedback, review, hold, gate, budget above); null when nobody has to (a block that
+        waits on another card, a recorded wait the dispatcher wakes, or a card with no block event),
+        and on every card that is not blocked. `agent:<name>` is the run shape of the same field
+        (board-client.yaml, RunCard).
+      example: owner
+    Retry:
+      type: string
+      nullable: true
+      enum: [scheduled, none, null]
+      description: >
+        Whether the core will start the card again by itself (lina#629): scheduled for a card in the
+        scheduled column and a stopped card whose block resumes by itself (a recorded
+        wait); none for a stopped card that waits on a person; null when unknown (a card
+        that is not blocked, or one with no block event).
     Agent:
       type: string
       nullable: true
@@ -252,6 +279,10 @@ components:
           $ref: "#/components/schemas/WorkState"
         reason:
           $ref: "#/components/schemas/Reason"
+        waitingOn:
+          $ref: "#/components/schemas/WaitingOn"
+        retry:
+          $ref: "#/components/schemas/Retry"
         elapsedSeconds:
           type: integer
           minimum: 0
@@ -409,6 +440,10 @@ components:
           $ref: "#/components/schemas/WorkState"
         reason:
           $ref: "#/components/schemas/Reason"
+        waitingOn:
+          $ref: "#/components/schemas/WaitingOn"
+        retry:
+          $ref: "#/components/schemas/Retry"
         elapsedSeconds:
           type: integer
           minimum: 0

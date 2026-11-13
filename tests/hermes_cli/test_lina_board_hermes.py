@@ -574,3 +574,86 @@ def test_a_pass_cut_by_its_limit_leaves_its_shows_to_the_next(hermes, client, mo
     assert cards["errors"] == []
     assert {f"hermes:{raw}" for raw in ids} <= {c["id"] for c in cards["cards"]}
     assert len(hermes.shows()) < 2 * 43
+
+
+def _hub_run(work: WorkEnv, run_id: str, card: str, **extra) -> None:
+    """A hub run handed out from a Hermes card (``job.card`` as ``kanban_link.card_for`` writes it)."""
+    job = {"id": run_id, "bot": "alpha", "topic": f"topic-{run_id}", "mode": "ulw", "state": "failed",
+           "created": NOW - 3600, "started": NOW - 3500, "host": None, "prompt": "ulw do it\n", "verdict": None,
+           "card": {"task": card, "board": BOARD, "kind": "hermes"}, "todo": None, **extra}
+    (work.root / "worker" / "hub" / "jobs" / f"{run_id}.json").write_text(json.dumps(job), encoding="utf-8")
+
+
+def test_a_run_names_its_card_by_the_id_work_cards_serves(work, hermes, client):
+    """lina#630: ``RunCard.card`` is the card's id in /work/cards, source prefix included; a run whose card is not
+    in the list still carries it."""
+    _hub_run(work, "run-1", "t_b1")
+    _hub_run(work, "run-2", "card-gone")
+    hermes.on()
+    runs = {r["id"]: r for r in _get(client, "/api/lina/board", "board-client.yaml", "BoardSnapshot")["cards"]}
+    listed = {c["id"]: c for c in _get(client, f"{WORK}/cards", "work-client.yaml", "WorkCardList")["cards"]}
+    assert (runs["run-1"]["card"], runs["run-1"]["board"]) == ("hermes:t_b1", BOARD)
+    assert listed[runs["run-1"]["card"]]["title"] == "Pick a colour"
+    assert runs["run-2"]["card"] == "hermes:card-gone" and runs["run-2"]["card"] not in listed
+    assert _get(client, f"{WORK}/cards/{runs['run-1']['card']}", "work-client.yaml", "WorkCardDetail")["id"] == \
+        "hermes:t_b1"
+
+
+def _stopped_card(data: dict, raw: str, *payloads: dict, status: str = "blocked") -> None:
+    """A work card of the fake board whose block events carry *payloads*, oldest first."""
+    task = _task(raw, f"Card {raw}", status, "alpha", "## To-dos\n- [ ] one\n")
+    events = [{"kind": "blocked", "payload": p, "created_at": NOW - 100 + n, "run_id": None}
+              for n, p in enumerate(payloads)]
+    data["list"].append(task)
+    data["show"][raw] = {"task": task, "latest_summary": None, "parents": [], "children": [], "comments": [],
+                         "events": events, "runs": []}
+
+
+def test_a_stopped_hermes_card_says_why_it_stopped_and_who_acts_from_its_latest_block_event(hermes, client):
+    """lina#629: reason, waitingOn and retry of a stopped card come from its latest block event, in the shapes the
+    Hermes board writes; a card with no block event serves null, not a guess."""
+    data = _canned()
+    shapes = {
+        "card-1": [{"kind": "needs_input", "reason": "pick one", "recurrences": 1, "source_status": "running"}],
+        "card-2": [{"kind": None, "reason": "agent-a · 검토 · the draft is ready", "recurrences": 1,
+                    "source_status": "running"}],
+        "card-3": [{"kind": None, "reason": "agent-a · 돈·바깥 · an invoice to pay", "recurrences": 2,
+                    "source_status": "running"}],
+        "card-4": [{"kind": None, "reason": "agent-a · 갈림길 · keep or drop the cache",
+                    "source_status": "running"}],
+        "card-5": [{"kind": None, "reason": "The access key ran out.", "source_status": "running"}],
+        "card-6": [{"kind": None, "reason": "Which region should it run in?", "source_status": "ready"}],
+        "card-7": [{"kind": "dependency", "reason": "waits for the import card", "source_status": "running"}],
+        "card-8": [{"kind": "needs_input", "reason": "pick one", "recurrences": 1, "source_status": "running"},
+                   {"kind": None, "reason": "The access key ran out.", "recurrences": 1, "source_status": "running"}],
+        "card-9": [],
+        "card-11": [{"kind": "needs_input", "reason": "waits for the import card", "source_status": "running",
+                     "wait_for": {"kind": "card", "task_id": "card-1"}}],
+    }
+    for raw, payloads in shapes.items():
+        _stopped_card(data, raw, *payloads)
+    # The failure breaker blocked card-11 after its wait was met: nothing wakes it, a person has to act.
+    data["show"]["card-11"]["events"].append({"kind": "gave_up", "payload": {"failures": 3}, "created_at": NOW - 50, "run_id": None})
+    _stopped_card(data, "card-10", status="scheduled")
+    hermes.canned(data)
+    hermes.on()
+    cards = {c["id"]: c for c in _get(client, f"{WORK}/cards", "work-client.yaml", "WorkCardList")["cards"]}
+    served = {raw: (cards[f"hermes:{raw}"]["state"], cards[f"hermes:{raw}"]["reason"],
+                    cards[f"hermes:{raw}"]["waitingOn"], cards[f"hermes:{raw}"]["retry"])
+              for raw in [*shapes, "card-10"]}
+    assert served == {
+        "card-1": ("stopped", "decision", "owner", "none"),
+        "card-2": ("stopped", "review", "owner", "none"),
+        "card-3": ("stopped", "feedback", "owner", "none"),
+        "card-4": ("stopped", "decision", "owner", "none"),
+        "card-5": ("stopped", "feedback", "owner", "none"),
+        "card-6": ("stopped", "decision", "owner", "none"),
+        # A dependency card still ``blocked`` was classified in place after the breaker: only a person resumes it.
+        "card-7": ("stopped", "blocked_by_item", "owner", "none"),
+        "card-8": ("stopped", "feedback", "owner", "none"),
+        "card-9": ("stopped", None, None, None),
+        "card-11": ("stopped", "failed", "owner", "none"),
+        "card-10": ("planned", "scheduled", None, "scheduled"),
+    }
+    detail = _get(client, f"{WORK}/cards/hermes:card-2", "work-client.yaml", "WorkCardDetail")
+    assert (detail["reason"], detail["waitingOn"], detail["retry"]) == ("review", "owner", "none")
