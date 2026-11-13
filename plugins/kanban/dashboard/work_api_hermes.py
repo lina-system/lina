@@ -6,18 +6,23 @@ as ``kanban_db`` rows and read by the work API's own functions, so the states, t
 for LINA's board. The CLI carries no claim or heartbeat, so an open run counts as live (``CardFacts.assume_live``);
 it carries no ``goal_mode`` either, so a card without the field counts as a goal-mode card unless it is a link-child
 of another card (a goal card above work, as ``_goal_work_cards`` reads links). Ids are prefixed
-``hermes:`` and every row is marked ``readOnly``.
+``hermes:`` and every row is marked ``readOnly``. A card's ``goalTitle`` is the work record's, by its raw id (lina#690):
+the rows are served with the default board's, so a link without a board names them, and so does a link naming the
+source's own board (``board.hermes.board``).
 """
 
 from __future__ import annotations
 
 import dataclasses
-from typing import Any, Callable, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional
 
 from fastapi import HTTPException
 
 from hermes_cli import kanban_db
 from hermes_cli import lina_board_hermes as hermes
+
+if TYPE_CHECKING:
+    from plugins.kanban.dashboard.work_api import GoalTitles
 
 _TASK_DEFAULTS = {"title": "", "body": None, "assignee": None, "status": "todo", "priority": 0, "created_by": None,
                   "created_at": None, "started_at": None, "completed_at": None, "workspace_kind": "scratch",
@@ -56,6 +61,12 @@ def _read_only(row: dict, listed_only: bool = False) -> dict:
     return dict(row, readOnly=True, **({"detail": False} if listed_only else {}))
 
 
+def _goal_title(titles: Optional[GoalTitles], board: Optional[str]) -> Callable[[str], Optional[str]]:
+    """A served card id's ``goalTitle`` from the request's ``GoalTitles`` (lina#690): the record links the card by its
+    raw id, on the default board or on the source's board; null without *titles*."""
+    return lambda card_id: None if titles is None else titles.get(hermes.raw_id(card_id), None, board)
+
+
 class _Board:
     """One pass's cards: every listed card's facts, which of them are work and goal cards, and which are list rows
     alone."""
@@ -78,24 +89,26 @@ class _Board:
                     if hermes.hermes_id(child) in self.facts:
                         self.goals.setdefault(hermes.hermes_id(child), []).append(i)
 
-    def goal(self, goal_id: str, now: int) -> Optional[dict]:
+    def goal(self, goal_id: str, now: int, title: Callable[[str], Optional[str]]) -> Optional[dict]:
         from plugins.kanban.dashboard.work_api import goal_view
         if goal_id not in self.goals:
             return None
-        view = goal_view(self.facts[goal_id], [self.facts[i] for i in self.goals[goal_id]], now)
+        view = goal_view(self.facts[goal_id], [self.facts[i] for i in self.goals[goal_id]], now, title)
         return _read_only(dict(view, workCards=[_read_only(c, c["id"] in self.listed) for c in view["workCards"]]),
                           goal_id in self.listed)
 
 
-def goals(shows: list[dict], now: int) -> dict[str, list]:
-    board = _Board(shows)
-    return {"goals": [board.goal(i, now) for i in board.goals]}
+def goals(shows: list[dict], now: int, titles: Optional[GoalTitles] = None,
+          src_board: Optional[str] = None) -> dict[str, list]:
+    board, title = _Board(shows), _goal_title(titles, src_board)
+    return {"goals": [board.goal(i, now, title) for i in board.goals]}
 
 
-def cards(shows: list[dict], now: int, agent: Optional[str], state: Optional[str]) -> dict[str, list]:
+def cards(shows: list[dict], now: int, agent: Optional[str], state: Optional[str], titles: Optional[GoalTitles] = None,
+          src_board: Optional[str] = None) -> dict[str, list]:
     from plugins.kanban.dashboard.work_api import _implementer, card_summary
-    board = _Board(shows)
-    rows = [(i, card_summary(board.facts[i], now)) for i in board.work
+    board, title = _Board(shows), _goal_title(titles, src_board)
+    rows = [(i, card_summary(board.facts[i], now, title(i))) for i in board.work
             if agent is None or _implementer(board.facts[i]) == agent]
     return {"cards": [_read_only(r, i in board.listed) for i, r in rows if state is None or r["state"] == state]}
 
@@ -108,21 +121,26 @@ def inbox(shows: list[dict], now: int) -> dict[str, list]:
             "questions": [_read_only(q) for f in every for q in question_rows(f)]}
 
 
-def card(shows: list[dict], card_id: str, now: int) -> Optional[dict]:
+def card(shows: list[dict], card_id: str, now: int, titles: Optional[GoalTitles] = None,
+         src_board: Optional[str] = None) -> Optional[dict]:
     from plugins.kanban.dashboard.work_api import card_detail
     raw = hermes.raw_id(card_id)
     show = next((s for s in shows if str(s["task"]["id"]) == raw), None)
-    return None if show is None else _read_only(card_detail(facts(show), now), show.get("detail") is False)
+    if show is None:
+        return None
+    detail = card_detail(facts(show), now, _goal_title(titles, src_board)(hermes.hermes_id(raw)))
+    return _read_only(detail, show.get("detail") is False)
 
 
-def goal(shows: list[dict], goal_id: str, now: int) -> Optional[dict]:
-    return _Board(shows).goal(hermes.hermes_id(hermes.raw_id(goal_id)), now)
+def goal(shows: list[dict], goal_id: str, now: int, titles: Optional[GoalTitles] = None,
+         src_board: Optional[str] = None) -> Optional[dict]:
+    return _Board(shows).goal(hermes.hermes_id(hermes.raw_id(goal_id)), now, _goal_title(titles, src_board))
 
 
-def add(out: dict, board: Optional[str], read: Callable[[list[dict]], dict[str, list]]) -> dict:
+def add(out: dict, board: Optional[str], read: Callable[[list[dict], Optional[str]], dict[str, list]]) -> dict:
     """*out* with the last good pass's cards added after LINA's, ``hermesAt`` and ``errors``. Only the default board's
     reply gets them, and only while the source is set, so every other reply is as before; no good pass yet, or a
-    failing one, is one ``errors`` entry."""
+    failing one, is one ``errors`` entry. *read* gets the pass's cards and the source's board."""
     from hermes_cli.lina_board import _source
     if board is not None:
         return out
@@ -132,14 +150,14 @@ def add(out: dict, board: Optional[str], read: Callable[[list[dict]], dict[str, 
         return out
     part = None if running is None or running.src.command is None else running.part("cards")
     shows = None if part is None else hermes.served(part, errors)
-    extra = {} if shows is None else _source(hermes.SOURCE, errors, lambda: read(shows)) or {}
+    extra = {} if shows is None else _source(hermes.SOURCE, errors, lambda: read(shows, running.src.board)) or {}
     return dict(out, **{key: out[key] + rows for key, rows in extra.items()}, errors=[*out.get("errors", []), *errors],
                 **({} if part is None else {"hermesAt": part.at}))
 
 
-def one(item_id: str, read: Callable[[list[dict], str], Optional[dict]]) -> dict:
+def one(item_id: str, read: Callable[[list[dict], str, Optional[str]], Optional[dict]]) -> dict:
     """A ``hermes:`` card or goal of the last good pass: 404 when the source is off or does not have it, 503 when it is
-    set wrong or no pass has read the board yet."""
+    set wrong or no pass has read the board yet. *read* gets the pass's cards, *item_id* and the source's board."""
     from hermes_cli.lina_board import _source
     errors: list[dict] = []
     running = _source(hermes.SOURCE, errors, hermes.reader)
@@ -151,7 +169,7 @@ def one(item_id: str, read: Callable[[list[dict], str], Optional[dict]]) -> dict
     if shows is None:
         raise HTTPException(status_code=503, detail=errors[0]["message"])
     failed: list[dict] = []
-    found = _source(hermes.SOURCE, failed, lambda: read(shows, item_id))
+    found = _source(hermes.SOURCE, failed, lambda: read(shows, item_id, running.src.board))
     if failed:
         raise HTTPException(status_code=503, detail=failed[0]["message"])
     if found is None:

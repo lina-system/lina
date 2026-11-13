@@ -277,6 +277,18 @@ that option is only an explicit interpreter override. The API and deriver are ne
 unrelated destination workspaces remain intact. Legacy vectors, including 1536-wide ones, are explicitly
 left for `lina store reembed`; migration never calls an embedding endpoint.
 
+Search over the migrated memory is therefore partial until `lina store reembed` finishes: Honcho's searches and
+the vector leg of `memory_search` only reach rows that have a vector of the configured model. While the agent's
+Honcho workspace has conclusions without one, `honcho_search` (its `partial` field) and the recall prefetch say
+`N conclusions are not embedded yet; search is partial ...` instead of a bare empty answer, and `lina doctor` lists
+the pending conclusions per Honcho workspace under Memory Vectors. After the migration, in this order:
+
+```sh
+# 1. the embedding: section in the new home's config.yaml ("Configuration" below), and its key in .env
+lina store reembed --source memory   # 2. the copied Honcho conclusions (and LCM summaries)
+lina store reembed --source agent    # 3. the copied agent turns
+```
+
 The copied `lcm.db` is imported through LCM-X's existing `PgConnection` route after agent messages and before
 Honcho. Host text is matched by session, role, observed time (or legacy timestamp), content digest and
 `MessageStore.text_uids_with_digest`; unmatched text uses the same shared writer. The copied work ledger imports the selected profile's

@@ -657,3 +657,77 @@ def test_a_stopped_hermes_card_says_why_it_stopped_and_who_acts_from_its_latest_
     }
     detail = _get(client, f"{WORK}/cards/hermes:card-2", "work-client.yaml", "WorkCardDetail")
     assert (detail["reason"], detail["waitingOn"], detail["retry"]) == ("review", "owner", "none")
+    # lina#690: the detail says why a card stopped in the row's words, for every stop kind.
+    fields = ("state", "reason", "waitingOn", "retry", "ask")
+    for raw in [*shapes, "card-10"]:
+        row = cards[f"hermes:{raw}"]
+        detail = _get(client, f"{WORK}/cards/hermes:{raw}", "work-client.yaml", "WorkCardDetail")
+        assert [detail[f] for f in fields] == [row[f] for f in fields], raw
+
+
+def _linked_board(data: dict) -> dict[str, str]:
+    """Four work cards with record-shaped ids (``kanban:t_<8 hex>``) and a goal card above the first; their ids."""
+    ids = {"default": "t_0000a001", "source": "t_0000b002", "other": "t_0000c003", "none": "t_0000d004",
+           "goal": "t_0000e005"}
+    for name, raw in ids.items():
+        body = "" if name == "goal" else "## To-dos\n- [ ] one\n"
+        task = _task(raw, f"Card {name}", "todo" if name == "goal" else "running", "alpha", body)
+        data["list"].append(task)
+        data["show"][raw] = {"task": task, "latest_summary": None, "parents": [], "children": [], "comments": [],
+                             "events": [], "runs": []}
+    data["show"][ids["default"]]["children"] = [ids["goal"]]
+    data["show"][ids["goal"]]["parents"] = [ids["default"]]
+    return ids
+
+
+def test_hermes_cards_carry_the_goal_title_of_the_record_work_that_links_them(work, hermes, client):
+    """lina#690: a Hermes row, its detail and its goal's work cards carry the title of the record goal whose to-do links
+    the card by its raw id, by a link without a board (the default board, where Hermes rows are served) or one naming the
+    Hermes source's board; a link naming another board, or none, leaves null."""
+    data = _canned()
+    ids = _linked_board(data)
+    hermes.canned(data)
+    work.ok("add", "목표", "--by", "alpha", "--area", "Dev", "--title", "허브 카드 정리", "--basis", "정리해 줘",
+            "--done", "카드가 정리된다", "--check", "false")
+    for goal, name, link in (("G1", "default", f"kanban:{ids['default']}"),
+                             ("G2", "source", f"kanban:{BOARD}/{ids['source']}"),
+                             ("G2", "other", f"kanban:elsewhere/{ids['other']}")):
+        work.ok("add", "할 일", "--by", "alpha", "--goal", goal, "--title", f"{name} 카드", "--why", "연결",
+                "--done", "연결된다", "--check", "false", "--link", link)
+    hermes.on()
+
+    listed = _get(client, f"{WORK}/cards", "work-client.yaml", "WorkCardList")
+    titles = {c["id"]: c["goalTitle"] for c in listed["cards"] if c["id"].startswith("hermes:t_0000")}
+    assert titles == {f"hermes:{ids['default']}": "빌드 기기 정리", f"hermes:{ids['source']}": "허브 카드 정리",
+                      f"hermes:{ids['other']}": None, f"hermes:{ids['none']}": None}
+    assert listed["errors"] == []
+    for name in ("default", "source", "none"):
+        detail = _get(client, f"{WORK}/cards/hermes:{ids[name]}", "work-client.yaml", "WorkCardDetail")
+        assert detail["goalTitle"] == titles[f"hermes:{ids[name]}"], name
+    goal = _get(client, f"{WORK}/goals/hermes:{ids['goal']}", "work-client.yaml", "WorkGoal")
+    assert [(c["id"], c["goalTitle"]) for c in goal["workCards"]] == [(f"hermes:{ids['default']}", "빌드 기기 정리")]
+    goals = {g["id"]: g for g in _get(client, f"{WORK}/goals", "work-client.yaml", "GoalList")["goals"]}
+    assert [c["goalTitle"] for c in goals[f"hermes:{ids['goal']}"]["workCards"]] == ["빌드 기기 정리"]
+
+
+def test_an_unreadable_record_leaves_hermes_goal_titles_null_and_serves_every_card(work, hermes, client, monkeypatch):
+    """lina#690: the record failing to read costs only ``goalTitle`` (null) on LINA's and the Hermes board's cards, named
+    once in ``errors``; the Hermes detail is still served."""
+    from hermes_cli.work import ledger
+    data = _canned()
+    ids = _linked_board(data)
+    hermes.canned(data)
+    work.ok("add", "할 일", "--by", "alpha", "--goal", "G1", "--title", "연결 카드", "--why", "연결", "--done", "연결된다",
+            "--check", "false", "--link", f"kanban:{ids['default']}")
+    hermes.on()
+
+    def unreadable():
+        raise RuntimeError("store is down")
+    monkeypatch.setattr(ledger, "read_all", unreadable)
+    listed = _get(client, f"{WORK}/cards", "work-client.yaml", "WorkCardList")
+    assert f"hermes:{ids['default']}" in [c["id"] for c in listed["cards"]] and "Own card" in [
+        c["title"] for c in listed["cards"]]
+    assert {c["goalTitle"] for c in listed["cards"]} == {None}
+    assert [e["source"] for e in listed["errors"]] == ["work"]
+    detail = _get(client, f"{WORK}/cards/hermes:{ids['default']}", "work-client.yaml", "WorkCardDetail")
+    assert detail["goalTitle"] is None
