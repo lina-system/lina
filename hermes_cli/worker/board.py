@@ -186,7 +186,7 @@ def beszel_path(base: Path | None = None) -> Path | None:
 
 def metric_names(dev: settings.Device) -> tuple[str, ...]:
     """The Beszel system names a device may go by: its name, its ssh alias and the alias's first label
-    (``lina-hub`` for ``lina-hub.tail0b5347.ts.net``); this machine's host name for ``host: local``."""
+    (``lina-hub`` for ``lina-hub.example.ts.net``); this machine's host name for ``host: local``."""
     host = socket.gethostname() if dev.local else dev.host
     return tuple(dict.fromkeys((dev.name, host, host.split(".")[0])))
 
