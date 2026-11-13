@@ -380,11 +380,13 @@ def http_status(url: str, timeout: float = 2.0) -> int:
         return 0
 
 
-def models_listed(url: str, timeout: float = 2.0) -> tuple[int, int]:
+def models_listed(url: str, timeout: float = 2.0, key: str | None = None) -> tuple[int, int]:
     """``(HTTP status, models in its ``data`` list)`` of an OpenAI-style ``/v1/models`` at *url*: status 0 when
-    nothing answers, models 0 when the body is not such a list. Reads the list only; it sends no key."""
+    nothing answers, models 0 when the body is not such a list. Reads the list only; *key*, when given, goes as
+    ``Authorization: Bearer`` and nowhere else."""
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as response:
+        request = urllib.request.Request(url, headers={"Authorization": f"Bearer {key}"} if key else {})
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             status, body = int(response.status), response.read()
     except urllib.error.HTTPError as exc:
         return int(exc.code), 0
@@ -404,11 +406,14 @@ def proxy_check(worker_root: Path) -> dict:
 
     The limit: a local ``/v1/models`` 200 does not prove the node's link to the hub — the node's magpie lists the
     linked hub's models without calling the hub for each one. The real-call probe (``lina_runner_probe``, lina#531)
-    stays the proof that a model call goes through. Nothing here reads or sends a key, or calls the hub."""
+    stays the proof that a model call goes through. Nothing here calls the hub. A ``magpie`` node whose gateway
+    answers only with a key sends the one ``worker.proxy.key_env`` names (lina#625); the key is in no field."""
+    from hermes_cli.lina_magpie import gateway_key
+
     kind = node_proxy(worker_root)
     url = model_check_url(worker_root, kind)
     if kind.kind == proxy.MAGPIE:
-        code, models = models_listed(url)
+        code, models = models_listed(url, key=gateway_key(kind))
         return {"kind": kind.kind, "url": url, "health": code or None, "models": models}
     return {"kind": kind.kind, "url": url, "health": http_status(url) or None}
 

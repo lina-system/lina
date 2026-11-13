@@ -27,17 +27,18 @@ OCX_UP = {"external": False, "version": "1.0.0", "health": 200}
 
 class Proxy:
     """A local endpoint answering every path with ``status`` and, when ``models`` is not None, a ``/v1/models``
-    body listing that many models."""
+    body listing that many models; with ``key`` set, a request without ``Authorization: Bearer <key>`` gets 401."""
 
     def __init__(self):
-        self.status, self.models = 200, 2
+        self.status, self.models, self.key = 200, 2, None
         endpoint = self
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
-                body = b"" if endpoint.models is None else json.dumps(
+                denied = endpoint.key is not None and self.headers.get("Authorization") != f"Bearer {endpoint.key}"
+                body = b"" if endpoint.models is None or denied else json.dumps(
                     {"object": "list", "data": [{"id": f"hub/p/m{n}"} for n in range(endpoint.models)]}).encode()
-                self.send_response(endpoint.status)
+                self.send_response(401 if denied else endpoint.status)
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
@@ -139,6 +140,41 @@ def test_a_magpie_node_with_an_empty_model_list_is_down(node, endpoint):
     call = node(f"{{kind: magpie, health: '{url}'}}")
     assert call("probe", "", "claude")["model_path_why"] == \
         f"model path lists no model (magpie {url}: HTTP 200, 0 models)"
+
+
+GATEWAY_KEY = "synthetic-gateway-key-625"
+
+
+def test_a_magpie_node_sends_the_key_its_key_env_names_and_shows_it_nowhere(node, endpoint, monkeypatch, caplog,
+                                                                           tmp_path):
+    """A gateway that answers only with a key (lina#625): with ``key_env`` set and the variable present the check
+    passes; without the variable it is 401 with the kind and address. The key is in no output."""
+    monkeypatch.setattr("hermes_cli.worker.proxy_service.magpie_state", lambda unit: "running")
+    endpoint.key = GATEWAY_KEY
+    url = f"{endpoint.base}/v1/models"
+    call = node(f"{{kind: magpie, health: '{url}', key_env: LINA_TEST_GATEWAY_KEY}}")
+
+    monkeypatch.delenv("LINA_TEST_GATEWAY_KEY", raising=False)
+    down = call("probe", "", "claude")
+    assert down["model_path_why"] == f"model path does not answer (magpie {url}: HTTP 401)"
+
+    monkeypatch.setenv("LINA_TEST_GATEWAY_KEY", GATEWAY_KEY)
+    with caplog.at_level("DEBUG"):
+        up, hello = call("probe", "", "claude"), call("hello")
+        check = device.proxy_check(tmp_path / "node" / "worker")
+    assert up["model_path"] == "ok"
+    assert check == {"kind": "magpie", "url": url, "health": 200, "models": 2}
+    assert bidding.proxy_text(probe(proxy=hello["capabilities"]["proxy"])) == "proxy magpie 200, 2 models"
+    for shown in (json.dumps(down), json.dumps(up), json.dumps(hello), json.dumps(check), caplog.text):
+        assert GATEWAY_KEY not in shown
+
+
+def test_a_magpie_node_without_key_env_sends_no_authorization(node, endpoint, monkeypatch):
+    monkeypatch.setenv("LINA_TEST_GATEWAY_KEY", GATEWAY_KEY)  # present, but no key_env names it
+    endpoint.key = GATEWAY_KEY
+    url = f"{endpoint.base}/v1/models"
+    call = node(f"{{kind: magpie, health: '{url}'}}")
+    assert call("probe", "", "claude")["model_path_why"] == f"model path does not answer (magpie {url}: HTTP 401)"
 
 
 def test_a_magpie_node_asks_its_local_v1_models_by_default_and_not_the_ocx_check(node, tmp_path):
