@@ -11,7 +11,7 @@ import time
 
 from pydantic import ValidationError
 
-from hermes_cli.undo import journal, pending
+from hermes_cli.undo import journal, pending, snapshot
 from hermes_cli.undo.apply import apply
 from hermes_cli.undo.env import load
 from hermes_cli.undo.models import Entry, FileRef, UndoError, when
@@ -55,6 +55,7 @@ def execute(args: argparse.Namespace) -> int:
             "apply": lambda: apply(store, load(store), args.change_id),
             "last": lambda: display(store, args),
             "show": lambda: display(store, args),
+            "snapshot": lambda: (snapshot.dry_run if args.dry_run else snapshot.run)(store, load(store)),
         }
         handlers[args.undo_command]()
         return 0
