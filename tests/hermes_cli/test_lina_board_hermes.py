@@ -574,3 +574,27 @@ def test_a_pass_cut_by_its_limit_leaves_its_shows_to_the_next(hermes, client, mo
     assert cards["errors"] == []
     assert {f"hermes:{raw}" for raw in ids} <= {c["id"] for c in cards["cards"]}
     assert len(hermes.shows()) < 2 * 43
+
+
+def _hub_run(work: WorkEnv, run_id: str, card: str, **extra) -> None:
+    """A hub run handed out from a Hermes card (``job.card`` as ``kanban_link.card_for`` writes it)."""
+    job = {"id": run_id, "bot": "alpha", "topic": f"topic-{run_id}", "mode": "ulw", "state": "failed",
+           "created": NOW - 3600, "started": NOW - 3500, "host": None, "prompt": "ulw do it\n", "verdict": None,
+           "card": {"task": card, "board": BOARD, "kind": "hermes"}, "todo": None, **extra}
+    (work.root / "worker" / "hub" / "jobs" / f"{run_id}.json").write_text(json.dumps(job), encoding="utf-8")
+
+
+def test_a_run_names_its_card_by_the_id_work_cards_serves(work, hermes, client):
+    """lina#630: ``RunCard.card`` is the card's id in /work/cards, source prefix included; a run whose card is not
+    in the list still carries it."""
+    _hub_run(work, "run-1", "t_b1")
+    _hub_run(work, "run-2", "card-gone")
+    hermes.on()
+    runs = {r["id"]: r for r in _get(client, "/api/lina/board", "board-client.yaml", "BoardSnapshot")["cards"]}
+    listed = {c["id"]: c for c in _get(client, f"{WORK}/cards", "work-client.yaml", "WorkCardList")["cards"]}
+    assert (runs["run-1"]["card"], runs["run-1"]["board"]) == ("hermes:t_b1", BOARD)
+    assert listed[runs["run-1"]["card"]]["title"] == "Pick a colour"
+    assert runs["run-2"]["card"] == "hermes:card-gone" and runs["run-2"]["card"] not in listed
+    assert _get(client, f"{WORK}/cards/{runs['run-1']['card']}", "work-client.yaml", "WorkCardDetail")["id"] == \
+        "hermes:t_b1"
+
