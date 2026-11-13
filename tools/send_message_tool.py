@@ -547,7 +547,7 @@ async def _dispatch_on_gateway_loop(runner, make_coro, log_message):
     return await asyncio.shield(asyncio.wrap_future(fut))
 
 
-async def _send_via_adapter(platform, pconfig, chat_id, chunk, *, thread_id=None, media_files=None,  # outbound-checked: tools/send_message_tool.py::_send_to_platform
+async def _send_via_adapter(platform, pconfig, chat_id, chunk, *, thread_id=None, media_files=None,
                             force_document=False):
     """Live in-process gateway adapter first, else the plugin's ``standalone_sender_fn`` (cron),
     else an error naming both; media uses the adapter's native media APIs under the same rules."""

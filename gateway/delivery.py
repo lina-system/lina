@@ -46,7 +46,7 @@ class PartialDeliveryError(RuntimeError):
 
 
 @dataclass(frozen=True)
-class DeliveryTransport:  # outbound-exempt: delegates to the adapter's guarded send / send_for_platform
+class DeliveryTransport:
     """Resolved live transport for one logical delivery platform."""
     adapter: Any
     config: Optional[PlatformConfig]

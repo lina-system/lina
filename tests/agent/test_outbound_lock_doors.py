@@ -1,198 +1,206 @@
-"""Every egress door reaches ``agent.outbound_lock.check_outbound`` (lina#638).
+"""Every egress door refuses a target ``outbound.allow`` does not list (lina#638).
 
-The doors are found by grep, not listed: each call of a low-level sender (a platform's standalone
-sender, a Bot Chat admission into another agent, a Desktop relay envelope, a peer HTTP turn, the
-webhook ``gh pr comment``, an agent-addressed notice command) must sit in a function that calls the
-check, or in a private helper whose every caller in its module does (and nothing outside its module
-names it), or carry ``# outbound-checked: <path>::<function>`` (on the call, the line above it or
-the enclosing def) naming a function that calls it. ``# outbound-exempt: <reason>`` marks a call
-that is not egress (an inbound turn into this agent). Every class with an adapter ``send*`` method
-must reach ``BasePlatformAdapter``, whose ``__init_subclass__`` routes those methods through
-the check, or be marked exempt on its ``class`` line (a wrapper delegating to an adapter).
+Each test drives a real door with a fake transport and counts what reached the transport: a refused
+target makes zero outbound calls, an allowed target exactly one.
 """
 
 from __future__ import annotations
 
-import ast
-import re
-from functools import cache
+import asyncio
+import json
+import subprocess
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
-ROOT = Path(__file__).resolve().parents[2]
-SCAN_DIRS = ("agent", "cron", "gateway", "hermes_cli", "plugins", "tools", "tui_gateway")
-EGRESS_CALLS = {
-    "platform standalone sender": re.compile(
-        r"(?<!def )\b(_send_telegram|_plugin_standalone_sender|_send_matrix_via_adapter|send_message_handler)\("),
-    "Bot Chat admission into another agent": re.compile(r"(?<!def )\bdeliver_to_live_owner\("),
-    "Desktop relay envelope": re.compile(r"(?<!def )\benqueue_envelope\("),
-    "peer HTTP turn": re.compile(r"\b_request\(\s*f\"[^\"]*/(chat|v1/runs)\""),
-    "webhook github_comment": re.compile(r"\"gh\", \"pr\", \"comment\""),
-    "agent-addressed notice command": re.compile(r"\.format\(agent=job\["),
-}
-PRAGMA = re.compile(r"#\s*outbound-checked:\s*(\S+)::(\w+(?:\.\w+)?)")
-EXEMPT = re.compile(r"#\s*outbound-exempt:\s*\S")
+import pytest
+
+from agent.outbound_lock import read_refusals
+from hermes_constants import get_hermes_home
+from tests.waiting import async_wait_until
 
 
-@cache
-def _sources() -> dict[str, str]:
-    files = {}
-    for top in SCAN_DIRS:
-        for path in (ROOT / top).rglob("*.py"):
-            rel = path.relative_to(ROOT).as_posix()
-            if "/tests/" not in f"/{rel}" and "node_modules" not in rel:
-                files[rel] = path.read_text(encoding="utf-8")
-    return files
+def _allow(*entries: str) -> None:
+    config = get_hermes_home() / "config.yaml"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text(json.dumps({"outbound": {"allow": list(entries)}}), encoding="utf-8")  # JSON is YAML
 
 
-@cache
-def _tree(rel: str) -> ast.Module:
-    return ast.parse(_sources()[rel])
+def _fake_telegram():
+    from gateway.config import Platform, PlatformConfig
+    from gateway.platforms.base import BasePlatformAdapter, SendResult
 
-
-def _units(rel: str) -> list[tuple[str, ast.AST]]:
-    """Top-level functions, class methods (``Class.method``) and top-level assignments."""
-    units = []
-    for node in _tree(rel).body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            units.append((node.name, node))
-        elif isinstance(node, ast.ClassDef):
-            units += [(f"{node.name}.{item.name}", item) for item in node.body
-                      if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))]
-        elif isinstance(node, (ast.Assign, ast.AnnAssign)):
-            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-            units += [(t.id, node) for t in targets if isinstance(t, ast.Name)]
-    return units
-
-
-def _names_used(node: ast.AST) -> set[str]:
-    return {n.id if isinstance(n, ast.Name) else n.attr
-            for n in ast.walk(node) if isinstance(n, (ast.Name, ast.Attribute))}
-
-
-def _called(node: ast.AST) -> set[str]:
-    calls = set()
-    for n in ast.walk(node):
-        if isinstance(n, ast.Call):
-            func = n.func
-            calls.add(func.id if isinstance(func, ast.Name) else getattr(func, "attr", ""))
-    return calls
-
-
-@cache
-def _checkers() -> frozenset[str]:
-    """``check_outbound`` and every function that calls it directly (``_outbound_refused``, ...)."""
-    names = {"check_outbound"}
-    for rel in _sources():
-        if "check_outbound" in _sources()[rel]:
-            names |= {name.rsplit(".", 1)[-1] for name, node in _units(rel) if "check_outbound" in _called(node)}
-    return frozenset(names)
-
-
-def _checks(node: ast.AST) -> bool:
-    return bool(_called(node) & _checkers())
-
-
-def _unit_at(rel: str, line: int) -> tuple[str, ast.AST] | None:
-    return next(((name, node) for name, node in _units(rel)
-                 if node.lineno <= line <= (node.end_lineno or node.lineno)), None)
-
-
-@cache
-def _named_outside(rel: str, leaf: str) -> bool:
-    word = re.compile(rf"\b{re.escape(leaf)}\b")
-    return any(word.search(text) for other, text in _sources().items() if other != rel)
-
-
-def _covered(rel: str, name: str, node: ast.AST, seen: frozenset = frozenset()) -> bool:
-    if _checks(node):
-        return True
-    leaf = name.rsplit(".", 1)[-1]
-    if not leaf.startswith("_") or name in seen or _named_outside(rel, leaf):
-        return False
-    callers = [(n, u) for n, u in _units(rel) if n != name and leaf in _names_used(u)]
-    return bool(callers) and all(_covered(rel, n, u, seen | {name}) for n, u in callers)
-
-
-def _pragma_ok(text: str) -> bool:
-    if EXEMPT.search(text):
-        return True
-    match = PRAGMA.search(text)
-    if not match or match.group(1) not in _sources():
-        return False
-    unit = dict(_units(match.group(1))).get(match.group(2))
-    return unit is not None and _checks(unit)
-
-
-def _prose_lines(rel: str) -> set[int]:
-    """Lines inside docstrings or whole-line comments: a sender named in prose is not a call."""
-    lines = {i for i, line in enumerate(_sources()[rel].splitlines(), 1) if line.lstrip().startswith("#")}
-    for node in ast.walk(_tree(rel)):
-        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
-            lines |= set(range(node.lineno, (node.end_lineno or node.lineno) + 1))
-    return lines
-
-
-def _egress_hits() -> list[tuple[str, int, str]]:
-    hits = []
-    for rel, text in _sources().items():
-        for kind, pattern in EGRESS_CALLS.items():
-            hits += [(rel, text.count("\n", 0, m.start()) + 1, kind) for m in pattern.finditer(text)]
-    return [hit for hit in hits if hit[1] not in _prose_lines(hit[0])]
-
-
-def test_the_grep_finds_every_kind_of_door():
-    """A pattern that stops matching would make the coverage test below pass vacuously."""
-    assert {kind for _, _, kind in _egress_hits()} == set(EGRESS_CALLS)
-
-
-def test_every_egress_call_reaches_the_outbound_check():
-    uncovered = []
-    for rel, line, kind in _egress_hits():
-        lines = _sources()[rel].splitlines()
-        unit = _unit_at(rel, line)
-        pragma_text = "\n".join(lines[max(line - 2, 0):line] + ([lines[unit[1].lineno - 1]] if unit else []))
-        if _pragma_ok(pragma_text) or (unit is not None and _covered(rel, *unit)):
-            continue
-        uncovered.append(f"{rel}:{line} ({kind}) in {unit[0] if unit else '<module>'}")
-    assert not uncovered, ("egress doors that do not reach agent.outbound_lock.check_outbound:\n  "
-                           + "\n  ".join(uncovered))
-
-
-def _classes() -> dict[str, list[tuple[list[str], set[str]]]]:
-    """class name -> [(base names, methods with a ``chat_id`` parameter)] over the scanned tree."""
-    from agent.outbound_lock import ADAPTER_SEND_METHODS
-    classes: dict[str, list] = {}
-    for rel in _sources():
-        for node in ast.walk(_tree(rel)):
-            if not isinstance(node, ast.ClassDef):
-                continue
-            bases = [b.id if isinstance(b, ast.Name) else getattr(b, "attr", "") for b in node.bases]
-            if EXEMPT.search(_sources()[rel].splitlines()[node.lineno - 1]):
-                continue
-            sends = {item.name for item in node.body
-                     if isinstance(item, ast.AsyncFunctionDef) and item.name in ADAPTER_SEND_METHODS
-                     and any(arg.arg == "chat_id" for arg in item.args.args + item.args.kwonlyargs)}
-            classes.setdefault(node.name, []).append((bases, sends))
-    return classes
-
-
-def test_every_adapter_send_method_is_guarded_by_the_base_class():
-    classes = _classes()
-    adapters = {"BasePlatformAdapter"}
-    while True:
-        more = {name for name, defs in classes.items()
-                if name not in adapters and any(set(bases) & adapters for bases, _ in defs)}
-        if not more:
-            break
-        adapters |= more
-
-    def reaches_adapter(name: str, seen: frozenset = frozenset()) -> bool:
-        if name in adapters:
+    class FakeTelegram(BasePlatformAdapter):
+        async def connect(self, *, is_reconnect: bool = False) -> bool:
             return True
-        users = [user for user, defs in classes.items() if any(name in bases for bases, _ in defs)]
-        return bool(users) and all(reaches_adapter(u, seen | {name}) for u in users if u not in seen)
 
-    loose = sorted(name for name, defs in classes.items()
-                   if any(sends for _, sends in defs) and not reaches_adapter(name))
-    assert len(adapters) > 5
-    assert not loose, f"classes with adapter send methods outside BasePlatformAdapter: {loose}"
+        async def disconnect(self) -> None:
+            return None
+
+        async def get_chat_info(self, chat_id):
+            return {}
+
+        async def send(self, chat_id, content, reply_to=None, metadata=None):
+            self.calls.append(("send", chat_id, content))
+            return SendResult(success=True, message_id=f"m{len(self.calls)}")
+
+        async def edit_message(self, chat_id, message_id, content, *, finalize=False):
+            self.calls.append(("edit", chat_id, content))
+            return SendResult(success=True, message_id=message_id)
+
+    adapter = FakeTelegram(PlatformConfig(enabled=True), Platform.TELEGRAM)
+    adapter.calls = []
+    return adapter
+
+
+@pytest.mark.parametrize("chat, calls", [("111", 1), ("222", 0)])
+def test_adapter_send(chat, calls):
+    _allow("telegram:111")
+    adapter = _fake_telegram()
+    result = asyncio.run(adapter._send_with_retry(chat, "hello"))
+    assert len(adapter.calls) == calls and result.success is bool(calls)
+
+
+@pytest.mark.parametrize("chat, calls", [("111", 1), ("222", 0)])
+def test_adapter_edit(chat, calls):
+    _allow("telegram:111")
+    adapter = _fake_telegram()
+    result = asyncio.run(adapter.edit_message(chat, "m1", "new text"))
+    assert len(adapter.calls) == calls and result.success is bool(calls)
+
+
+def test_a_stream_whose_chat_leaves_the_list_stops_without_a_fallback_send():
+    from gateway.stream_consumer import GatewayStreamConsumer, StreamConsumerConfig
+
+    async def scenario(adapter):
+        consumer = GatewayStreamConsumer(adapter, "111", StreamConsumerConfig(edit_interval=0.01, cursor=""))
+        task = asyncio.create_task(consumer.run())
+        consumer.on_delta("first words")
+        await async_wait_until(lambda: adapter.calls, what="first send")
+        _allow("telegram:999")
+        consumer.on_delta(" and the rest of the answer")
+        consumer.finish()
+        await asyncio.wait_for(task, 10)
+        return consumer
+
+    _allow("telegram:111")
+    adapter = _fake_telegram()
+    consumer = asyncio.run(scenario(adapter))
+    assert [call[0] for call in adapter.calls] == ["send"]
+    assert consumer._egress_declined
+    assert read_refusals()["total"] == 1
+
+
+@pytest.mark.parametrize("chat, calls", [("111", 1), ("222", 0)])
+def test_send_message(chat, calls):
+    from gateway.config import Platform, PlatformConfig
+    from tools.send_message_tool import send_message_tool
+
+    _allow("telegram:111")
+    config = SimpleNamespace(platforms={Platform.TELEGRAM: PlatformConfig(enabled=True, token="t")},
+                             get_home_channel=lambda platform: None)
+    sender = AsyncMock(return_value={"success": True, "message_id": "1"})
+    with patch("gateway.config.load_gateway_config", return_value=config), \
+         patch("tools.send_message_tool._send_telegram", new=sender):
+        result = json.loads(send_message_tool({"action": "send", "target": f"telegram:{chat}", "message": "hi"}))
+    assert sender.await_count == calls
+    assert ("outbound.allow" in result.get("error", "")) is not bool(calls)
+
+
+@pytest.mark.parametrize("chat, calls", [("111", 1), ("222", 0)])
+def test_cron_delivery(chat, calls):
+    from gateway.config import Platform, PlatformConfig
+    from cron.scheduler import _deliver_result
+
+    _allow("telegram:111")
+    config = SimpleNamespace(platforms={Platform.TELEGRAM: PlatformConfig(enabled=True, token="t")},
+                             get_home_channel=lambda platform: None)
+    send = AsyncMock(return_value={"success": True, "message_id": "1"})
+    job = {"id": "brief", "name": "brief", "deliver": f"telegram:{chat}"}
+    with patch("gateway.config.load_gateway_config", return_value=config), \
+         patch("tools.send_message_tool._send_to_platform", new=send):
+        error = _deliver_result(job, "report")
+    assert send.await_count == calls
+    assert (error is None) is bool(calls)
+
+
+@pytest.mark.parametrize("handler", ["_peer_dm", "_peer_run"])
+@pytest.mark.parametrize("peer, calls", [("friend", 1), ("stranger", 0)])
+def test_peer_dm_and_run(handler, peer, calls):
+    from hermes_cli.subcommands import peer as peer_cmd
+
+    _allow("agent:friend")
+    request = []
+
+    def fake_request(url, key, **kwargs):
+        request.append(url)
+        return {"message": {"content": "ok"}, "run_id": "r1", "status": "started"}
+
+    args = SimpleNamespace(json=True, idempotency_key=None)
+    with patch.object(peer_cmd, "_ensure_bot_chat", return_value="s1"), \
+         patch.object(peer_cmd, "_peer_run_durability", return_value=True), \
+         patch.object(peer_cmd, "_request", side_effect=fake_request):
+        code = getattr(peer_cmd, handler)(args, "hi", peer, None, "http://peer", "k")
+    assert len(request) == calls and (code == 0) is bool(calls)
+
+
+@pytest.mark.parametrize("target, calls", [("scout", 1), ("other", 0)])
+def test_message_agent(tmp_path: Path, target, calls):
+    from tools import bot_mode_dm, bot_mode_probe
+
+    _allow("agent:scout")
+    roster = [(name, tmp_path / name) for name in ("me", "other", "scout")]
+    deliveries = []
+
+    def fake_start_delivery(argv, content, label, **kwargs):
+        deliveries.append(argv)
+        return json.dumps({"status": "dispatched"})
+
+    with patch.object(bot_mode_dm, "_session_title", return_value=bot_mode_probe.BOT_CHAT_TITLE), \
+         patch.object(bot_mode_dm, "_agent_home", return_value=str(tmp_path / "me")), \
+         patch.object(bot_mode_probe, "is_bot_mode_managed", return_value=True), \
+         patch.object(bot_mode_probe, "_hermes_root", return_value=tmp_path), \
+         patch.object(bot_mode_probe, "_profile_name", return_value="me"), \
+         patch.object(bot_mode_probe, "_roster", return_value=roster), \
+         patch.object(bot_mode_probe, "_peers", return_value=[]), \
+         patch.object(bot_mode_dm, "_try_relay_delivery", return_value=None), \
+         patch.object(bot_mode_dm, "_start_delivery", side_effect=fake_start_delivery), \
+         patch("hermes_cli.observability.shared_metrics_signals.record_feature_used"):
+        result = json.loads(bot_mode_dm.message_agent_tool(target=target, message="hello"))
+    assert len(deliveries) == calls
+    assert ("outbound.allow" in result.get("error", "")) is not bool(calls)
+
+
+@pytest.mark.parametrize("pr, calls", [("4", 1), ("5", 0)])
+def test_webhook_github_comment(pr, calls):
+    from gateway.config import PlatformConfig
+    from gateway.platforms.webhook import WebhookAdapter
+
+    _allow("github_comment:owner/repo#4")
+    ran = []
+
+    def fake_run(argv, **kwargs):
+        ran.append(argv)
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    adapter = WebhookAdapter(PlatformConfig(enabled=True))
+    delivery = {"deliver": "github_comment", "deliver_extra": {"repo": "owner/repo", "pr_number": pr}}
+    with patch("gateway.platforms.webhook.subprocess.run", side_effect=fake_run):
+        result = asyncio.run(adapter._deliver_github_comment("review done", delivery))
+    assert len(ran) == calls and result.success is bool(calls)
+
+
+@pytest.mark.parametrize("bot, calls", [("lead", 1), ("someone-else", 0)])
+def test_worker_end_notice(tmp_path: Path, bot, calls):
+    from hermes_cli.worker import notice
+
+    _allow("agent:lead")
+    ran = []
+
+    def fake_run(argv, **kwargs):
+        ran.append(argv)
+        return subprocess.CompletedProcess(argv, 0, stdout=b"", stderr=b"")
+
+    with patch.object(notice.subprocess, "run", side_effect=fake_run):
+        sent = notice.deliver({"id": "t1", "bot": bot}, "done", "end", tmp_path, ["notify", "{agent}"])
+    assert len(ran) == calls and sent.ok is bool(calls)

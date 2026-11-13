@@ -462,6 +462,9 @@ class StreamTransportMixin:
             metadata=self._metadata_for_send(final=finalize, expect_edits=not finalize))
         if not result.success:
             self._edit_supported = False
+            from gateway.relay.egress import declined_send
+            # A refused destination stays refused for the run: the fallback final must not retry it.
+            self._egress_declined = getattr(self, "_egress_declined", False) or declined_send(result)
             return False
         self._already_sent = True
         self._last_sent_text = text

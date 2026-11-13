@@ -86,7 +86,7 @@ def _dispose(path: Path, record: dict) -> bool:
         if owner is None:
             return False
         try:
-            # outbound-checked: cron/scheduler_delivery.py::_deliver_result (checked before it deferred)
+            # outbound.allow was checked by cron delivery before this record was deferred.
             receipt = deliver_to_live_owner(
                 home, owner, bot_chat_message(record.get("job") or {}, record["content"]),
                 delivery_id=record["id"], notification_category="diagnostic" if for_failure else "result")

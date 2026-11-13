@@ -538,7 +538,7 @@ def _admit_live_dm(profile_home: Path | None, dm_file: str, author: Optional[dic
 
         identity = dict(delivery_id=intent["delivery_id"], author=intent.get("author"))
         try:
-            # outbound-checked: tools/bot_mode_dm.py::message_agent_tool (it spawns this runner)
+            # outbound.allow was checked by message_agent_tool, which spawned this runner.
             record = deliver_to_live_owner(home, intent["owner"], intent["message"], **identity)
         except GatewayRPCError as exc:
             if str(exc) != HELD_NOT_SENT or exc.data.get("admitted") is not False:

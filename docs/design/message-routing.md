@@ -222,11 +222,13 @@ outbound:
 
 The check is `agent/outbound_lock.py::check_outbound`, and it runs on the resolved target (after alias and home-channel
 resolution). The doors that call it: the `send_message` tool, `hermes send` and the kanban notifier
-(`tools/send_message_tool.py`); every gateway adapter `send*` method, which covers replies, notices, webhook
-cross-platform delivery and cron's live lane (`BasePlatformAdapter.__init_subclass__`); cron delivery, including
+(`tools/send_message_tool.py`); every gateway adapter `send*` and `edit_message` method, which covers replies,
+streamed edits, notices, webhook cross-platform delivery and cron's live lane (`BasePlatformAdapter.__init_subclass__`;
+a refused edit ends the stream with no fallback send); cron delivery, including
 `deliver: <platform>` home channels and `bot-chat:<profile>` (`cron/scheduler_delivery_outbound.py`); `hermes peer
 dm`/`run`; `message_agent`; the webhook `github_comment` deliver; and worker end notices.
-`tests/agent/test_outbound_lock_doors.py` finds the doors by grep and fails when one skips the check. The agent's own
+`tests/agent/test_outbound_lock_doors.py` drives each door with a fake transport: a refused target makes no outbound
+call, an allowed one exactly one. A channel-name entry resolves through each profile's own channel directory. The agent's own
 local chat, its own Bot Chat and the API server's answer to its caller are not outbound.
 
 A refused send fails and nothing leaves the process. The error reads `Refused by outbound.allow: telegram:222 is not in

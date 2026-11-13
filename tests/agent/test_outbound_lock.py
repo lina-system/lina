@@ -95,6 +95,42 @@ def test_the_list_is_reread_after_a_config_change_without_a_restart():
     assert check_outbound("telegram", "333", door="test") is None
 
 
+def _directory(home: Path, chat_id: str) -> None:
+    (home / "channel_directory.json").write_text(json.dumps(
+        {"updated_at": None, "platforms": {"telegram": [{"id": chat_id, "name": "trial", "type": "group"}]}}),
+        encoding="utf-8")
+
+
+def test_a_channel_name_entry_resolves_through_each_profiles_own_directory(tmp_path: Path):
+    from hermes_constants import reset_hermes_home_override, set_hermes_home_override
+
+    homes = {}
+    for name, chat in (("alpha", "111"), ("beta", "222")):
+        home = homes[name] = tmp_path / name
+        home.mkdir()
+        (home / "config.yaml").write_text(json.dumps({"outbound": {"allow": ["telegram:trial"]}}), encoding="utf-8")
+        _directory(home, chat)
+    verdicts = {}
+    for name in ("alpha", "beta"):
+        token = set_hermes_home_override(homes[name])
+        try:
+            verdicts[name] = (check_outbound("telegram", "111", door="test") is None,
+                              check_outbound("telegram", "222", door="test") is None)
+        finally:
+            reset_hermes_home_override(token)
+    assert verdicts == {"alpha": (True, False), "beta": (False, True)}
+
+
+def test_a_channel_directory_change_moves_a_name_entry():
+    home = get_hermes_home()
+    _allow("telegram:trial")
+    _directory(home, "111")
+    assert check_outbound("telegram", "111", door="test") is None
+    _directory(home, "333000")
+    assert check_outbound("telegram", "333000", door="test") is None
+    assert check_outbound("telegram", "111", door="test")
+
+
 def test_a_refusal_is_logged_once_per_target_and_counted_every_time(caplog):
     _allow("telegram:111")
     outbound_lock._logged.clear()
@@ -124,18 +160,6 @@ def test_the_local_app_stream_answers_its_own_client_whatever_the_list_says():
     assert read_refusals()["total"] == 0
 
 
-def test_send_message_refuses_another_chat_before_the_platform_sender():
-    from gateway.config import Platform, PlatformConfig
-    from tools.send_message_tool import _send_to_platform
-
-    _allow("telegram:111")
-    sender = AsyncMock(return_value={"success": True})
-    with patch("tools.send_message_tool._send_telegram", new=sender):
-        allowed = asyncio.run(_send_to_platform(Platform.TELEGRAM, PlatformConfig(enabled=True, token="t"), "111", "hi"))
-        refused = asyncio.run(_send_to_platform(Platform.TELEGRAM, PlatformConfig(enabled=True, token="t"), "222", "hi"))
-    assert allowed == {"success": True}
-    assert "outbound.allow" in refused["error"]
-    assert [call.args[1] for call in sender.await_args_list] == ["111"]
 
 
 def _cron_job(deliver: str) -> dict:
@@ -164,25 +188,8 @@ def test_cron_home_channel_alias_is_checked_after_resolution(monkeypatch, home_c
         assert job["last_delivery_refused"] == ["telegram:222"]
 
 
-def test_peer_dm_to_an_unlisted_agent_is_refused_before_any_request():
-    from hermes_cli.subcommands import peer
-
-    _allow("agent:friend")
-    stderr = io.StringIO()
-    with patch.object(peer, "_ensure_bot_chat", side_effect=AssertionError("request made")), \
-         redirect_stderr(stderr):
-        code = peer._peer_dm(SimpleNamespace(json=False), "hi", "stranger", None, "http://peer", "k")
-    assert code == 1 and "outbound.allow" in stderr.getvalue()
 
 
-def test_worker_end_notice_to_an_unlisted_agent_is_not_sent(tmp_path: Path):
-    from hermes_cli.worker.notice import deliver
-
-    _allow("agent:lead")
-    job = {"id": "t1", "bot": "someone-else"}
-    sent = deliver(job, "done", "end", tmp_path, ["false"])
-    assert not sent.ok and "outbound.allow" in sent.how
-    assert deliver({"id": "t2", "bot": "lead"}, "done", "end", tmp_path, ["true"]).ok
 
 
 def test_doctor_reports_the_refusal_count(monkeypatch, capsys):

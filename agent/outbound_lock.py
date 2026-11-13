@@ -4,17 +4,17 @@ only destinations a message may leave to. Missing or empty means unrestricted.
 Every egress door calls :func:`check_outbound` with the destination as that door will send it, i.e.
 after alias / home-channel resolution, and refuses the send when it returns a string. Doors:
 ``send_message`` (tool, ``hermes send``, kanban notifier) through ``_send_to_platform`` and
-``_handle_react``; every gateway adapter's ``send*`` methods (wrapped by
-:func:`guard_adapter_class` from ``BasePlatformAdapter.__init_subclass__``); cron delivery
-(``cron/scheduler_delivery_outbound.py``); ``hermes peer dm``/``run``; ``message_agent``; the
-webhook ``github_comment`` deliver; worker end notices. ``tests/agent/test_outbound_lock_doors.py``
-finds the doors by grep and fails when one does not reach this check.
+``_handle_react``; every gateway adapter's ``send*`` and ``edit_message`` methods (wrapped by
+:func:`guard_adapter_class` from ``BasePlatformAdapter.__init_subclass__``; a refused edit ends the
+stream like a connector decline); cron delivery (``cron/scheduler_delivery_outbound.py``);
+``hermes peer dm``/``run``; ``message_agent``; the webhook ``github_comment`` deliver; worker end
+notices. ``tests/agent/test_outbound_lock_doors.py`` drives each door with a fake transport.
 
 Entries: ``<platform>:<chat id>[:<thread id>]``, parsed like ``resolve_send_target`` (an entry
 without a thread allows every thread of the chat), and ``agent:<name>`` for another agent (a local
 profile, a peer ``<peer>``, which allows all its agents, or ``<peer>/<agent>``). The config is read
 through ``read_raw_config_readonly``, cached on the file signature, so an edit applies to the next
-send without a restart.
+send without a restart; resolved entries are cached per profile home and channel-directory state.
 
 A refusal names ``outbound.allow``, is logged once per target per process, and is counted in
 ``<HERMES_HOME>/outbound_refusals.json``, which ``hermes doctor`` reports.
@@ -35,9 +35,10 @@ logger = logging.getLogger(__name__)
 CONFIG_KEY = "outbound.allow"
 AGENT_PLATFORM = "agent"
 REFUSALS_FILE = "outbound_refusals.json"
-# The adapter methods that put a message in a chat; each takes the destination as ``chat_id``.
-ADAPTER_SEND_METHODS = (
-    "send", "send_for_platform", "send_draft", "send_exec_approval", "send_slash_confirm",
+# The adapter methods that put content in a chat (a send, or an edit carrying new text); each takes
+# the destination as ``chat_id``.
+ADAPTER_MESSAGE_METHODS = (
+    "send", "send_for_platform", "send_draft", "edit_message", "send_exec_approval", "send_slash_confirm",
     "send_clarify", "send_private_notice", "send_multiple_images", "send_image", "send_animation",
     "send_voice", "send_video", "send_document", "send_image_file",
 )
@@ -48,7 +49,7 @@ ADAPTER_SEND_METHODS = (
 ANSWERING_PLATFORMS = frozenset({"local", "api_server", "webhook"})
 
 _logged: set[tuple[str, str]] = set()
-_parsed: dict[tuple[str, ...], tuple[tuple[str, str, Optional[str]], ...]] = {}
+_parsed: dict[tuple, tuple[tuple[str, str, Optional[str]], ...]] = {}
 _counts_lock = threading.Lock()
 
 
@@ -88,9 +89,28 @@ def _parse_entry(entry: str) -> Optional[tuple[str, str, Optional[str]]]:
     return platform, str(chat_id), str(thread_id) if thread_id else None
 
 
+def _alias_signature() -> tuple:
+    """What a channel-name entry resolves through: the active profile's channel directory and alias
+    files, by stat (a rebuild or an alias edit changes it)."""
+    from gateway.channel_directory import _aliases_path, _directory_path
+    signature = []
+    for path in (_directory_path(), _aliases_path()):
+        try:
+            stat = path.stat()
+            signature.append((stat.st_mtime_ns, stat.st_size))
+        except OSError:
+            signature.append(None)
+    return tuple(signature)
+
+
 def _parsed_entries(entries: list[str]) -> tuple[tuple[str, str, Optional[str]], ...]:
-    key = tuple(entries)
+    """Entries resolved for the active profile: one process serves many profiles, and the same entry
+    text (``telegram:trial``) can name a different chat in each profile's channel directory."""
+    from hermes_constants import get_hermes_home
+    key = (str(get_hermes_home()), tuple(entries), _alias_signature())
     if key not in _parsed:
+        if len(_parsed) > 256:
+            _parsed.clear()
         _parsed[key] = tuple(p for p in map(_parse_entry, entries) if p is not None)
     return _parsed[key]
 
@@ -170,14 +190,15 @@ def read_refusals(home=None) -> dict:
 
 
 def is_outbound_refusal(result: Any) -> bool:
-    """True for the SendResult a guarded adapter method returns on a refusal (never retried)."""
+    """True for the SendResult a guarded adapter method returns on a refusal: terminal, never retried
+    (``gateway.relay.egress.declined_send`` classifies it as a destination refusal)."""
     raw = getattr(result, "raw_response", None)
     return isinstance(raw, dict) and raw.get("outbound_refused") is True
 
 
 def guard_adapter_class(cls: type) -> None:
     """Route the ``send*`` methods ``cls`` defines or takes from a mixin through :func:`check_outbound`."""
-    for name in ADAPTER_SEND_METHODS:
+    for name in ADAPTER_MESSAGE_METHODS:
         # Mixins supply send methods too; BasePlatformAdapter's own defaults delegate to send().
         owner = next((klass for klass in cls.__mro__ if name in klass.__dict__), None)
         if owner is None or (owner.__module__, owner.__name__) == ("gateway.platforms.base", "BasePlatformAdapter"):
