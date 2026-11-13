@@ -638,9 +638,19 @@ components:
           type: string
           nullable: true
           description: >
-            Who the run waits on: `agent:<name>` for a finished run waiting for the verdict of the agent that
+            Who acts next on the run: `agent:<name>` for a finished run waiting for the verdict of the agent that
             handed it out. Such a run is counted under that agent in `counts.agents`, never in `inbox.review`, the
-            `review` notices or `counts.inbox`; null otherwise (shown as before).
+            `review` notices or `counts.inbox`. On a stopped run (lina#629): `agent:<name>` of the agent that
+            handed it out when nothing replaced it (failed, unresponsive, result_missing, rejected), owner when no
+            agent handed it out; null when a later run of the same to-do replaced it or it was cancelled. Null on
+            every other run (shown as before).
+        retry:
+          type: string
+          nullable: true
+          enum: [scheduled, none, null]
+          description: >
+            On a stopped run (lina#629): scheduled when a later run of the same to-do exists, none when nothing
+            replaces it (a run with no to-do included); null on every run that is not stopped.
         card:
           type: string
           nullable: true

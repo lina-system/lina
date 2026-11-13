@@ -41,6 +41,14 @@ _TODO_LINE = re.compile(r"^\s*[-*]\s+(?:\[(?P<box>[ xX])\]\s+)?(?P<text>\S.*?)\s
 _ISSUE_REF = re.compile(r"\b[\w.-]+/[\w.-]+#\d+\b")
 _PRS_GATE = re.compile(r"\bgate\s+prs\b")
 _QUESTION_PREFIXES = ("질문:", "Q:")
+# A stopped card's ``(reason, waitingOn, retry)`` by the kind of its latest block event (lina#629); the table is
+# the one the schema's ``Reason`` documents.
+_KIND_STOPS = {"needs_input": ("decision", "owner", "none"), "capability": ("feedback", "owner", "none"),
+               "transient": ("hold", "owner", "none"), "dependency": ("blocked_by_item", None, "scheduled")}
+# The kind word of an untyped block written in the owner-inbox format, ``<agent> · <kind> · <summary>``.
+_INBOX_LINE = re.compile(r"^[^·\n]+?\s·\s(?P<kind>.+?)\s·\s")
+_INBOX_REASONS = {"갈림길": "decision", "질문": "decision", "검토": "review", "돈·바깥": "feedback",
+                  "끝 조건": "feedback"}
 # Worker run IDs pasted into comments: omo jobs, single-issue runs, ``lina worker`` runs.
 _WORKER_ID_PATTERNS = (
     ("omo", re.compile(r"\b(OT-[A-Z0-9]{6,})\b")),
@@ -198,16 +206,43 @@ def _latest_block_payload(events: list[kanban_db.Event]) -> dict[str, Any]:
     return (ev.payload or {}) if ev else {}
 
 
-def _block_reason_word(task: kanban_db.Task, events: list[kanban_db.Event]) -> Optional[str]:
-    """Block kind when typed; otherwise ``gate`` / ``budget`` read from the goal loop's block text."""
-    if task.block_kind:
-        return task.block_kind
-    text = str(_latest_block_payload(events).get("reason") or "").lower()
-    if "goal gate" in text or "gate still failing" in text:
-        return "gate"
-    if "turn budget" in text or "never called kanban_complete" in text:
-        return "budget"
-    return None
+def _block_stop(task: kanban_db.Task, events: list[kanban_db.Event]) -> tuple[Optional[str], ...]:
+    """``(reason, waitingOn, retry)`` of a blocked card, from its latest block event (its kind, else the card's
+    ``block_kind``), never from the title. A recorded wait is woken by the dispatcher; a typed kind reads by
+    :data:`_KIND_STOPS`; an untyped block's text is the goal loop's ``gate`` / ``budget``, an owner-inbox line, or a
+    plain sentence for the owner. A card with no block event and no kind is all None."""
+    event = next((e for e in reversed(events) if e.kind in _BLOCK_EVENT_KINDS), None)
+    payload = (event.payload or {}) if event else {}
+    kind = payload.get("kind") or task.block_kind
+    wait = payload.get("wait_for")
+    if isinstance(wait, dict):
+        return ("blocked_by_item" if wait.get("kind") in ("card", "review") else "hold"), None, "scheduled"
+    if kind in _KIND_STOPS:
+        return _KIND_STOPS[kind]
+    text = str(payload.get("reason") or "").strip()
+    lowered = text.lower()
+    if "goal gate" in lowered or "gate still failing" in lowered:
+        return "gate", "owner", "none"
+    if "turn budget" in lowered or "never called kanban_complete" in lowered:
+        return "budget", "owner", "none"
+    inbox = _INBOX_LINE.match(text)
+    if inbox and inbox["kind"] in _INBOX_REASONS:
+        return _INBOX_REASONS[inbox["kind"]], "owner", "none"
+    if text:
+        return ("decision" if text.endswith(("?", "？")) else "feedback"), "owner", "none"
+    return None, None, None
+
+
+def stop_fields(facts: CardFacts, state: str) -> dict[str, Optional[str]]:
+    """``waitingOn`` and ``retry`` of a card (lina#629): a blocked card's by :func:`_block_stop`, a scheduled card's
+    ``retry: scheduled``; null on every other card (a running card with no live run included: who acts is not
+    known)."""
+    if facts.task.status == "scheduled":
+        return {"waitingOn": None, "retry": "scheduled"}
+    if state != "stopped" or facts.task.status != "blocked":
+        return {"waitingOn": None, "retry": None}
+    _, waiting_on, retry = _block_stop(facts.task, facts.events)
+    return {"waitingOn": waiting_on, "retry": retry}
 
 
 def work_state(facts: CardFacts, now: Optional[int] = None) -> tuple[str, Optional[str]]:
@@ -215,7 +250,7 @@ def work_state(facts: CardFacts, now: Optional[int] = None) -> tuple[str, Option
 
     planned = triage/todo/scheduled/ready; in_progress = running with a live current run;
     waiting = review, or running while the current run's latest gate exited 75; stopped = blocked
-    (reason: block kind, ``gate`` or ``budget``) or running with no live run
+    (reason: :func:`_block_stop`) or running with no live run
     (``unresponsive``); done = done. The kanban goal loop turns a judge ``wait`` into
     ``continue`` and records nothing, so a judge wait has no board signal to read.
     """
@@ -226,7 +261,7 @@ def work_state(facts: CardFacts, now: Optional[int] = None) -> tuple[str, Option
     if status == "review":
         return "waiting", "review"
     if status == "blocked":
-        return "stopped", _block_reason_word(facts.task, facts.events)
+        return "stopped", _block_stop(facts.task, facts.events)[0]
     if status != "running":
         return "planned", status if status in _PLANNED_STATUSES else None
     if not _run_live(facts, _current_run(facts), now):
@@ -358,8 +393,8 @@ def card_summary(facts: CardFacts, now: int) -> dict[str, Any]:
     todos = parse_todos(facts.task.body, _latest_gate_results(facts.events))
     return {
         "id": facts.task.id, "title": facts.task.title, **_agent_fields(facts),
-        "state": state, "reason": reason, "elapsedSeconds": _elapsed_seconds(facts.task, now),
-        "todoProgress": {"done": sum(t["done"] for t in todos), "total": len(todos)},
+        "state": state, "reason": reason, **stop_fields(facts, state),
+        "elapsedSeconds": _elapsed_seconds(facts.task, now), "todoProgress": {"done": sum(t["done"] for t in todos), "total": len(todos)},
         "now": now_line(facts), **card_times(facts),
         "plain": lookup("card", [facts.task.id], board=board_key(facts.board))[facts.task.id],
     }

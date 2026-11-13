@@ -332,3 +332,26 @@ def test_run_states_are_the_work_api_s_five_and_both_schemas_agree():
     for name in ("board-client.yaml", "work-client.yaml"):
         spec = hermes_yaml.safe_load((REPO / "docs" / "api" / name).read_text(encoding="utf-8"))
         assert tuple(spec["components"]["schemas"]["WorkState"]["enum"]) == WORK_STATES, name
+
+
+def test_a_stopped_run_says_who_acts_next_and_whether_a_later_run_replaced_it(work, fakes, client):
+    """lina#629: a stopped run waits on the agent that handed it out (the owner without one) unless a later run of
+    the same to-do replaced it or it was cancelled; retry says whether such a later run exists."""
+    fakes.job("run-1", state="failed", todo="T9", created=NOW - 3000, ended=NOW - 2900)
+    fakes.job("run-2", state="failed", todo="T9", created=NOW - 2000, ended=NOW - 1900)
+    fakes.job("run-3", state="stalled", created=NOW - 1800, ended=NOW - 1700)
+    fakes.job("run-4", state="done_empty", agent=None, todo="T8", created=NOW - 1600, ended=NOW - 1500)
+    fakes.job("run-5", state="cancelled", created=NOW - 1400, ended=NOW - 1300)
+    fakes.job("run-6", state="done", ended=NOW - 600)
+
+    board = _valid("BoardSnapshot", client.get("/api/lina/board").json())
+
+    served = {c["id"]: (c["state"], c["reason"], c["waitingOn"], c["retry"]) for c in board["cards"]}
+    assert served == {
+        "run-1": ("stopped", "failed", None, "scheduled"),
+        "run-2": ("stopped", "failed", "agent:alpha", "none"),
+        "run-3": ("stopped", "unresponsive", "agent:alpha", "none"),
+        "run-4": ("stopped", "result_missing", "owner", "none"),
+        "run-5": ("stopped", "cancelled", None, "none"),
+        "run-6": ("waiting", "review", "agent:alpha", None),
+    }
