@@ -154,7 +154,7 @@ def test_hello_offers_the_verb_and_reports_platform_and_proxy(node):
     caps = hello["capabilities"]
     assert "runner-sync" in caps["verbs"]
     assert caps["platform"] == "linux-x64"
-    assert set(caps["proxy"]) == {"url", "health", "models", "remote_id", "service"}
+    assert set(caps["proxy"]) == {"url", "health", "models", "remote_id", "service", "version", "names"}
 
 
 @pytest.mark.parametrize(("new", "old", "order", "major"), [

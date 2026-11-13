@@ -413,12 +413,15 @@ def model_path(worker_root: Path, name: str = "", spec: dict | None = None) -> d
 
 def proxy_report(worker_root: Path) -> dict:
     """``hello``'s ``capabilities.proxy``: ``url`` (the address its check asks), ``health`` (the HTTP status of the
-    node's magpie check, None when nothing answers), ``models``, ``remote_id`` (its link to the hub, ``""`` when its own magpie holds the models) and
-    ``service`` ``{name, state}`` of its local magpie service (lina#589). No key is read."""
+    node's magpie check, None when nothing answers), ``models``, ``remote_id`` (its link to the hub, ``""`` when its own magpie holds the models),
+    ``service`` ``{name, state}`` of its local magpie service (lina#589), and ``version`` and ``names`` of its magpie
+    for the daily comparison with the hub's (``lina_magpie_nodes``, lina#489; None when not given). No key is in it."""
+    from hermes_cli import lina_magpie_nodes
     from hermes_cli.worker import proxy_service
     check = proxy_check(worker_root)
-    return {**check, "remote_id": node_proxy(worker_root).remote_id,
-            "service": proxy_service.state(worker_root)}
+    node = node_proxy(worker_root)
+    return {**check, "remote_id": node.remote_id, "service": proxy_service.state(worker_root),
+            **lina_magpie_nodes.facts(node, answered=check["health"] == 200)}
 
 
 def probe_failed(base: Path, worker: dict, name: str) -> str | None:
