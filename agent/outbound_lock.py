@@ -80,8 +80,7 @@ def _parse_entry(entry: str) -> Optional[tuple[str, str, Optional[str]]]:
     platform, sep, ref = entry.partition(":")
     platform, ref = platform.strip().lower(), ref.strip()
     if not sep or not platform or not ref:
-        logger.warning("%s entry %r is not '<platform>:<chat id>' or 'agent:<name>'; it allows nothing",
-                       CONFIG_KEY, entry)
+        logger.warning("a %s entry is not '<platform>:<chat id>' or 'agent:<name>'; it allows nothing", CONFIG_KEY)
         return None
     if platform == AGENT_PLATFORM:
         return AGENT_PLATFORM, ref.lower(), None
@@ -89,7 +88,7 @@ def _parse_entry(entry: str) -> Optional[tuple[str, str, Optional[str]]]:
     try:
         chat_id, thread_id, error = resolve_send_target(platform, ref, pass_unresolved_references=True)
     except Exception as exc:  # health: allow BLE001 -- plugin discovery can raise anything; logged with traceback
-        logger.warning("%s entry %r could not be parsed; matching it as written", CONFIG_KEY, entry, exc_info=True)
+        logger.warning("a %s entry could not be parsed; matching it as written", CONFIG_KEY, exc_info=True)
         chat_id, thread_id, error = None, None, str(exc)
     if error or not chat_id:
         # An entry for a platform this process cannot load is kept as written.
