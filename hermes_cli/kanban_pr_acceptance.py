@@ -134,6 +134,7 @@ def collect_acceptance(contract: str, published_pr: str | None,
         pr = repository["pullRequest"]
         sha, branch = pr["headRefOid"], pr["baseRefName"]
         receipt["head_sha"] = sha
+        receipt["pr_state"] = pr["state"]
         if not re.fullmatch(r"[0-9a-f]{40}", sha) or pr["state"] not in {"OPEN", "MERGED"}:
             raise ValueError("PR is closed or current head is unavailable")
         protection = (pr.get("baseRef") or {}).get("branchProtectionRule") or {}
@@ -146,14 +147,11 @@ def collect_acceptance(contract: str, published_pr: str | None,
                     required.update((r["context"], r.get("integration_id"))
                                     for r in rule["parameters"]["required_status_checks"])
         receipt["required"] = [{"context": c, "app_id": a} for c, a in sorted(required, key=str)]
+        runs = _head_runs(repo, sha, profile_home)
+        receipt["head_runs"] = [{"name": r["name"], "status": r["status"]} for r in runs]
         if not required:
             receipt["detail"] = "No repository-required checks are configured; explicitly use a local-only contract for non-CI tasks."
             return receipt
-        pages = _api(f"repos/{repo}/commits/{sha}/check-runs?per_page=100&filter=all",
-                     paginate=True, profile_home=profile_home)
-        runs = [run for page in pages for run in page["check_runs"]]
-        if len({r["id"] for r in runs}) != pages[0]["total_count"]:
-            raise ValueError("Incomplete check-run pagination")
         statuses = [{**s, "sha": sha} for page in _api(f"repos/{repo}/commits/{sha}/statuses?per_page=100",
                                                        paginate=True, profile_home=profile_home) for s in page]
         outcomes = []
@@ -197,6 +195,16 @@ def collect_acceptance(contract: str, published_pr: str | None,
         # Never persist gh stderr (credentials/host details); the failed phase is actionable.
         receipt.update(classification="infra", detail="GitHub acceptance evidence unavailable or incomplete; check gh authentication/API access and retry.")
         return receipt
+
+
+def _head_runs(repo: str, sha: str, profile_home: str | None) -> list[dict]:
+    """Every check run on the head commit, required or not; complete pagination only."""
+    pages = _api(f"repos/{repo}/commits/{sha}/check-runs?per_page=100&filter=all",
+                 paginate=True, profile_home=profile_home)
+    runs = [run for page in pages for run in page["check_runs"]]
+    if len({r["id"] for r in runs}) != pages[0]["total_count"]:
+        raise ValueError("Incomplete check-run pagination")
+    return runs
 
 
 def _classify(check: dict, sha: str, outcome: str | None, is_run: bool, green: frozenset = frozenset({"success"})) -> str:
