@@ -195,15 +195,20 @@ def worker_read(_board_root: Path, now: float) -> list[dict]:
 def devices_read(_board_root: Path, now: float, errors: list[dict]) -> dict:
     """``{machines, person, monitored}``: the nodes by role with readiness, load and runners, the person devices and
     the machines only Beszel watches (``lina_board_devices``); a metrics reader that fails adds an error and leaves
-    its fields empty. The devices and their ``devices.metrics.beszel`` path come from the worker's own config, the same root as
-    :func:`worker_read` (lina#269); the board root the callers pass holds none of it."""
-    from hermes_cli.lina_board_devices import view
+    its fields empty. With ``devices.metrics.power`` set, ``power`` too (lina#483). The devices and their
+    ``devices.metrics`` paths come from the worker's own config, the same root as :func:`worker_read` (lina#269); the
+    board root the callers pass holds none of it."""
+    from hermes_cli.lina_board_devices import power_path, power_read, view
     from hermes_cli.worker.board import beszel_path, beszel_read
     metrics = None
     path = beszel_path(_worker_base())
     if path is not None:
         metrics = _source("metrics", errors, lambda: beszel_read(path, now))
-    return view(_worker_base(), metrics, now)
+    found = view(_worker_base(), metrics, now)
+    power = power_path(_worker_base())
+    if power is not None:
+        found["power"] = power_read(power, now)
+    return found
 
 
 def quota_read(root: Path, now: float) -> list[dict]:
@@ -319,7 +324,8 @@ def devices(now: float | None = None) -> dict:
     found = _source("devices", errors, lambda: devices_read(root, now, errors)) or {}
     return {"version": API_VERSION, "at": min(now, found.get("at") or now), "errors": errors,
             "machines": found.get("machines") or [],
-            "person": found.get("person") or [], "monitored": found.get("monitored") or []}
+            "person": found.get("person") or [], "monitored": found.get("monitored") or [],
+            **({"power": found["power"]} if "power" in found else {})}
 
 
 def quota(now: float | None = None) -> dict:
