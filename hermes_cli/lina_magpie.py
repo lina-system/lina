@@ -55,10 +55,16 @@ def base_url(proxy: proxies.Proxy) -> str:
     return DEFAULT_URL
 
 
+def gateway_key(proxy: proxies.Proxy) -> str | None:
+    """The gateway key ``worker.proxy.key_env`` names, None when unset: a secret of `.env`, never logged. The node's
+    proxy check (``worker.device.proxy_check``, lina#625) sends the same key."""
+    return os.environ.get(proxy.key_env) if proxy.key_env else None
+
+
 def get(proxy: proxies.Proxy, path: str):
     """One GET of magpie's gateway, parsed; :class:`MagpieError` when it does not answer JSON with 200."""
     headers = {"Accept": "application/json"}
-    key = os.environ.get(proxy.key_env) if proxy.key_env else None  # a secret of `.env`, never logged
+    key = gateway_key(proxy)
     if key:
         headers["Authorization"] = f"Bearer {key}"
     request = urllib.request.Request(base_url(proxy) + path, headers=headers, method="GET")

@@ -27,11 +27,13 @@ adapters), the node asks its proxy, by kind (lina#586). `ocx` asks `/healthz` fo
 whose list has at least one model. A node that fails is passed with the kind and the address in its reason
 (`model path does not answer (magpie http://127.0.0.1:3425/v1/models: HTTP none)`, or `model path lists no model
 (...)`). The node's hello reports `capabilities.proxy {kind, health}` (and `models` for magpie), and
-`lina worker hosts` and `lina devices` show it as `proxy magpie 200, 23 models`.
+`lina worker hosts` and `lina devices` show it as `proxy magpie 200, 23 models`. A node whose own magpie answers only
+with a gateway key (the machine that runs the hub's gateway) sends `Authorization: Bearer <key>` from the variable
+`worker.proxy.key_env` names, the same key the screens below read with (lina#625); without it, no key is sent.
 
 **Limit:** a local `/v1/models` 200 shows only that the node's magpie runs and knows the hub's models; it does not
 prove the node's link to the hub. The real-call probe (`hermes_cli/lina_runner_probe.py`, run by the daily runner sync, lina#531) and step 5 below stay the
-proof that a call goes through. The check reads no key and never calls the hub.
+proof that a call goes through. The check never calls the hub.
 
 LINA does not install or configure magpie and never touches its accounts or its link to the hub: it is installed on
 the node separately and only read here. No step below touches the node's OCX settings or the OCX service; OCX keeps

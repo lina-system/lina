@@ -208,4 +208,4 @@ def _worker_model_path_answers(request, monkeypatch):
     except Exception:  # an import failure here must never error an unrelated test
         return
     monkeypatch.setattr(device, "http_status", lambda url, timeout=0: 200, raising=False)
-    monkeypatch.setattr(device, "models_listed", lambda url, timeout=0: (200, 1), raising=False)
+    monkeypatch.setattr(device, "models_listed", lambda url, timeout=0, key=None: (200, 1), raising=False)
