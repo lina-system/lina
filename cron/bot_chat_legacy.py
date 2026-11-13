@@ -5,7 +5,9 @@ the retired CLI lane left records of the same shape behind. Each still-``queued`
 under its own id, to the target profile's live owner through the canonical
 ``tools.bot_live_delivery.deliver_to_live_owner`` door (idempotent per id). Records are
 never deleted: they keep their final status as evidence, exactly as the old drain did.
-A ``claimed`` record was an uncertain CLI turn and is never resent.
+A ``claimed`` record was an uncertain CLI turn and is never resent. A record for another profile is
+checked against the draining profile's ``outbound.allow`` as it stands at drain time (a parked or
+copied-in record may predate a tighter list) and is kept as ``refused`` when that list refuses it.
 """
 from __future__ import annotations
 
@@ -61,6 +63,16 @@ def _malformed(record: dict) -> str:
     return ""
 
 
+def _outbound_refusal(home: Path) -> str | None:
+    """``outbound.allow`` for handing a record to *home*'s Bot Chat; this profile's own is never refused."""
+    from agent.outbound_lock import check_outbound
+    from hermes_constants import profile_name_for_home
+
+    if home == get_hermes_home().resolve():
+        return None
+    return check_outbound("agent", profile_name_for_home(home) or "", door="bot-chat pending drain")
+
+
 def _dispose(path: Path, record: dict) -> bool:
     """Decide one queued record in place; False leaves it queued for a later tick."""
     from cron.scheduler_delivery import BOT_CHAT_POLICY_PLATFORM, bot_chat_message
@@ -78,6 +90,8 @@ def _dispose(path: Path, record: dict) -> bool:
     elif for_failure and not warning_notifications_enabled(
             BOT_CHAT_POLICY_PLATFORM, load_user_config_effective(home / "config.yaml")):
         record.update(status="suppressed", error=None)
+    elif refusal := _outbound_refusal(home):
+        record.update(status="refused", error=refusal)
     else:
         try:
             owner = find_canonical_live_owner(home)
@@ -86,7 +100,6 @@ def _dispose(path: Path, record: dict) -> bool:
         if owner is None:
             return False
         try:
-            # outbound.allow was checked by cron delivery before this record was deferred.
             receipt = deliver_to_live_owner(
                 home, owner, bot_chat_message(record.get("job") or {}, record["content"]),
                 delivery_id=record["id"], notification_category="diagnostic" if for_failure else "result")

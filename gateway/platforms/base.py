@@ -1812,7 +1812,7 @@ class BasePlatformAdapter(ABC):
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
-        guard_adapter_class(cls)  # outbound.allow: every send* passes agent/outbound_lock.check_outbound
+        guard_adapter_class(cls, BasePlatformAdapter)  # outbound.allow: agent/outbound_lock.check_outbound
 
     # ``format_message`` renders ``` fences as real code blocks (tool-progress then sends a bare
     # fenced terminal command; plain-text platforms get the preview).

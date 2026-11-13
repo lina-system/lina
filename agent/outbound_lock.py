@@ -5,10 +5,12 @@ that names no usable destination (``false``, ``0``, ``{}``, a list of blanks) al
 Every egress door calls :func:`check_outbound` with the destination as that door will send it, i.e.
 after alias / home-channel resolution, and refuses the send when it returns a string. Doors:
 ``send_message`` (tool, ``hermes send``, kanban notifier) through ``_send_to_platform`` and
-``_handle_react``; every gateway adapter content method in :data:`ADAPTER_MESSAGE_METHODS`, inherited
-ones included (wrapped by :func:`guard_adapter_class` from ``BasePlatformAdapter.__init_subclass__``;
-a refused edit ends the stream like a connector decline, a refused task card suppresses its text
-fallback); cron delivery (``cron/scheduler_delivery_outbound.py``);
+``_handle_react``; every public adapter coroutine that takes a ``chat_id`` or ``parent_chat_id``,
+inherited ones included, except the content-free ones in :data:`NOT_OUTBOUND` (wrapped by
+:func:`guard_adapter_class` from ``BasePlatformAdapter.__init_subclass__``, so a new door is guarded
+without being listed; a refused edit ends the stream like a connector decline, a refused task card
+suppresses its text fallback); cron delivery (``cron/scheduler_delivery_outbound.py``) and the
+parked Bot Chat records it drains later (``cron/bot_chat_legacy.py``);
 ``hermes peer dm``/``run``; ``message_agent``; the webhook ``github_comment`` deliver; worker end
 notices. ``tests/agent/test_outbound_lock_doors.py`` drives each door with a fake transport.
 
@@ -37,14 +39,15 @@ logger = logging.getLogger(__name__)
 CONFIG_KEY = "outbound.allow"
 AGENT_PLATFORM = "agent"
 REFUSALS_FILE = "outbound_refusals.json"
-# The adapter methods that put content in a chat (a send, an edit carrying new text, a prompt, a
-# picker, a task card, played audio, a draft seal); each takes the destination as ``chat_id``.
-ADAPTER_MESSAGE_METHODS = (
-    "send", "send_for_platform", "send_draft", "edit_message", "send_exec_approval", "send_slash_confirm",
-    "send_clarify", "send_private_notice", "send_multiple_images", "send_image", "send_animation",
-    "send_voice", "send_video", "send_document", "send_image_file", "send_native_task_card_progress",
-    "send_update_prompt", "send_model_picker", "send_choice_picker", "play_tts", "abandon_open_draft",
-)
+# The parameters an adapter method names its destination with (``parent_chat_id``: a new thread under it).
+TARGET_PARAMETERS = ("chat_id", "parent_chat_id")
+# Public adapter coroutines with a destination that put no content in the chat: reads, presence signals
+# (a refused typing tick would be counted every few seconds), removals and local interrupt control.
+# Every other public coroutine with a destination is guarded; this list is the only way out.
+NOT_OUTBOUND = frozenset({
+    "get_chat_info", "wait_for_auto_thread_info", "send_typing", "stop_typing", "mark_read",
+    "delete_message", "interrupt_session_activity", "on_interrupt", "stop_native_task_card_progress",
+})
 
 # Adapters whose own send* answers the client that asked (the local app/TUI stream, the API server's HTTP
 # caller) or routes to a deliver target that is checked on its own (webhook: github_comment here, other
@@ -203,22 +206,24 @@ def is_outbound_refusal(result: Any) -> bool:
     return isinstance(raw, dict) and raw.get("outbound_refused") is True
 
 
-def guard_adapter_class(cls: type) -> None:
-    """Route the content methods ``cls`` defines, takes from a mixin or inherits from
-    ``BasePlatformAdapter`` through :func:`check_outbound`. Inherited defaults are guarded too: some
-    end in a guarded ``send()``, but ``send_exec_approval`` renders through
-    ``_send_exec_approval_prompt``, which never passes one. A refusal returns at the outermost wrapper,
-    so a default that does reach ``send()`` is never counted twice."""
-    for name in ADAPTER_MESSAGE_METHODS:
+def guard_adapter_class(cls: type, base: type) -> None:
+    """Route every public coroutine of ``cls`` (its own, a mixin's or an inherited one) that takes a
+    :data:`TARGET_PARAMETERS` destination through :func:`check_outbound`, unless it is in
+    :data:`NOT_OUTBOUND`. A method defined on ``base`` or an adapter class is wrapped in place on that
+    class, so ``type(adapter).send_clarify is BasePlatformAdapter.send_clarify`` (how the gateway
+    detects a native override) still holds; a plain mixin's is wrapped on ``cls``. A refusal returns at
+    the outermost wrapper, so a default that ends in a guarded ``send()`` is never counted twice."""
+    for name in dir(cls):
+        if name.startswith("_") or name in NOT_OUTBOUND:
+            continue
         owner = next((klass for klass in cls.__mro__ if name in klass.__dict__), None)
-        if owner is None:
+        method = owner.__dict__[name] if owner is not None else None
+        if (method is None or getattr(method, "_outbound_guarded", False)
+                or not inspect.iscoroutinefunction(method)):
             continue
-        method = owner.__dict__[name]
-        if (getattr(method, "_outbound_guarded", False)
-                or not inspect.iscoroutinefunction(method)
-                or "chat_id" not in inspect.signature(method).parameters):
-            continue
-        setattr(cls, name, _guarded(method, name))
+        target = next((p for p in TARGET_PARAMETERS if p in inspect.signature(method).parameters), None)
+        if target is not None:
+            setattr(owner if issubclass(owner, base) else cls, name, _guarded(method, name, target))
 
 
 def _relay_platform(adapter, chat_id, metadata: dict) -> Optional[str]:
@@ -227,23 +232,47 @@ def _relay_platform(adapter, chat_id, metadata: dict) -> Optional[str]:
     return metadata.get("_relay_logical_platform") or (chat_platform(chat_id) if callable(chat_platform) else None)
 
 
-def _guarded(method, name: str):
+def _effective_thread(adapter, target: str, bound: dict, metadata: dict) -> Optional[str]:
+    """The thread the adapter will post to. ``parent_chat_id`` opens a new thread, so the content lands
+    at chat level. An adapter that rewrites the thread before its API call (Slack drops a thread equal to
+    ``reply_to`` when ``reply_in_thread`` is off) resolves it with ``_resolve_thread_ts``."""
+    if target == "parent_chat_id":
+        return None
+    resolve = getattr(type(adapter), "_resolve_thread_ts", None)
+    if callable(resolve):
+        return resolve(adapter, bound.get("reply_to"), metadata or None)
+    return metadata.get("thread_id")
+
+
+def _refused_result(signature: inspect.Signature, refusal: str):
+    """What a refused method returns, by its declared return type: a failed SendResult (also when
+    undeclared, the send* shape), a failed receipt dict, False, or None (no thread, no handle)."""
+    returns = str(signature.return_annotation)
+    if signature.return_annotation is inspect.Signature.empty or "SendResult" in returns:
+        from gateway.platforms.base import SendResult
+        return SendResult(success=False, error=refusal, error_kind="forbidden",
+                          raw_response={"outbound_refused": True})
+    if "dict" in returns:
+        return {"success": False, "error": refusal, "outbound_refused": True}
+    return False if returns == "bool" else None
+
+
+def _guarded(method, name: str, target: str):
     signature = inspect.signature(method)
 
     @functools.wraps(method)
     async def guarded(self, *args, **kwargs):
         bound = signature.bind_partial(self, *args, **kwargs).arguments
         metadata = bound.get("metadata") if isinstance(bound.get("metadata"), dict) else {}
-        platform = (bound.get("logical_platform") or _relay_platform(self, bound.get("chat_id"), metadata)
+        chat_id = bound.get(target)
+        platform = (bound.get("logical_platform") or _relay_platform(self, chat_id, metadata)
                     or getattr(self, "platform", ""))
         if str(getattr(platform, "value", platform)).lower() in ANSWERING_PLATFORMS:
             return await method(self, *args, **kwargs)
-        refusal = check_outbound(platform, bound.get("chat_id"), metadata.get("thread_id"),
+        refusal = check_outbound(platform, chat_id, _effective_thread(self, target, bound, metadata),
                                  door=f"gateway {name}")
         if refusal:
-            from gateway.platforms.base import SendResult
-            return SendResult(success=False, error=refusal, error_kind="forbidden",
-                              raw_response={"outbound_refused": True})
+            return _refused_result(signature, refusal)
         return await method(self, *args, **kwargs)
 
     guarded._outbound_guarded = True

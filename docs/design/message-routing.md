@@ -226,12 +226,15 @@ outbound:
 
 The check is `agent/outbound_lock.py::check_outbound`, and it runs on the resolved target (after alias and home-channel
 resolution). The doors that call it: the `send_message` tool, `hermes send` and the kanban notifier
-(`tools/send_message_tool.py`); every gateway adapter content method, defined or inherited (`send*`, `edit_message`,
-the exec-approval, update, model and choice prompts, the native task card, played TTS and the draft seal), which covers
-replies, streamed edits, notices, webhook cross-platform delivery and cron's live lane
-(`BasePlatformAdapter.__init_subclass__`; a refused edit ends the stream and a refused task card stops the card, both
-with no fallback send); cron delivery, including
-`deliver: <platform>` home channels and `bot-chat:<profile>` (`cron/scheduler_delivery_outbound.py`); `hermes peer
+(`tools/send_message_tool.py`); every public gateway adapter coroutine that takes a `chat_id` or `parent_chat_id`, defined or
+inherited, so a new adapter method is guarded without being listed; only content-free reads, presence signals,
+removals and interrupt control are exempt (`agent/outbound_lock.py::NOT_OUTBOUND`). That covers replies, streamed edits,
+notices, prompts and pickers, native task cards, played TTS, draft seals, handoff and `/branch` threads, webhook
+cross-platform delivery and cron's live lane (`BasePlatformAdapter.__init_subclass__`; the thread checked is the one
+the adapter posts to, after Slack's `reply_in_thread` resolution; a refused edit ends the stream and a refused task card
+stops the card, both with no fallback send); cron delivery, including
+`deliver: <platform>` home channels and `bot-chat:<profile>` (`cron/scheduler_delivery_outbound.py`; `bot-chat` and
+`bot-chat:<own profile>` stay on this agent), and a parked Bot Chat record when it is drained (`cron/bot_chat_legacy.py`); `hermes peer
 dm`/`run`; `message_agent`; the webhook `github_comment` deliver; and worker end notices.
 `tests/agent/test_outbound_lock_doors.py` drives each door with a fake transport: a refused target makes no outbound
 call, an allowed one exactly one. A channel-name entry resolves through each profile's own channel directory. The agent's own

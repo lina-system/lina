@@ -11,7 +11,7 @@ import json
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -132,6 +132,116 @@ def test_a_refused_task_card_does_not_fall_back_to_text():
     _allow("telegram:111")
     result = asyncio.run(_fake_telegram().send_native_task_card_progress("222", [{"id": "t1"}]))
     assert declined_send(result)  # _task_card_publish suppresses its text fallback on a decline
+
+
+def test_a_new_content_method_is_guarded_without_being_listed():
+    from gateway.config import Platform, PlatformConfig
+    from gateway.platforms.base import SendResult
+
+    class WithPoll(type(_fake_telegram())):
+        async def send_poll(self, chat_id, question, metadata=None) -> SendResult:
+            self.calls.append(("poll", chat_id, question))
+            return SendResult(success=True)
+
+    _allow("telegram:111")
+    adapter = WithPoll(PlatformConfig(enabled=True), Platform.TELEGRAM)
+    adapter.calls = []
+    refused = asyncio.run(adapter.send_poll("222", "lunch?"))
+    asyncio.run(adapter.send_poll("111", "lunch?"))
+    assert [call[1] for call in adapter.calls] == ["111"] and not refused.success
+
+
+def test_an_adapter_without_its_own_clarify_still_has_no_separate_text_fallback():
+    from gateway.run_turn_runner_clarify_delivery import text_fallback_coro
+
+    coro = text_fallback_coro(_fake_telegram(), chat_id="111", question="which?", choices=None,
+                              clarify_id="c1", session_key="s1")
+    if coro is not None:
+        coro.close()
+    assert coro is None  # guarding the inherited send_clarify must keep it the base method
+
+
+def _slack(reply_in_thread: bool):
+    from gateway.config import PlatformConfig
+    from plugins.platforms.slack.adapter import SlackAdapter
+
+    adapter = SlackAdapter(PlatformConfig(enabled=True, extra={"reply_in_thread": reply_in_thread}))
+    posted = []
+
+    async def post(**kwargs):
+        posted.append(kwargs)
+        return {"ok": True, "ts": "1700.2"}
+
+    client = AsyncMock()
+    client.chat_postMessage.side_effect = post
+    adapter._app = SimpleNamespace(client=client)
+    return adapter, posted
+
+
+@pytest.mark.parametrize("reply_in_thread, calls", [(True, 1), (False, 0)])
+def test_slack_thread_entry_is_checked_on_the_thread_the_adapter_posts_to(reply_in_thread, calls):
+    _allow("slack:C12345678:123.456")
+    adapter, posted = _slack(reply_in_thread)
+    # reply_in_thread=false drops a thread equal to reply_to: the reply would land at channel level.
+    asyncio.run(adapter.send("C12345678", "hi", reply_to="123.456", metadata={"thread_id": "123.456"}))
+    assert len(posted) == calls
+    assert [p.get("thread_ts") for p in posted] == ["123.456"] * calls
+
+
+@pytest.mark.parametrize("parent, calls", [("C12345678", 1), ("C99999999", 0)])
+def test_slack_handoff_thread_seed(parent, calls):
+    _allow("slack:C12345678")
+    adapter, posted = _slack(True)
+    thread = asyncio.run(adapter.create_handoff_thread(parent, "handoff"))
+    assert len(posted) == calls and (thread is not None) is bool(calls)
+
+
+@pytest.fixture
+def profiles(tmp_path, monkeypatch):
+    """Two named profiles under one root; the active one is ``alpha``."""
+    from hermes_constants import reset_hermes_home_override, set_hermes_home_override
+
+    root = tmp_path / ".hermes"
+    homes = {name: root / "profiles" / name for name in ("alpha", "beta")}
+    for home in homes.values():
+        home.mkdir(parents=True)
+        (home / "state.db").write_bytes(b"")
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setenv("HERMES_HOME", str(homes["alpha"]))
+    token = set_hermes_home_override(homes["alpha"])
+    yield homes
+    reset_hermes_home_override(token)
+
+
+@pytest.mark.parametrize("deliver, calls", [("bot-chat", 1), ("bot-chat:alpha", 1), ("bot-chat:beta", 0)])
+def test_cron_bot_chat_to_its_own_profile_is_never_refused(profiles, deliver, calls):
+    from cron.scheduler import _deliver_result
+
+    _allow("telegram:111")
+    config = SimpleNamespace(platforms={}, get_home_channel=lambda platform: None)
+    bot_chat = MagicMock(return_value=None)
+    with patch("gateway.config.load_gateway_config", return_value=config), \
+         patch("cron.scheduler_delivery._deliver_to_bot_chat", new=bot_chat):
+        error = _deliver_result({"id": "brief", "name": "brief", "deliver": deliver}, "report")
+    assert bot_chat.call_count == calls
+    assert (error is None) is bool(calls)
+
+
+@pytest.mark.parametrize("allow, target, calls", [
+    (("agent:beta",), "beta", 1), (("telegram:111",), "beta", 0), (("telegram:111",), "alpha", 1)])
+def test_a_parked_bot_chat_record_is_rechecked_when_it_is_drained(profiles, allow, target, calls):
+    from cron import bot_chat_legacy
+
+    # Parked (or copied in) while the list allowed it; the list in force at drain time decides.
+    bot_chat_legacy.defer("k1", {"id": "brief"}, "report", profiles[target], for_failure=False)
+    _allow(*allow)
+    deliver = MagicMock(return_value={"status": "settled"})
+    with patch("tools.bot_live_delivery.find_canonical_live_owner", return_value=object()), \
+         patch("tools.bot_live_delivery.deliver_to_live_owner", new=deliver):
+        bot_chat_legacy.drain_legacy_pending()
+    record = json.loads((profiles["alpha"] / "cron" / "bot_chat_pending" / "k1.json").read_text(encoding="utf-8"))
+    assert deliver.call_count == calls
+    assert record["status"] == ("transferred" if calls else "refused")
 
 
 def test_a_stream_whose_chat_leaves_the_list_stops_without_a_fallback_send():
