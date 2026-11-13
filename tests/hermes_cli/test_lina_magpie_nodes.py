@@ -81,12 +81,38 @@ def test_a_node_whose_magpie_does_not_answer_reports_no_list_and_is_unknown_not_
     magpie_bin("magpie 0.1.3903")
     proxy = hello_proxy(tmp_path, f"{{health: '{_closed('/v1/models')}'}}")["capabilities"]["proxy"]
     assert proxy["names"] is None
+    assert proxy["version"] is None, "the binary's version says nothing about a proxy that is down"
 
     issues, notes = lina_magpie_nodes.lines({"magpie": lina_magpie_nodes.compare(
         tmp_path, [NodeView("build-a", True, proxy=proxy)], hub=HUB)})
 
     assert issues == []
-    assert notes == ["- magpie: build-a model list unknown (the node's magpie gave no list)"]
+    assert notes == ["- magpie: build-a model list unknown (the node's magpie gave no list)",
+                     "- magpie: build-a version unknown (the node's magpie gave no version)"]
+
+
+def test_a_down_node_with_a_known_but_different_binary_version_is_not_a_version_difference(tmp_path, magpie_bin):
+    magpie_bin("magpie 0.1.3800")  # not the hub's 0.1.3903
+    proxy = hello_proxy(tmp_path, f"{{health: '{_closed('/v1/models')}'}}")["capabilities"]["proxy"]
+
+    issues, notes = lina_magpie_nodes.lines({"magpie": lina_magpie_nodes.compare(
+        tmp_path, [NodeView("build-a", True, proxy=proxy)], hub=HUB)})
+
+    assert issues == []
+    assert not any("differs" in line for line in notes)
+
+
+def test_a_down_hub_with_a_known_binary_version_gives_no_version_to_compare(tmp_path, magpie_bin):
+    magpie_bin("magpie 0.1.3903")
+    (tmp_path / "config.yaml").write_text(
+        f"worker:\n  proxy: {{remote_id: '', health: '{_closed('/v1/models')}'}}\n", encoding="utf-8")
+
+    hub = lina_magpie_nodes.hub_facts(tmp_path)
+    issues, notes = compared({"names": HUB["names"], "version": "0.1.3800"}, hub=hub)
+
+    assert hub == {"version": None, "names": None}
+    assert issues == []
+    assert "- magpie: build-a version unknown (the hub's magpie gave no version)" in notes
 
 
 def compared(proxy: dict | None, *, reachable: bool = True, hub: dict = HUB) -> tuple[list[str], list[str]]:

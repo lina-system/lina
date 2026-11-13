@@ -60,8 +60,11 @@ def names(proxy: proxies.Proxy) -> list[str] | None:
 
 
 def facts(proxy: proxies.Proxy, *, answered: bool) -> dict:
-    """What ``hello``'s ``capabilities.proxy`` adds; the list is asked only of a magpie whose check *answered*."""
-    return {"version": version(), "names": names(proxy) if answered else None}
+    """What ``hello``'s ``capabilities.proxy`` adds. The list is asked only of a magpie whose check *answered*, and
+    the version is given only with a list: the binary's version says nothing about a proxy that is down, and a down
+    proxy is already a ``proxy:`` issue, so it is never also a version difference."""
+    listed = names(proxy) if answered else None
+    return {"version": version() if listed is not None else None, "names": listed}
 
 
 def hub_facts(root: Path) -> dict:
