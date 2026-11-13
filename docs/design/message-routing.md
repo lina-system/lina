@@ -206,6 +206,35 @@ or an agent's message without `reply_to`) on a finished place is stored and star
   `docs/design/hermes-patterns.md` P1; held outbound drafts in lina#301). No message satisfies an approval, the owner's
   included: an approval is given only through lina#322's approval path. An agent's message never approves anything.
 
+### Outbound allowlist (built: lina#638)
+
+A test copy of an agent must not reach real people, whatever its copied jobs, skills or prompts say. The profile's
+`config.yaml` key `outbound.allow` lists the only destinations a message may leave to; missing or empty means
+unrestricted. Entries are `<platform>:<chat id>` (a `:<thread id>` suffix limits it to one thread, parsed like a
+`send_message` target) and `agent:<name>` (a local profile, a peer `<peer>` with all its agents, or `<peer>/<agent>`):
+
+```yaml
+outbound:
+  allow:
+    - telegram:123456789
+    - agent:owner-bot
+```
+
+The check is `agent/outbound_lock.py::check_outbound`, and it runs on the resolved target (after alias and home-channel
+resolution). The doors that call it: the `send_message` tool, `hermes send` and the kanban notifier
+(`tools/send_message_tool.py`); every gateway adapter `send*` method, which covers replies, notices, webhook
+cross-platform delivery and cron's live lane (`BasePlatformAdapter.__init_subclass__`); cron delivery, including
+`deliver: <platform>` home channels and `bot-chat:<profile>` (`cron/scheduler_delivery_outbound.py`); `hermes peer
+dm`/`run`; `message_agent`; the webhook `github_comment` deliver; and worker end notices.
+`tests/agent/test_outbound_lock_doors.py` finds the doors by grep and fails when one skips the check. The agent's own
+local chat, its own Bot Chat and the API server's answer to its caller are not outbound.
+
+A refused send fails and nothing leaves the process. The error reads `Refused by outbound.allow: telegram:222 is not in
+the outbound.allow list in <home>/config.yaml, so nothing was sent (<door>).` It is logged once per target, counted in
+`<home>/outbound_refusals.json`, and reported by `lina doctor`. A refused cron target is listed in the job's
+`last_delivery_refused`, and the run's delivery error names the key. An edit to the list applies to the next send
+without a restart.
+
 ## 7. Agent to agent
 
 Agents talk to each other through the same model: a message on a place, delivered to the place's owner, answered on

@@ -363,6 +363,8 @@ def _peer_run(args, message: str, peer_name: str, profile: str | None, base: str
             or re.search(r"[\r\n\x00]", idempotency_key)):
         print("Idempotency key must be 1-255 characters without control newlines.", file=sys.stderr)
         return 2
+    if _outbound_refused(peer_name, profile):
+        return 1
     try:
         if _peer_run_durability(base, key) is not True:
             print(
@@ -391,6 +393,8 @@ def _peer_run(args, message: str, peer_name: str, profile: str | None, base: str
 
 
 def _peer_dm(args, message: str, peer_name: str, profile: str | None, base: str, key: str) -> int:
+    if _outbound_refused(peer_name, profile):
+        return 1
     session_id = ""
     try:
         session_id = _ensure_bot_chat(base, key)
@@ -469,6 +473,15 @@ def cmd_peer(args) -> int:
         return 2
     handler = _peer_run if action == "run" else _peer_dm
     return handler(args, message, peer_name, profile, base, key)
+
+
+def _outbound_refused(peer_name: str, profile: str | None) -> bool:
+    """True (refusal printed) when ``outbound.allow`` does not list this peer agent."""
+    from agent.outbound_lock import check_outbound
+    refusal = check_outbound("agent", f"{peer_name}/{profile}" if profile else peer_name, door="hermes peer")
+    if refusal:
+        print(refusal, file=sys.stderr)
+    return bool(refusal)
 
 
 def build_peer_parser(subparsers) -> None:

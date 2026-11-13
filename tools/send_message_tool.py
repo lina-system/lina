@@ -189,6 +189,9 @@ def _handle_react(args, remove=False):
     _relay_denial = _authorize_relay_target(platform_name, chat_id, _thread_id)
     if _relay_denial:
         return tool_error(_relay_denial)
+    from agent.outbound_lock import check_outbound
+    if refusal := check_outbound(platform_name, chat_id, _thread_id, door="send_message react"):
+        return tool_error(refusal)
 
     _, adapter = _live_adapter(platform)
     if adapter is None:
@@ -544,7 +547,7 @@ async def _dispatch_on_gateway_loop(runner, make_coro, log_message):
     return await asyncio.shield(asyncio.wrap_future(fut))
 
 
-async def _send_via_adapter(platform, pconfig, chat_id, chunk, *, thread_id=None, media_files=None,
+async def _send_via_adapter(platform, pconfig, chat_id, chunk, *, thread_id=None, media_files=None,  # outbound-checked: tools/send_message_tool.py::_send_to_platform
                             force_document=False):
     """Live in-process gateway adapter first, else the plugin's ``standalone_sender_fn`` (cron),
     else an error naming both; media uses the adapter's native media APIs under the same rules."""
@@ -683,6 +686,9 @@ async def _send_to_platform(platform, pconfig, chat_id, message, thread_id=None,
     lark-oapi), Telegram (chunks itself), plugin standalone media, native chunked, generic text."""
     from gateway.config import Platform
     platform_name = platform.value if hasattr(platform, "value") else str(platform)
+    from agent.outbound_lock import check_outbound
+    if refusal := check_outbound(platform_name, chat_id, thread_id, door="send_message"):
+        return {"error": refusal}
     media_files = media_files or []
     if platform_name == "weixin":  # plugin standalone sender only: no other plugin's import can block it
         return await _send_plugin_standalone(platform_name, pconfig, chat_id, message, [message], media_files,

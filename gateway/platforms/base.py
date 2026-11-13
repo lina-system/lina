@@ -1,3 +1,4 @@
+# health: allow FILE_LINES -- outbound.allow (lina#638): the security chokepoint every adapter send passes; the added lines are the one hook and the no-retry branch, the logic lives in agent/outbound_lock.py
 """Base platform adapter interface; every platform adapter inherits from BasePlatformAdapter."""
 
 import asyncio
@@ -23,6 +24,7 @@ from gateway.platforms.base_log_safety import safe_url_for_log
 
 from utils import normalize_proxy_url, unlink_files_older_than
 from agent.i18n import t
+from agent.outbound_lock import guard_adapter_class, is_outbound_refusal
 from agent.retry_utils import jittered_backoff
 from agent.proxy_bypass import first_proxy_env_value, should_bypass_proxy as _should_bypass_proxy
 
@@ -1808,6 +1810,10 @@ _strip_media_directives = _strip_media_tag_directives
 class BasePlatformAdapter(ABC):
     """Base class for platform adapters: connect/auth, receive, send, handle media."""
 
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        guard_adapter_class(cls)  # outbound.allow: every send* passes agent/outbound_lock.check_outbound
+
     # ``format_message`` renders ``` fences as real code blocks (tool-progress then sends a bare
     # fenced terminal command; plain-text platforms get the preview).
     supports_code_blocks: bool = False
@@ -3545,7 +3551,7 @@ class BasePlatformAdapter(ABC):
             return await self._resume_partial_send(chat_id, previous, reply_to=reply_to, metadata=metadata)
 
         result = await _send(content)
-        if result.success or self._send_retry_is_final(result):
+        if result.success or self._send_retry_is_final(result) or is_outbound_refusal(result):
             return result
         error_str = result.error or ""
         # A rate-limited / flood-capped send is transient: it should back off

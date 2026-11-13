@@ -2913,7 +2913,7 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
             return ""
         return "confirmed" if runtime else "accepted"
 
-    async def _admit_to_live_bot_chat(
+    async def _admit_to_live_bot_chat(  # outbound-exempt: an inbound peer turn into this agent's own Bot Chat
         self, session_id: str, message: Any, author: Optional[dict[str, Any]],
     ) -> Optional[tuple[Path, dict[str, Any]]]:
         """Admit a turn aimed at the canonical Bot Chat to the Desktop session that holds it live.

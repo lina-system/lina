@@ -1,3 +1,4 @@
+# health: allow FILE_LINES -- outbound.allow (lina#638): the one registered default for the egress allowlist the outbound lock reads
 """Default configuration data for Hermes Agent: DEFAULT_CONFIG and OPTIONAL_ENV_VARS.
 
 Pure-data leaf module — must not import from hermes_cli.config. Comments are the user-facing
@@ -1780,6 +1781,9 @@ DEFAULT_CONFIG = {
         # the base set (restricted/audited/air-gapped environments).
         "allow_lazy_installs": True,
     },
+
+    # The only destinations messages may leave to (agent/outbound_lock.py); empty = unrestricted.
+    "outbound": {"allow": []},
 
     "cron": {
         "catch_up_missed": True,  # False skips recurring misses beyond the local grace window.

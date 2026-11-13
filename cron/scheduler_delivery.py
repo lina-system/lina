@@ -1870,7 +1870,7 @@ def _deliver_result(
         logger.error("Job '%s': %s", job["id"], msg)
         return msg
 
-    delivery_errors = []
+    delivery_errors, refused_targets = [], []
     suppressed_targets = 0  # local: `job` is snapshotted into durable deferred records mid-loop
     for target in targets:
         # A failure notice for a platform that hides warning notifications is a suppressed
@@ -1879,6 +1879,10 @@ def _deliver_result(
         if (for_failure and target["platform"] != BOT_CHAT_PLATFORM
                 and not warning_notifications_enabled(target["platform"], user_cfg)):
             suppressed_targets += 1
+            continue
+        if refusal := _outbound.target_refusal(target):
+            delivery_errors.append(refusal)
+            refused_targets.append(_outbound.refused_label(target))
             continue
         # Bot Chat owns admission; never concurrently resume a live owner's transcript.
         if target["platform"] == BOT_CHAT_PLATFORM:
@@ -1924,6 +1928,7 @@ def _deliver_result(
     else:
         delivery_errors.extend(policy_drop_errors)
     _record_delivery_verification(job, unverified_targets)
+    _outbound.record_refused(job, refused_targets)
     return "; ".join(delivery_errors) if delivery_errors else None
 
 
@@ -1931,5 +1936,6 @@ def _deliver_result(
 # populated before ``scheduler`` re-exports from it.
 from cron import scheduler as _sched
 from cron import scheduler_delivery_origin as _origin
+from cron import scheduler_delivery_outbound as _outbound
 from cron import scheduler_preflight as _preflight
 from cron import scheduler_script as _script

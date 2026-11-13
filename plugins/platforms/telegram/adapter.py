@@ -7263,7 +7263,7 @@ def _is_connected(config) -> bool:
     return bool(str(token).strip())
 
 
-async def _standalone_send(pconfig, chat_id, message, *, thread_id=None, media_files=None, force_document=False):
+async def _standalone_send(pconfig, chat_id, message, *, thread_id=None, media_files=None, force_document=False):  # outbound-checked: tools/send_message_tool.py::_send_to_platform
     """Out-of-process delivery (standalone_sender_fn) so deliver=telegram cron jobs succeed without the
     gateway; delegates to the REST ``_send_telegram`` sender."""
     token = getattr(pconfig, "token", None)
