@@ -29,8 +29,8 @@ Delivery modes, used in the table:
 | Place | Today | Owning session | Session live | Session parked | No session live | Place finished |
 | --- | --- | --- | --- | --- | --- | --- |
 | Agent chat (the app's chat with an agent, the agent's Telegram DM) | gateway turn per inbound message; the app has its own API session per agent (`hermes_cli/lina_talk.py:4-11`) | the agent's main session for that owner | mid-run for owner text; next turn otherwise | n/a | resume (a gateway turn in the same conversation) | n/a |
-| Goal | goal-mode card and its record goal | the goal's session (the goal card's session) | mid-run | wake | resume; start if the session is gone | new task linked to the goal (default); reopen on the two cases in section 3 |
-| Task (to-do) | record to-do, or the work card it spawned | the session of its open work card when one exists; else the owning agent's main session (`hermes_cli/work/board.py:15-20`, `hermes_cli/work/notify.py:44-46`) | mid-run | wake | next turn of the owning agent's main session (started if idle) | same as goal |
+| Goal | goal-mode card and its record goal | the goal's session (the goal card's session) | mid-run | wake | resume; start if the session is gone | new goal linked to it (section 3) |
+| Task (to-do) | record to-do, or the work card it spawned | the session of its open work card when one exists; else the owning agent's main session (`hermes_cli/work/board.py:15-20`, `hermes_cli/work/notify.py:44-46`) | mid-run | wake | next turn of the owning agent's main session (started if idle) | new task linked to it (section 3) |
 | Run (a worker run) | `lina worker send` / answer (`hermes_cli/worker/hub.py:553-583`) | the run itself while it lives; the card session that started it once it ended | mid-run (the runner's steer; a runner with no channel gets next turn) | queued into the not yet started run (`hermes_cli/worker/hub.py:618-621`) | the card session that started the run, next turn; it decides on a follow-up run | the card session, next turn |
 | Inbox decision (a record decision, a card blocked on a question, a run's open question) | three paths (section 9) | the session that asked | mid-run | wake; only that question is released | resume the asking session | the decision is closed: the message becomes a note on the place |
 | Reply to a pushed notice (app notification, Telegram reply to a notice message) | lands in the chat session it was typed in (`gateway/run_inbound.py:1579-1588`) | the owner of the place the notice is about | as that place | as that place | as that place | as that place |
@@ -49,7 +49,7 @@ Rules that follow from the table:
 - On every open place (any place not finished) the owner's plain comment is an `instruction`, whether the owning
   session is running, parked or idle: it joins the running turn, wakes the parked session, or starts the idle one's
   next turn now. On a finished place the same plain comment is still an `instruction`; the "Place finished" column
-  decides what it does there (a new linked task by default, section 3).
+  decides what it does there (a new linked goal or task, section 3).
 
 ## 2. One message model
 
@@ -129,11 +129,12 @@ intent `decision` (or `answer`), `reply_to` the question, on the place that aske
 record's one-line notice to the main chat (`hermes_cli/work/cmd_comments.py:54-56`, `hermes_cli/work/notify.py:26-41`)
 is replaced by delivery of the message itself to the asking session.
 
-**A message on a finished goal or task starts a new task linked to it**, owned by the same agent, with the message as its
-first instruction. Done was decided by gates and a judge (lina#225, lina#295), and reopening would undo a verdict nobody
-re-judged. Reopen applies in two cases only: within the record's ten-minute undo window (lina-app#5), and when the
-owner's message is a `decision` that rejects the item's last verdict. Only a `note` (one its author marked as a note,
-or an agent's message without `reply_to`) on a finished place is stored and starts nothing.
+**A message on a finished goal starts a new goal linked to it** (`--follows`, lina#515), owned by the same agent, with
+the message as its first instruction; a message on a finished task starts a new task linked to it, the same way. The
+finished item is never reopened, whatever the message says, a `decision` that rejects its last verdict included: done
+was decided by gates and a judge (lina#225, lina#295), and reopening would undo a verdict nobody re-judged
+([work-and-delegation.md](work-and-delegation.md) section 4). Only a `note` (one its author marked as a note, or an
+agent's message without `reply_to`) on a finished place is stored and starts nothing.
 
 ## 4. What comes back
 
@@ -200,7 +201,9 @@ or an agent's message without `reply_to`) on a finished place is stored and star
   answers that owner's question). A message never lands in another agent's session unless that agent owns the place.
 - **Private work.** A place marked private (private artifacts in lina-app#40, private reports in lina#263, personal
   documents in lina#308) accepts messages only from the owner's own session, delivers only to its owning session, and
-  its replies and notices go only to the owner's devices; agents without that scope cannot read its messages.
+  its replies and notices go only to the owner's devices; agents without that scope cannot read its messages. Where
+  personal source text may go at all is the general rule in
+  [work-and-delegation.md](work-and-delegation.md#11-personal-source-text).
 - **Approvals still gate.** A message can ask for anything; the asking does not authorize it. Money, deletion,
   publishing, credentials and sending in the owner's name stay behind approvals (`tools/approval.py:142`,
   `docs/design/hermes-patterns.md` P1; held outbound drafts in lina#301). No message satisfies an approval, the owner's

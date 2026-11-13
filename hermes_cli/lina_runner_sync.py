@@ -186,6 +186,8 @@ class Run:
                 self.hold(name, None, newest, f"major version {runner.version} -> {newest} waits for a person", "major")
             return runner
         if self.plan:
+            if self.hub_busy(name, newest, rec) or self.prepare_needed(name, runner, newest, rec):
+                return runner
             rec["hub"] = {"state": "would move", "to": newest}
             return dataclasses.replace(runner, version=newest)
         return self.move(name, runner, newest, rec)
@@ -218,14 +220,9 @@ class Run:
                                        "sign_in_by": lina_runners.sign_in_kind(runner)})
             self.event(f"{name} hub {newest}: not moved, the hub is not signed in")
             return runner
-        if self.hub_busy(name, newest, rec):
+        if self.hub_busy(name, newest, rec) or self.prepare_needed(name, runner, newest, rec):
             return runner
         previous = lina_runners.current_version(self.root, runner)
-        if previous is None:
-            rec["hub"] = {"state": hub_view.PREPARE, "to": newest,
-                          "reason": f"`lina runners install {name}` on the hub first"}
-            self.event(hub_view.prepare_event(name, newest))
-            return runner
         with tempfile.TemporaryDirectory(prefix="lina-runner-sync-") as work:
             try:
                 found = self._resolve(runner, newest, self.needed_platforms(), Path(work))
@@ -254,6 +251,14 @@ class Run:
             rec["hub"] = {"state": "hub busy", "to": newest, "reason": f"{held} run(s) hold a hub slot; next day"}
             self.event(f"{name} hub {newest}: not moved, {held} run(s) on the hub")
         return bool(held)
+
+    def prepare_needed(self, name: str, runner: lina_runners.RunnerPin, newest: str, rec: dict) -> bool:
+        """No LINA copy on the hub: nothing to try a new version beside; a person installs it first."""
+        if lina_runners.current_version(self.root, runner) is not None:
+            return False
+        rec["hub"] = {"state": hub_view.PREPARE, "to": newest, "reason": f"`lina runners install {name}` on the hub first"}
+        self.event(hub_view.prepare_event(name, newest))
+        return True
 
     def try_on_hub(self, moved: lina_runners.RunnerPin, downloads: dict) -> tuple[bool, str]:
         def fetch(url: str, dest: Path) -> None:
