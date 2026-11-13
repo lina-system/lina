@@ -1,4 +1,4 @@
-# health: allow FILE_LINES -- outbound.allow (lina#638): the security chokepoint every adapter send passes; the added lines are the one hook and the no-retry branch, the logic lives in agent/outbound_lock.py
+# health: allow FILE_LINES -- outbound.allow (lina#638): the security chokepoint every adapter send passes; the added lines are the one hook, the no-retry branch and the routed-profile binds of post-handler delivery; the logic lives in agent/outbound_lock.py
 """Base platform adapter interface; every platform adapter inherits from BasePlatformAdapter."""
 
 import asyncio
@@ -24,7 +24,7 @@ from gateway.platforms.base_log_safety import safe_url_for_log
 
 from utils import normalize_proxy_url, unlink_files_older_than
 from agent.i18n import t
-from agent.outbound_lock import guard_adapter_class, is_outbound_refusal
+from agent.outbound_lock import delivering_for, guard_adapter_class, is_outbound_refusal
 from agent.retry_utils import jittered_backoff
 from agent.proxy_bypass import first_proxy_env_value, should_bypass_proxy as _should_bypass_proxy
 
@@ -3499,9 +3499,10 @@ class BasePlatformAdapter(ABC):
         if log_cmd is not None:
             logger.info("[%s] Sending command '/%s' response (%d chars) to %s", self.name, log_cmd,
                         len(text), event.source.chat_id)
-        result = await self._send_with_retry(
-            chat_id=event.source.chat_id, content=text, reply_to=_reply_anchor_for_event(event),
-            metadata=_mark_notify_metadata(thread_meta))
+        with delivering_for(event.source):  # outbound.allow of the profile the handler routed to
+            result = await self._send_with_retry(
+                chat_id=event.source.chat_id, content=text, reply_to=_reply_anchor_for_event(event),
+                metadata=_mark_notify_metadata(thread_meta))
         if eph_ttl > 0 and result.success and result.message_id:
             self._schedule_ephemeral_delete(event.source.chat_id, result.message_id, eph_ttl)
 
@@ -3844,7 +3845,8 @@ class BasePlatformAdapter(ABC):
         (False)."""
         guard = interrupt_event or asyncio.Event()
         self._active_sessions[session_key] = guard
-        task = asyncio.create_task(self._process_message_background(event, session_key))
+        with delivering_for(event.source):  # the task's replies: outbound.allow of the routed profile
+            task = asyncio.create_task(self._process_message_background(event, session_key))
         if not self._track_session_task(session_key, task):
             self._session_tasks.pop(session_key, None)
             self._release_session_guard(session_key, guard=guard)
@@ -4653,7 +4655,8 @@ class BasePlatformAdapter(ABC):
             if pending_event is None:  # consumed elsewhere during the back-off
                 self._cleanup_finished_session_task(session_key, guard)
                 return
-        await self._process_message_background(pending_event, session_key)
+        with delivering_for(pending_event.source):
+            await self._process_message_background(pending_event, session_key)
 
     def _clear_session_guard(self, session_key: str) -> None:
         """Clear (not delete) the session's interrupt Event so the guard stays live for inbound."""

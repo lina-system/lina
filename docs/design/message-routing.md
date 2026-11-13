@@ -240,6 +240,12 @@ dm`/`run`; `message_agent`; the webhook `github_comment` deliver; and worker end
 call, an allowed one exactly one. A channel-name entry resolves through each profile's own channel directory. The agent's own
 local chat, its own Bot Chat and the API server's answer to its caller are not outbound.
 
+Whose list applies: the active profile's. Under multiplexing a shared bot's event runs in the profile it was
+routed to, and the reply the adapter sends after the handler returned (final text, attachments, inline command
+replies, a busy follow-up's reply) is checked against that routed profile's list too: those paths bind the
+event's source (`agent/outbound_lock.py::delivering_for`) and the guard reads the routed profile from its identity.
+Only the policy read moves; the delivery ledger stays in the launch home.
+
 A refused send fails and nothing leaves the process. The error reads `Refused by outbound.allow: telegram:222 is not in
 the outbound.allow list in <home>/config.yaml, so nothing was sent (<door>).` It is logged once per target, counted in
 `<home>/outbound_refusals.json`, and reported by `lina doctor`. A refused cron target is listed in the job's

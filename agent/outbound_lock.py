@@ -20,18 +20,26 @@ profile, a peer ``<peer>``, which allows all its agents, or ``<peer>/<agent>``).
 through ``load_user_config_effective`` (the managed overlay applied), cached on the file signatures,
 so an edit applies to the next send without a restart; resolved entries are cached per profile home and channel-directory state.
 
+Whose list applies is decided in one place, :func:`_policy_home`: the active profile, except while an
+adapter delivers a reply after the runner's handler returned (it left the routed profile's scope by
+then). Those paths bind the inbound source with :func:`delivering_for`, and the routed profile pinned
+on that source decides. Only the policy read moves; delivery bookkeeping stays in the launch home.
+
 A refusal names ``outbound.allow``, is logged once per target per process, and is counted in
 ``<HERMES_HOME>/outbound_refusals.json``, which ``hermes doctor`` reports.
 """
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import functools
 import inspect
 import json
 import logging
 import threading
 import time
+from pathlib import Path
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -54,6 +62,9 @@ NOT_OUTBOUND = frozenset({
 # platforms through that platform's guarded adapter): not a message leaving to a chat.
 ANSWERING_PLATFORMS = frozenset({"local", "api_server", "webhook"})
 
+# (inbound source, active home when bound) of the reply an adapter is delivering; see delivering_for.
+_delivery: contextvars.ContextVar[Optional[tuple[Any, str]]] = contextvars.ContextVar(
+    "outbound_delivery", default=None)
 _logged: set[tuple[str, str]] = set()
 _parsed: dict[tuple, tuple[tuple[str, str, Optional[str]], ...]] = {}
 _counts_lock = threading.Lock()
@@ -143,11 +154,49 @@ def target_label(platform: str, chat_id: Any, thread_id: Any = None) -> str:
     return f"{label}:{thread_id}" if thread_id not in (None, "") else label
 
 
+@contextlib.contextmanager
+def delivering_for(source: Any):
+    """Check sends made inside against the profile ``source`` was routed to (its pinned
+    ``RoutingIdentity``), resolved at send time. Bound by every path that awaits the runner's message
+    handler and then delivers its reply."""
+    from hermes_constants import get_hermes_home
+    token = _delivery.set((source, str(get_hermes_home())))
+    try:
+        yield
+    finally:
+        _delivery.reset(token)
+
+
+def _policy_home() -> Optional[Path]:
+    """The profile home whose list applies when it is not the active one: the delivered source's
+    routed profile, unless a profile scope was entered since :func:`delivering_for` bound it (that
+    scope is the more specific answer, e.g. the turn itself running inside the handler)."""
+    from hermes_constants import get_hermes_home
+    bound = _delivery.get()
+    if bound is None or str(get_hermes_home()) != bound[1]:
+        return None
+    from gateway.session_identity import identity_of
+    identity = identity_of(bound[0])
+    return identity.runtime_home if identity is not None else None
+
+
 def check_outbound(platform: Any, chat_id: Any, thread_id: Any = None, *, door: str) -> Optional[str]:
     """None when a message may leave to ``platform:chat_id[:thread_id]`` (``platform="agent"``:
     ``chat_id`` is the agent name), else the refusal text, which names ``outbound.allow``. ``door``
     names the caller in the log and the doctor count. Public: cron's dry run checks its delivery
     targets with it."""
+    home = _policy_home()
+    if home is None:
+        return _check(platform, chat_id, thread_id, door)
+    from hermes_constants import reset_hermes_home_override, set_hermes_home_override
+    token = set_hermes_home_override(str(home))
+    try:
+        return _check(platform, chat_id, thread_id, door)
+    finally:
+        reset_hermes_home_override(token)
+
+
+def _check(platform: Any, chat_id: Any, thread_id: Any, door: str) -> Optional[str]:
     entries = allow_entries()
     if entries is None:
         return None
