@@ -117,12 +117,15 @@ def test_state_follows_each_column_and_counts_only_live_runs(client, conn, tmp_p
         triage: ("planned", "triage"), ids["scheduled"]: ("planned", "scheduled"),
         ids["ready"]: ("planned", "ready"), ids["live"]: ("in_progress", None),
         ids["stale"]: ("stopped", "unresponsive"), ids["gate-wait"]: ("waiting", "gate"),
-        ids["review"]: ("waiting", "review"), ids["blocked"]: ("stopped", "needs_input"),
+        ids["review"]: ("waiting", "review"), ids["blocked"]: ("stopped", "decision"),
         ids["done"]: ("done", None), goal: ("planned", "todo"),
     }
     for tid, state in expected.items():
         card = _card_json(client, tid)
         assert (card["state"], card["reason"]) == state, kb.get_task(conn, tid).title
+    stops = {tid: (c["waitingOn"], c["retry"]) for tid, c in ((t, _card_json(client, t)) for t in expected)}
+    assert stops[ids["blocked"]] == ("owner", "none") and stops[ids["scheduled"]] == (None, "scheduled")
+    assert stops[ids["stale"]] == stops[ids["live"]] == (None, None)
 
     running = _valid("WorkCardList", client.get(f"{WORK}/cards", params={"state": "in_progress"}).json())
     assert [c["id"] for c in running["cards"]] == [ids["live"]]
@@ -350,7 +353,7 @@ def test_inbox_lists_blocks_and_open_questions_and_answer_unblocks_only_needs_in
     unblocked = [event for event in answer_events if event.kind == "unblocked"][-1]
     assert (unblocked.payload["by"], unblocked.payload["reason"]) == ("owner", "blue")
     kept = _valid("AnswerResult", client.post(f"{WORK}/inbox/{capability}/answer", json={"text": "wait"}).json())
-    assert (kept["unblocked"], kept["state"], kept["reason"]) == (False, "stopped", "capability")
+    assert (kept["unblocked"], kept["state"], kept["reason"]) == (False, "stopped", "feedback")
     assert kb.get_task(conn, capability).status == "blocked"
     client.post(f"{WORK}/inbox/{asked}/answer", json={"text": "green"})
     inbox = _valid("Inbox", client.get(f"{WORK}/inbox").json())
@@ -384,3 +387,17 @@ def test_board_query_resolves_only_existing_boards(client, conn):
     assert client.get(f"{WORK}/cards", params={"board": "../etc"}).status_code == 400
     kb.create_board("side")
     assert client.get(f"{WORK}/cards", params={"board": "side"}).status_code == 200
+
+
+def test_a_dependency_block_classified_in_place_waits_on_the_owner(client, conn):
+    """lina#629: the failure breaker parks a card ``blocked`` untyped; classifying it ``dependency`` in place
+    leaves it ``blocked``, which only an operator resumes (the dispatcher wakes ``todo`` dependency cards and
+    ``needs_input`` waits), so it must not advertise ``retry: scheduled``."""
+    tid = _card(conn, "breaker parked")
+    with kb.write_txn(conn):
+        conn.execute("UPDATE tasks SET status = 'blocked', block_kind = NULL, current_run_id = NULL WHERE id = ?", (tid,))
+    assert kb.block_task(conn, tid, reason="waits for the import card", kind="dependency")
+    assert kb.get_task(conn, tid).status == "blocked"
+    card = _card_json(client, tid)
+    assert (card["state"], card["reason"], card["waitingOn"], card["retry"]) == (
+        "stopped", "blocked_by_item", "owner", "none")

@@ -281,8 +281,9 @@ def _bound_locale(root: Path):
 
 
 def _verdict_agent(card: dict) -> str | None:
-    """The agent a run waits on for its verdict (``waitingOn: agent:<name>``, lina#295): its to-do, not the owner's."""
-    waiting_on = card.get("waitingOn") or ""
+    """The agent a run waits on for its verdict (``waitingOn: agent:<name>``, lina#295): its to-do, not the owner's.
+    A stopped run's ``waitingOn`` (lina#629) is no verdict and counts for no agent."""
+    waiting_on = (card.get("waitingOn") or "") if card.get("state") == "waiting" else ""
     return waiting_on.removeprefix("agent:") if waiting_on.startswith("agent:") else None
 
 

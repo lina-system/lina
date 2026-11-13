@@ -53,10 +53,30 @@ def work_state(job: dict, live: dict | None = None) -> tuple[str, str | None]:
     return "in_progress", None
 
 
-def waiting_on(job: dict, state: str, reason: str | None) -> str | None:
-    """Who the run waits on: a finished run's verdict belongs to the agent that handed it out
-    (``agent:<name>``, lina#295), never to the owner; None when it waits on nobody's verdict."""
-    return f"agent:{job['bot']}" if (state, reason) == ("waiting", "review") and job.get("bot") else None
+def waiting_on(job: dict, state: str, reason: str | None, replaced: bool = False) -> str | None:
+    """Who acts next on the run: a finished run's verdict belongs to the agent that handed it out
+    (``agent:<name>``, lina#295), never to the owner. A stopped run (lina#629) waits on that agent too, or on the
+    owner when no agent handed it out; nobody when a later run of its to-do replaced it or it was cancelled."""
+    if (state, reason) == ("waiting", "review"):
+        return f"agent:{job['bot']}" if job.get("bot") else None
+    if state != "stopped" or replaced or reason == "cancelled":
+        return None
+    return f"agent:{job['bot']}" if job.get("bot") else "owner"
+
+
+def replaced_runs(jobs: list[dict]) -> set[str]:
+    """The runs a later run of the same to-do followed (*jobs* in creation order, as ``Store.all`` gives them).
+    Members of one batch (``group``) share a to-do and are no retries of each other."""
+    later: dict[str, list[str | None]] = {}
+    replaced: set[str] = set()
+    for job in reversed(jobs):
+        todo = job.get("todo")
+        if todo:
+            group = job.get("group")
+            if any(not group or other != group for other in later.get(todo, ())):
+                replaced.add(job["id"])
+            later.setdefault(todo, []).append(group)
+    return replaced
 
 
 def _title(job: dict) -> str:
@@ -118,7 +138,9 @@ def cards(worker_root: Path, now: float) -> list[dict]:
     two days, newest first. A run handed out from a Hermes card is listed here with its card and board."""
     store = Store(worker_root)
     ends = _ends(store)
-    jobs = [job for job in store.all() if (not job.get("card") or kanban_link.on_hermes(job["card"]))
+    every = store.all()
+    replaced = replaced_runs(every)
+    jobs = [job for job in every if (not job.get("card") or kanban_link.on_hermes(job["card"]))
             and _recent(job, ends.get(job["id"]), now)]
     receipts = record.receipts_by_task(store)
     lives = _shared_lives(worker_root, jobs)
@@ -129,11 +151,12 @@ def cards(worker_root: Path, now: float) -> list[dict]:
         live = lives.get(job["id"])
         state, reason = work_state(job, live)
         out.append({"id": job["id"], "title": _title(job), "state": state, "reason": reason, "agent": job.get("bot"),
-                    "waitingOn": waiting_on(job, state, reason),
+                    "waitingOn": waiting_on(job, state, reason, job["id"] in replaced),
+                    "retry": ("scheduled" if job["id"] in replaced else "none") if state == "stopped" else None,
                     "kind": job.get("mode"), "todo": job.get("todo"), "host": job.get("host"),
                     "startedAt": job.get("started"), "endedAt": record.ended_at(job, receipts.get(job["id"], [])),
                     "now": _now_line(live) if state in ("in_progress", "waiting") and live else None,
-                    "card": (job.get("card") or {}).get("task"), "board": (job.get("card") or {}).get("board"),
+                    "card": record.card_id(job), "board": (job.get("card") or {}).get("board"),
                     "model": record.served_model(job), "settingsRevision": record.settings_revision(job),
                     "plain": plain[job["id"]]})
     return out
