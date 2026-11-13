@@ -210,8 +210,8 @@ components:
       enum: [scheduled, none, null]
       description: >
         Whether the core will start the card again by itself (lina#629): scheduled for a card in the
-        scheduled column and a stopped card whose block resumes by itself (blocked_by_item, or a
-        recorded wait); none for a stopped card that waits on a person; null when unknown (a card
+        scheduled column and a stopped card whose block resumes by itself (a recorded
+        wait); none for a stopped card that waits on a person; null when unknown (a card
         that is not blocked, or one with no block event).
     Agent:
       type: string

@@ -648,7 +648,8 @@ def test_a_stopped_hermes_card_says_why_it_stopped_and_who_acts_from_its_latest_
         "card-4": ("stopped", "decision", "owner", "none"),
         "card-5": ("stopped", "feedback", "owner", "none"),
         "card-6": ("stopped", "decision", "owner", "none"),
-        "card-7": ("stopped", "blocked_by_item", None, "scheduled"),
+        # A dependency card still ``blocked`` was classified in place after the breaker: only a person resumes it.
+        "card-7": ("stopped", "blocked_by_item", "owner", "none"),
         "card-8": ("stopped", "feedback", "owner", "none"),
         "card-9": ("stopped", None, None, None),
         "card-11": ("stopped", "failed", "owner", "none"),

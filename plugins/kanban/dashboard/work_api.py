@@ -45,8 +45,10 @@ _PRS_GATE = re.compile(r"\bgate\s+prs\b")
 _QUESTION_PREFIXES = ("질문:", "Q:")
 # A stopped card's ``(reason, waitingOn, retry)`` by the kind of its latest block event (lina#629); the table is
 # the one the schema's ``Reason`` documents.
+# A ``dependency`` block that is still ``blocked`` (a failure-breaker block classified in place) is sticky: only a
+# ``todo`` dependency card wakes by itself, so an owner has to act.
 _KIND_STOPS = {"needs_input": ("decision", "owner", "none"), "capability": ("feedback", "owner", "none"),
-               "transient": ("hold", "owner", "none"), "dependency": ("blocked_by_item", None, "scheduled")}
+               "transient": ("hold", "owner", "none"), "dependency": ("blocked_by_item", "owner", "none")}
 # The kind word of an untyped block written in the owner-inbox format, ``<agent> · <kind> · <summary>``.
 _INBOX_LINE = re.compile(r"^[^·\n]+?\s·\s(?P<kind>.+?)\s·\s")
 _INBOX_REASONS = {"갈림길": "decision", "질문": "decision", "검토": "review", "돈·바깥": "feedback",

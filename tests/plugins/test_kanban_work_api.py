@@ -387,3 +387,17 @@ def test_board_query_resolves_only_existing_boards(client, conn):
     assert client.get(f"{WORK}/cards", params={"board": "../etc"}).status_code == 400
     kb.create_board("side")
     assert client.get(f"{WORK}/cards", params={"board": "side"}).status_code == 200
+
+
+def test_a_dependency_block_classified_in_place_waits_on_the_owner(client, conn):
+    """lina#629: the failure breaker parks a card ``blocked`` untyped; classifying it ``dependency`` in place
+    leaves it ``blocked``, which only an operator resumes (the dispatcher wakes ``todo`` dependency cards and
+    ``needs_input`` waits), so it must not advertise ``retry: scheduled``."""
+    tid = _card(conn, "breaker parked")
+    with kb.write_txn(conn):
+        conn.execute("UPDATE tasks SET status = 'blocked', block_kind = NULL, current_run_id = NULL WHERE id = ?", (tid,))
+    assert kb.block_task(conn, tid, reason="waits for the import card", kind="dependency")
+    assert kb.get_task(conn, tid).status == "blocked"
+    card = _card_json(client, tid)
+    assert (card["state"], card["reason"], card["waitingOn"], card["retry"]) == (
+        "stopped", "blocked_by_item", "owner", "none")
