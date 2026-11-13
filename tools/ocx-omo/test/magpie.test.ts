@@ -7,71 +7,36 @@ import { fileURLToPath } from "node:url";
 import { after, describe, test } from "node:test";
 import { loadCatalog, type Catalog } from "../src/catalog.js";
 import { OcxOmoError } from "../src/errors.js";
-import { loadNames, magpieProvider, type Names } from "../src/names.js";
-import { buildPlan, OCX_TARGET, type Entry, type Plan, type Policy, type Target } from "../src/plan.js";
+import { currentEntries, readConfig } from "../src/config.js";
+import { buildPlan, type Plan, type Policy } from "../src/plan.js";
 import { extractChains } from "../src/upstream.js";
 
 /**
- * lina#587: the same routes through a node's magpie. The fixture catalogs carry the 16 names the routes of a real
- * node's omo.jsonc use, in OCX form (`models.ocx.json`) and, beside them, in a magpie node's form
- * (`models.magpie.json`: `hub/<provider>/<id>`, no `-fast` tiers, both Gemini namespaces as one provider).
+ * lina#587: routes through a node's magpie, using catalog ids `hub/<provider>/<id>`.
  */
 const at = (path: string) => fileURLToPath(new URL(path, import.meta.url));
 const FIXTURES = at("../../test/fixtures/");
-const NAMES_PATH = at("../../../../hermes_cli/worker/proxy_names.json"); // LINA's one table, not a copy
 const CLI = at("../src/cli.js");
 const OMO_TASK = join(FIXTURES, "omo-task-5.1.69.js");
 const MODELS = join(FIXTURES, "models.magpie.json");
 
 const policy = JSON.parse(readFileSync(at("../../policy.default.json"), "utf8")) as Policy;
 const chains = extractChains(readFileSync(OMO_TASK, "utf8"));
-const names = loadNames(NAMES_PATH);
-const ocxCatalog = loadCatalog(join(FIXTURES, "models.ocx.json"), "opencodex");
-const magpieCatalog = loadCatalog(MODELS, "magpie");
-const magpie = (remoteId = "hub", table: Names = names): Target => ({ kind: "magpie", remoteId, names: table });
-const ocxPlan = buildPlan(chains, policy, ocxCatalog);
-const magpiePlan = buildPlan(chains, policy, magpieCatalog, magpie());
+const magpieCatalog = loadCatalog(MODELS);
+const magpiePlan = buildPlan(chains, policy, magpieCatalog);
 const references = (plan: Plan) => Object.values(plan.routes).flatMap((route) => route.models);
 
-/** An OCX route entry under its magpie name, read through the table independently of the planner. */
-function asMagpie(entry: Entry): Entry {
-  const id = entry.model.slice("opencodex/".length).replace(/--fast$/, "-fast");
-  const slash = id.indexOf("/");
-  const [namespace, model] = slash < 0 ? ["", id] : [id.slice(0, slash), id.slice(slash + 1)];
-  return { ...entry, model: `magpie/hub/${magpieProvider(names, namespace, model)}/${model}` };
-}
-
 describe("magpie plan from the fixture catalog", () => {
-  test("the OCX plan is the one without a target: 14 routes, 57 references, all opencodex", () => {
-    assert.deepEqual(buildPlan(chains, policy, ocxCatalog, OCX_TARGET), ocxPlan);
-    assert.equal(Object.keys(ocxPlan.routes).length, 14);
-    assert.equal(references(ocxPlan).length, 57);
-    assert.equal(new Set(references(ocxPlan).map((entry) => entry.model)).size, 16);
-    assert.ok(references(ocxPlan).every((entry) => entry.model.startsWith("opencodex/")));
-  });
-
   test("writes the same 14 routes as magpie/<remote_id>/<provider>/<id> names from the catalog", () => {
-    assert.deepEqual(Object.keys(magpiePlan.routes), Object.keys(ocxPlan.routes));
+    assert.equal(Object.keys(magpiePlan.routes).length, 14);
     for (const { model } of references(magpiePlan)) {
       assert.match(model, /^magpie\/hub\/(claude|codex|antigravity|grok)\/[^/]+$/);
       assert.ok(magpieCatalog.has(model.slice("magpie/".length)), model);
     }
-    assert.deepEqual(magpiePlan.warnings, ocxPlan.warnings);
+    assert.deepEqual(magpiePlan.warnings, []);
   });
 
-  test("keeps omo's order and strength position by position, minus what magpie lacks", () => {
-    for (const [path, route] of Object.entries(magpiePlan.routes)) {
-      const seen = new Set<string>();
-      const expected = (ocxPlan.routes[path]?.models ?? []).map(asMagpie).filter(({ model }) => {
-        const keep = magpieCatalog.has(model.slice("magpie/".length)) && !seen.has(model);
-        seen.add(model);
-        return keep;
-      });
-      assert.deepEqual(route.models, expected, path);
-    }
-  });
-
-  test("writes Gemini once per chain, the first namespace's place kept", () => {
+  test("writes Gemini once per chain, keeping upstream order and reasoning", () => {
     const visual = magpiePlan.routes["categories.visual-engineering"]?.models ?? [];
     assert.deepEqual(visual.slice(0, 2), [
       { model: "magpie/hub/antigravity/gemini-4-argon", reasoning: "low" },
@@ -96,9 +61,9 @@ describe("magpie plan from the fixture catalog", () => {
     assert.ok(!references(magpiePlan).some((entry) => entry.model.endsWith("-fast")));
   });
 
-  test("skips a model the catalog does not carry, as OCX does", () => {
+  test("skips a model the catalog does not carry", () => {
     const without: Catalog = new Map([...magpieCatalog].filter(([id]) => id !== "hub/claude/claude-opus-5-5"));
-    const plan = buildPlan(chains, policy, without, magpie());
+    const plan = buildPlan(chains, policy, without);
     const ultrabrain = plan.routes["categories.ultrabrain"];
     assert.deepEqual(ultrabrain?.models.map((entry) => entry.model), [
       "magpie/hub/codex/gpt-6-astra",
@@ -107,11 +72,11 @@ describe("magpie plan from the fixture catalog", () => {
     assert.ok(ultrabrain?.skipped.includes("claude-opus-5-5"));
   });
 
-  test("routes only to the named remote, and maps a namespace only through the table", () => {
-    const elsewhere = buildPlan(chains, policy, magpieCatalog, magpie("other"));
+  test("routes only to the named remote and the policy's providers", () => {
+    const elsewhere = buildPlan(chains, policy, magpieCatalog, "other");
     assert.equal(references(elsewhere).length, 0);
     assert.ok(elsewhere.warnings.includes("categories.quick: no model is available in the catalog"));
-    const noGrok = buildPlan(chains, policy, magpieCatalog, magpie("hub", { ...names, namespaces: { anthropic: "claude" } }));
+    const noGrok = buildPlan(chains, { ...policy, providers: ["codex", "claude"] }, magpieCatalog);
     assert.ok(!references(noGrok).some((entry) => /grok|antigravity/.test(entry.model)));
   });
 });
@@ -125,15 +90,15 @@ const unprefixed = (plan: Plan): Plan => JSON.parse(JSON.stringify(plan).replace
 
 describe("magpie plan with an empty remote id (the node's own magpie)", () => {
   test("writes magpie/<provider>/<id> from a plain catalog, route by route as through the hub's prefix", () => {
-    const plan = buildPlan(chains, policy, plainCatalog, magpie(""));
+    const plan = buildPlan(chains, policy, plainCatalog, "");
     assert.deepEqual(plan, unprefixed(magpiePlan));
     assert.ok(references(plan).length > 0);
     for (const { model } of references(plan)) assert.match(model, /^magpie\/(claude|codex|antigravity|grok)\/[^/]+$/);
   });
 
   test("each form reads only its own catalog", () => {
-    assert.equal(references(buildPlan(chains, policy, magpieCatalog, magpie(""))).length, 0);
-    assert.equal(references(buildPlan(chains, policy, plainCatalog, magpie("hub"))).length, 0);
+    assert.equal(references(buildPlan(chains, policy, magpieCatalog, "")).length, 0);
+    assert.equal(references(buildPlan(chains, policy, plainCatalog, "hub")).length, 0);
   });
 
   describe("cli", () => {
@@ -143,7 +108,7 @@ describe("magpie plan with an empty remote id (the node's own magpie)", () => {
     writeFileSync(models, JSON.stringify({ providers: { magpie: { models: [...plainCatalog.values()] } } }));
     const run = (...args: string[]) =>
       spawnSync(process.execPath, [CLI, "plan", "--home", home, "--omo-task", OMO_TASK, "--models", models,
-        "--proxy", "magpie", "--names", NAMES_PATH, ...args], { encoding: "utf8" });
+        ...args], { encoding: "utf8" });
 
     test("an empty --remote-id plans the plain names", () => {
       const planned = run("--remote-id", "", "--json");
@@ -160,18 +125,18 @@ describe("magpie plan with an empty remote id (the node's own magpie)", () => {
   });
 });
 
-describe("loadNames", () => {
-  const dir = mkdtempSync(join(tmpdir(), "ocx-omo-names-"));
+describe("loadCatalog", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ocx-omo-catalog-"));
   after(() => rmSync(dir, { recursive: true, force: true }));
 
-  test("refuses a missing file or a table of another shape", () => {
-    assert.throws(() => loadNames(join(dir, "none.json")), OcxOmoError);
-    writeFileSync(join(dir, "bad.json"), JSON.stringify({ namespaces: { google: 1 }, bare_prefixes: {} }));
-    assert.throws(() => loadNames(join(dir, "bad.json")), /bare_prefixes/);
+  test("refuses a missing file or a catalog without magpie models", () => {
+    assert.throws(() => loadCatalog(join(dir, "none.json")), OcxOmoError);
+    writeFileSync(join(dir, "bad.json"), JSON.stringify({ providers: { other: { models: [{ id: "hub/codex/gpt-x" }] } } }));
+    assert.throws(() => loadCatalog(join(dir, "bad.json")), /has no magpie models; run magpie's connection command for omo/);
   });
 });
 
-describe("cli through magpie and back", () => {
+describe("cli through magpie", () => {
   const home = mkdtempSync(join(tmpdir(), "ocx-omo-home-"));
   after(() => rmSync(home, { recursive: true, force: true }));
   const config = join(home, ".omo", "omo.jsonc");
@@ -179,36 +144,61 @@ describe("cli through magpie and back", () => {
     spawnSync(process.execPath, [CLI, verb, "--home", home, "--omo-task", OMO_TASK, "--models", MODELS, ...args], {
       encoding: "utf8",
     });
-  const viaMagpie = ["--proxy", "magpie", "--remote-id", "hub", "--names", NAMES_PATH];
-  const routes = () => JSON.parse(readFileSync(config, "utf8").replace(/\/\/.*$/gm, "")) as Record<string, any>;
-
-  test("apply magpie, then ocx, restores the OCX routes byte for byte and keeps every backup", () => {
+  test("apply records the baseline and keeps comments, settings and backups", () => {
     mkdirSync(join(home, ".omo"));
     writeFileSync(config, '{\n  // mine\n  "categories": { "quick": { "model": "x/y", "prompt_append": "stay" } }\n}\n');
     assert.equal(run("check").status, 10); // no baseline yet
-    assert.equal(run("apply").status, 0);
-    const ocxText = readFileSync(config, "utf8");
-    assert.equal(run("check").status, 0);
-
-    assert.equal(run("check", ...viaMagpie).status, 10); // every route moves
-    const applied = run("apply", ...viaMagpie);
+    const applied = run("apply");
     assert.equal(applied.status, 0, applied.stderr);
-    assert.equal(run("check", ...viaMagpie).status, 0);
-    const moved = routes();
-    assert.equal(moved["categories"].quick.prompt_append, "stay");
-    assert.deepEqual(moved["categories"].quick.models, magpiePlan.routes["categories.quick"]?.models);
+    assert.equal(run("check").status, 0);
+    const moved = readConfig(config);
+    assert.deepEqual(currentEntries(moved.parsed, "categories.quick"), magpiePlan.routes["categories.quick"]?.models);
+    assert.ok(moved.text.includes('"prompt_append": "stay"'));
     assert.ok(readFileSync(config, "utf8").includes("// mine"));
 
-    assert.equal(run("check").status, 10);
-    assert.equal(run("apply").status, 0);
-    assert.equal(readFileSync(config, "utf8"), ocxText);
-    assert.equal(run("check").status, 0);
-    assert.equal(readdirSync(join(home, ".omo")).filter((name) => name.startsWith("omo.jsonc.bak.ocx-omo-")).length, 3);
+    assert.equal(run("check", "--remote-id", "other").status, 10);
+    assert.equal(readdirSync(join(home, ".omo")).filter((name) => name.startsWith("omo.jsonc.bak.ocx-omo-")).length, 1);
   });
 
-  test("refuses magpie without the name table, and an unknown proxy, with exit 2", () => {
-    assert.equal(run("plan", "--proxy", "magpie").status, 2);
-    assert.match(run("plan", "--proxy", "magpie").stderr, /--names/);
-    assert.equal(run("plan", "--proxy", "openrouter").status, 2);
+  test("reads a user policy at the existing path and honours --config with --only", () => {
+    const customHome = mkdtempSync(join(tmpdir(), "ocx-omo-policy-"));
+    try {
+      const policyDir = join(customHome, ".omo", "ocx-omo");
+      mkdirSync(policyDir, { recursive: true });
+      writeFileSync(join(policyDir, "policy.json"), JSON.stringify({ providers: ["claude"], extras: {} }));
+      const customConfig = join(customHome, "custom.jsonc");
+      const applied = run("apply", "--home", customHome, "--config", customConfig, "--only", "categories.quick");
+      assert.equal(applied.status, 0, applied.stderr);
+      const parsed = readConfig(customConfig).parsed;
+      assert.deepEqual(currentEntries(parsed, "categories.quick"), [
+        { model: "magpie/hub/claude/claude-haiku-5-5", reasoning: "medium" },
+      ]);
+      assert.deepEqual(currentEntries(parsed, "categories.architect"), []);
+      assert.equal(readFileSync(join(policyDir, "state.json"), "utf8").includes("categories.quick"), true);
+    } finally {
+      rmSync(customHome, { recursive: true, force: true });
+    }
   });
+
+  test("refuses a persisted OCX-era policy with a message naming the file", () => {
+    const customHome = mkdtempSync(join(tmpdir(), "ocx-omo-oldpolicy-"));
+    try {
+      const policyDir = join(customHome, ".omo", "ocx-omo");
+      mkdirSync(policyDir, { recursive: true });
+      writeFileSync(join(policyDir, "policy.json"), JSON.stringify({ provider: "opencodex", namespaces: ["", "claude"], exclude: [], extras: {} }));
+      const refused = run("plan", "--home", customHome);
+      assert.notEqual(refused.status, 0);
+      assert.match(refused.stderr, /policy\.json: no "providers" list/);
+    } finally {
+      rmSync(customHome, { recursive: true, force: true });
+    }
+  });
+
+  for (const flag of ["--proxy", "--names"]) {
+    test(`refuses removed option ${flag} as unknown with exit 2`, () => {
+      const refused = run("plan", flag, "unused");
+      assert.equal(refused.status, 2);
+      assert.match(refused.stderr, /Unknown option/);
+    });
+  }
 });

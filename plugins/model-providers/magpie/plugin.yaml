@@ -1,0 +1,5 @@
+name: magpie-provider
+kind: model-provider
+version: 1.0.0
+description: magpie — the local model gateway every model call goes through
+author: LINA

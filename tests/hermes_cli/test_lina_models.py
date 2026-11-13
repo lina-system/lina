@@ -1,28 +1,45 @@
-"""``lina models`` and ``GET /api/lina/models*`` (lina#32) over a fake OCX that prints the recorded ``--json``
-output of OCX 2.95.0 (an empty data dir, no accounts): a short table, ``--json`` passing the data through, the same
-data with an ``ETag`` on the client API, and nothing read while LINA's own OCX is not the one running."""
+"""Models CLI and authenticated API read the same synthetic magpie gateway (lina#32)."""
 import argparse
 import json
 
 import pytest
 from fastapi.testclient import TestClient
 
-from hermes_cli import lina_ocx
+from hermes_cli import lina_deps
 from hermes_cli.subcommands.models import build_models_parser
-from tests.hermes_cli._lina_ocx_fakes import FIXTURES, installed_root
+from hermes_cli import lina_magpie
+
+DATA = {
+    "models_live.json": [{"provider": "claude", "id": "claude/m-a", "raw": "hub/claude/m-a",
+                          "contextWindow": 8192, "disabled": False}],
+    "account_list.json": {"accounts": [], "notes": []},
+    "status.json": {"proxy": {"running": True, "pid": None, "health": {"message": "magpie: 1 models"}},
+                    "listen": {"port": 3425}},
+    "usage.json": {"range": "30d", "summary": {"requests": 7, "totalTokens": 6600, "estimatedCostUsd": 0.42}},
+}
 
 
 @pytest.fixture
 def root(tmp_path, monkeypatch):
-    root = installed_root(tmp_path / "lina")
-    monkeypatch.setattr(lina_ocx, "lina_root", lambda: root)
+    root = tmp_path / "lina"
+    root.mkdir()
+    monkeypatch.setattr(lina_deps, "lina_root", lambda: root)
     running = {"yes": True}
-    monkeypatch.setattr(lina_ocx, "own_proxy_running", lambda root, port: running["yes"])
+
+    def get(proxy, path):
+        if not running["yes"]:
+            raise lina_magpie.MagpieError("magpie is not reachable")
+        return {"/v1/models": {"data": [{"id": "hub/claude/m-a", "context_length": 8192}]},
+                "/v1/magpie/quotas?kept=1": {"data": []},
+                "/v1/magpie/usage?period=30d": {"calls": 7, "input": 1200, "output": 300,
+                    "cache_read": 5000, "cache_write": 100, "cost": 0.42}}[path]
+
+    monkeypatch.setattr(lina_magpie, "get", get)
     return running
 
 
 def _fixture(name):
-    return json.loads((FIXTURES / name).read_text())
+    return DATA[name]
 
 
 def _models(*argv) -> int:
@@ -47,13 +64,13 @@ def test_models_prints_a_table_of_the_live_catalog(root, capsys):
                                                (["accounts", "--json"], "account_list.json"),
                                                (["status", "--json"], "status.json"),
                                                (["usage", "--json"], "usage.json")])
-def test_json_passes_ocx_data_through(root, capsys, argv, fixture):
+def test_json_passes_magpie_data_through(root, capsys, argv, fixture):
     assert _models(*argv) == 0
     assert json.loads(capsys.readouterr().out) == _fixture(fixture)
 
 
 @pytest.mark.platforms("posix")
-def test_accounts_table_lists_each_account_and_ocx_notes(root, capsys):
+def test_accounts_table_lists_each_account_and_magpie_notes(root, capsys):
     assert _models("accounts") == 0
     lines = capsys.readouterr().out.splitlines()
     data = _fixture("account_list.json")
@@ -61,12 +78,6 @@ def test_accounts_table_lists_each_account_and_ocx_notes(root, capsys):
     assert [line.split()[1] for line in lines[1:1 + len(data["accounts"])]] == [a["id"] for a in data["accounts"]]
     assert lines[1 + len(data["accounts"]):] == data["notes"]
 
-
-def test_nothing_is_read_while_lina_s_ocx_is_not_running(root, capsys, monkeypatch):
-    root["yes"] = False
-    monkeypatch.setattr("subprocess.run", lambda *a, **kw: pytest.fail("ocx was called"))
-    assert _models("accounts") == 1
-    assert "lina services start ocx" in capsys.readouterr().out
 
 
 @pytest.fixture
@@ -90,10 +101,10 @@ def test_api_serves_the_same_data_with_an_etag(root, client, path, view, fixture
     assert again.status_code == 304 and again.headers["etag"] == first.headers["etag"]
 
 
-def test_api_is_read_only_authenticated_and_503_while_ocx_is_down(root, client):
+def test_api_is_read_only_authenticated_and_503_while_magpie_is_down(root, client):
     from hermes_cli import web_server
     assert TestClient(web_server.app).get("/api/lina/models").status_code == 401
     assert client.post("/api/lina/models").status_code == 405
     root["yes"] = False
     response = client.get("/api/lina/models/accounts")
-    assert response.status_code == 503 and "lina services start ocx" in response.json()["detail"]
+    assert response.status_code == 503 and "magpie is not reachable" in response.json()["detail"]

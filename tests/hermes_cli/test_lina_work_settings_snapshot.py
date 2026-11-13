@@ -1,6 +1,6 @@
 """The models view's last good list reaches a submit in another process (lina#283): every good read writes
 ``work-settings/models-last-good.json`` (only what the check uses), and a fresh ``lina worker submit`` process
-decides the fallback from it while it is at most ten minutes old. OCX is a fake with synthetic rows; no device is
+decides the fallback from it while it is at most ten minutes old. magpie is a fake with synthetic rows; no device is
 configured, so the job is only recorded (queued), never run."""
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from hermes_cli import lina_models
+from hermes_cli import lina_magpie
 from hermes_cli import lina_work_settings_models as wm
 from hermes_cli.worker.hub_store import Store
 from tests.hermes_cli.test_worker_settings_at_submit import CONFIG, LIVE, QUOTA
@@ -34,8 +34,9 @@ def root(tmp_path, monkeypatch):
     monkeypatch.setenv("LINA_HOME", str(base))
     monkeypatch.setenv("HERMES_HOME", str(base))
     monkeypatch.delenv("HERMES_KANBAN_TASK", raising=False)
-    answers = {("models", "live", "--json"): LIVE, ("account", "list", "--quota", "--json"): NAMED_QUOTA}
-    monkeypatch.setattr(lina_models, "run", lambda args, root=None: answers[tuple(args)])
+    monkeypatch.setattr(lina_magpie, "get", lambda proxy, path: {"data": [
+        {"id": f"hub/{r['provider']}/{r['id']}"} for r in LIVE if not r.get("disabled")]})
+    monkeypatch.setattr(lina_magpie, "model_accounts", lambda proxy: NAMED_QUOTA["accounts"])
     wm.forget()
     yield base
     wm.forget()
@@ -59,7 +60,7 @@ def test_a_submit_in_a_new_process_runs_on_the_fallback_after_a_models_read_in_a
 
     job = _submit(root, tmp_path)
 
-    assert (job["settings"]["model_source"], job["settings"]["ocx_check"]) == ("fallback:off", "off")
+    assert (job["settings"]["model_source"], job["settings"]["model_state"]) == ("fallback:off", "off")
     assert (job["model"]["provider"], job["model"]["id"]) == ("prov", "m-open")
     kinds = [r["kind"] for r in Store(root / "worker").receipts_of(job["id"])]
     assert kinds.count("model_fallback") == 1
@@ -71,7 +72,7 @@ def test_a_snapshot_older_than_ten_minutes_leaves_the_check_unchecked(root, tmp_
 
     job = _submit(root, tmp_path)
 
-    assert (job["settings"]["model_source"], job["settings"]["ocx_check"]) == ("runner:codex", "unchecked")
+    assert (job["settings"]["model_source"], job["settings"]["model_state"]) == ("runner:codex", "unchecked")
     assert (job["model"]["provider"], job["model"]["id"], job["model"]["thinking"]) == ("prov", "m-off", "high")
     assert "model_fallback" not in [r["kind"] for r in Store(root / "worker").receipts_of(job["id"])]
 
@@ -85,7 +86,7 @@ def test_the_snapshot_keeps_no_account_name_email_id_or_label(root):
     assert all(not {"name", "email", "id", "label"} & set(a) for a in data["accounts"])
     assert [a["provider"] for a in data["accounts"]] == ["prov", "zed", "gone"]
     assert data["accounts"][0]["quota"] == {"weeklyPercent": 40}
-    assert [(r["provider"], r["id"]) for r in data["rows"]] == [(r["provider"], r["id"]) for r in LIVE]
+    assert [(r["provider"], r["id"]) for r in data["rows"]] == [(r["provider"], r["id"]) for r in LIVE if not r.get("disabled")]
 
 
 @pytest.mark.parametrize("text", ["", "not json", "[]", '{"at": "now", "rows": [], "accounts": []}',

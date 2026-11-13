@@ -33,7 +33,7 @@ class _Model(BaseHTTPRequestHandler):
 
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
-        # OCX routes on the model id and keeps a conversation on its upstream by the session-id header.
+        # MAGPIE routes on the model id and keeps a conversation on its upstream by the session-id header.
         self.server.requests.append({**body, '_session_id': self.headers.get('session-id')})
         messages = body.get('messages', [])
         if _is_review(body) and messages[-1].get('role') != 'tool':
@@ -69,7 +69,7 @@ def _gateway(root, url, **overrides):
     gw = GatewayProc(root=root, base_url=url, tag=f'refine-cold-{root.name}')
     config = {
         '_config_version': 52,
-        'model': {'provider': 'ocx', 'default': 'openai/gpt-5', 'base_url': url,
+        'model': {'provider': 'magpie', 'default': 'openai/gpt-5', 'base_url': url,
                   'api_key': 'loopback-only', 'api_mode': 'chat_completions'},
         'prefill_messages_file': 'prefill.json',
         'agent': {'api_max_retries': 0},
@@ -86,7 +86,7 @@ def _gateway(root, url, **overrides):
     (gw.hermes_home / 'config.yaml').write_text(json.dumps(config))
     (gw.hermes_home / 'prefill.json').write_text(json.dumps([
         {'role': 'user', 'content': 'PREFILL_EXAMPLE'}, {'role': 'assistant', 'content': 'Noted.'}]))
-    (gw.hermes_home / '.env').write_text('OCX_API_KEY=loopback-only\n')
+    (gw.hermes_home / '.env').write_text('MAGPIE_API_KEY=loopback-only\n')
     memories = gw.hermes_home / 'memories'
     if not memories.exists():
         memories.mkdir()

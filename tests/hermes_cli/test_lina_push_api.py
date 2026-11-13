@@ -10,7 +10,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric import ec
 from fastapi.testclient import TestClient
 
-from hermes_cli import lina_ocx, lina_push
+from hermes_cli import lina_deps, lina_push
 from hermes_cli.config import OPTIONAL_ENV_VARS
 from hermes_cli.lina_push import b64u, unb64u
 from tests.hermes_cli._lina_push_fakes import Device, PushService, throwaway_key, valid
@@ -22,7 +22,7 @@ pytestmark = pytest.mark.platforms("posix")
 @pytest.fixture
 def work(tmp_path, monkeypatch):
     env = WorkEnv(tmp_path, monkeypatch)
-    monkeypatch.setattr(lina_ocx, "lina_root", lambda: env.root)
+    monkeypatch.setattr(lina_deps, "lina_root", lambda: env.root)
     monkeypatch.delenv(lina_push.KEY_ENV, raising=False)
     return env
 

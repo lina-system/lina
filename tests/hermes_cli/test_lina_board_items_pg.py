@@ -8,7 +8,7 @@ import json
 
 import pytest
 
-from hermes_cli import lina_board_items, lina_ocx, store_migrations
+from hermes_cli import lina_board_items, lina_deps, store_migrations
 from tests.hermes_cli import work_pg_fixture
 from tests.hermes_cli._work_env import WorkEnv
 
@@ -33,7 +33,7 @@ def work(tmp_path, monkeypatch, pg_db):
     pg_db.run_sql("DROP SCHEMA IF EXISTS work CASCADE; DO $$ BEGIN IF to_regclass('memory.schema_migrations') "
                   f"IS NOT NULL THEN DELETE FROM memory.schema_migrations WHERE version = '{version}'; END IF; END $$")
     env = WorkEnv(tmp_path, monkeypatch, extra=f"  store: {{backend: postgres, psql: {json.dumps(pg_db.argv)}}}\n")
-    monkeypatch.setattr(lina_ocx, "lina_root", lambda: env.root)
+    monkeypatch.setattr(lina_deps, "lina_root", lambda: env.root)
     env.goal_and_todos(todos=3)
     brief = tmp_path / "brief.md"
     brief.write_text("Check the machine\n", encoding="utf-8")

@@ -45,7 +45,7 @@ FOLLOW_UPS = 3
 CHECK_CACHE_S = 60
 LOG_LINES = 80
 USAGE_WAIT_S = 3600
-# The usage-limit wording of OCX, Anthropic and OpenAI runners; a runner's ``usage_limit`` replaces it.
+# The usage-limit wording of magpie, Anthropic and OpenAI runners; a runner's ``usage_limit`` replaces it.
 USAGE_LIMIT = (r"(?i)\b429\b|usage[ _-]limit|rate[ _-]limit|too many requests|exceeded your current quota|"
                r"quota exceeded")
 DELIVERABLE_STATES = ("done", "done_empty", "review")

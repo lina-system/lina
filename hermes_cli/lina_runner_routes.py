@@ -1,4 +1,4 @@
-"""Route sources of runner blocks (lina#531): ``route: {source: <name>}`` names the program that maps OCX's models
+"""Route sources of runner blocks (lina#531): ``route: {source: <name>}`` names the program that maps magpie's models
 onto the runner's own model choices. A source answers three calls, the same for every runner that names it:
 
 * ``prepare(root, run)``: what it needs on this device (built once, after the runner is installed); a short line;

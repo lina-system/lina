@@ -87,7 +87,7 @@ def _devices(config: dict, work: dict) -> list[str]:
 
 
 def load(base: Path | None = None) -> Env:
-    from hermes_cli.lina_ocx import lina_root
+    from hermes_cli.lina_deps import lina_root
     from hermes_cli.work.locale import label
     base = base or lina_root()
     config = _root_config(base)

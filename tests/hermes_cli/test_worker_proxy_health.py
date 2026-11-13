@@ -1,9 +1,4 @@
-"""A node's model path asked by its proxy kind (lina#586): ``ocx`` asks ``/healthz`` for 200 as before, ``magpie``
-asks its local ``/v1/models`` for 200 with at least one model (it has no ``/healthz``). The hello reports
-``capabilities.proxy``; the hub reads it, else ``capabilities.ocx`` (an older node is ``ocx``), and a node with no
-proxy is never passed for one. ``lina worker hosts`` and ``lina devices`` show the kind and health with the bid's
-reasons.
-"""
+"""Magpie model-list health, hello reports and bid readiness agree (lina#586)."""
 
 import json
 import socket
@@ -22,7 +17,6 @@ from tests.hermes_cli.test_worker_bidding_skip_reasons import FakeNode, probe
 
 pytestmark = pytest.mark.real_model_path  # the conftest stub answers every model path 200: this file asks a real one
 
-OCX_UP = {"external": False, "version": "1.0.0", "health": 200}
 
 
 class Proxy:
@@ -73,7 +67,6 @@ def _closed(path: str) -> str:
 def node(tmp_path, monkeypatch):
     """*make(proxy_yaml, model_check)*: a node's LINA root whose ``worker.proxy`` is *proxy_yaml* (None: absent) and
     whose ``host: local`` device asks *model_check*; returns a ``call(verb)`` that runs its ``_device`` verbs."""
-    monkeypatch.setattr("hermes_cli.lina_runner_sync_node.ocx_report", lambda root: dict(OCX_UP))
 
     def make(proxy_yaml: str | None = None, model_check: str | None = None):
         base = tmp_path / "node"
@@ -95,25 +88,14 @@ def node(tmp_path, monkeypatch):
     return make
 
 
-def test_an_ocx_node_asks_healthz_and_reports_both_fields(node, endpoint):
-    call = node(model_check=f"{endpoint.base}/healthz")
-    assert call("probe", "", "claude")["model_path"] == "ok"
-    caps = call("hello")["capabilities"]
-    assert caps["ocx"] == OCX_UP
-    assert caps["proxy"] == {"kind": "ocx", "health": 200, "version": "1.0.0"}
-
-    endpoint.status = 503
-    assert call("probe", "", "claude")["model_path_why"] == \
-        f"model path does not answer ({endpoint.base}/healthz: HTTP 503)"
-
 
 def test_a_magpie_node_is_up_on_200_with_models(node, endpoint, monkeypatch):
     monkeypatch.setattr("hermes_cli.worker.proxy_service.magpie_state", lambda unit: f"running ({unit})")
     url = f"{endpoint.base}/v1/models"
-    call = node(f"{{kind: magpie, health: '{url}'}}")
+    call = node(f"{{health: '{url}'}}")
     assert call("probe", "", "claude")["model_path"] == "ok"
     assert call("hello")["capabilities"]["proxy"] == {
-        "kind": "magpie", "health": 200, "models": 2, "remote_id": "hub",
+        "url": url, "health": 200, "models": 2, "remote_id": "hub",
         "service": {"name": "magpie", "state": "running (magpie)"}}
 
 
@@ -121,23 +103,23 @@ def test_a_magpie_node_is_up_on_200_with_models(node, endpoint, monkeypatch):
 def test_a_magpie_node_that_answers_an_error_is_down_with_kind_and_address(node, endpoint, status):
     endpoint.status, endpoint.models = status, None
     url = f"{endpoint.base}/v1/models"
-    call = node(f"{{kind: magpie, health: '{url}'}}")
+    call = node(f"{{health: '{url}'}}")
     assert call("probe", "", "claude")["model_path_why"] == f"model path does not answer (magpie {url}: HTTP {status})"
     assert call("hello")["capabilities"]["proxy"]["health"] == status
 
 
 def test_a_magpie_node_that_answers_nothing_is_down(node):
     url = _closed("/v1/models")
-    call = node(f"{{kind: magpie, health: '{url}'}}")
+    call = node(f"{{health: '{url}'}}")
     assert call("probe", "", "claude")["model_path_why"] == f"model path does not answer (magpie {url}: HTTP none)"
     proxy = call("hello")["capabilities"]["proxy"]
-    assert {key: proxy[key] for key in ("kind", "health", "models")} == {"kind": "magpie", "health": None, "models": 0}
+    assert {key: proxy[key] for key in ("health", "models")} == {"health": None, "models": 0}
 
 
 def test_a_magpie_node_with_an_empty_model_list_is_down(node, endpoint):
     endpoint.models = 0
     url = f"{endpoint.base}/v1/models"
-    call = node(f"{{kind: magpie, health: '{url}'}}")
+    call = node(f"{{health: '{url}'}}")
     assert call("probe", "", "claude")["model_path_why"] == \
         f"model path lists no model (magpie {url}: HTTP 200, 0 models)"
 
@@ -152,7 +134,7 @@ def test_a_magpie_node_sends_the_key_its_key_env_names_and_shows_it_nowhere(node
     monkeypatch.setattr("hermes_cli.worker.proxy_service.magpie_state", lambda unit: "running")
     endpoint.key = GATEWAY_KEY
     url = f"{endpoint.base}/v1/models"
-    call = node(f"{{kind: magpie, health: '{url}', key_env: LINA_TEST_GATEWAY_KEY}}")
+    call = node(f"{{health: '{url}', key_env: LINA_TEST_GATEWAY_KEY}}")
 
     monkeypatch.delenv("LINA_TEST_GATEWAY_KEY", raising=False)
     down = call("probe", "", "claude")
@@ -163,8 +145,8 @@ def test_a_magpie_node_sends_the_key_its_key_env_names_and_shows_it_nowhere(node
         up, hello = call("probe", "", "claude"), call("hello")
         check = device.proxy_check(tmp_path / "node" / "worker")
     assert up["model_path"] == "ok"
-    assert check == {"kind": "magpie", "url": url, "health": 200, "models": 2}
-    assert bidding.proxy_text(probe(proxy=hello["capabilities"]["proxy"])) == "proxy magpie 200, 2 models"
+    assert check == {"url": url, "health": 200, "models": 2}
+    assert bidding.proxy_text(probe(proxy=hello["capabilities"]["proxy"])) == "magpie 200, 2 models"
     for shown in (json.dumps(down), json.dumps(up), json.dumps(hello), json.dumps(check), caplog.text):
         assert GATEWAY_KEY not in shown
 
@@ -173,17 +155,17 @@ def test_a_magpie_node_without_key_env_sends_no_authorization(node, endpoint, mo
     monkeypatch.setenv("LINA_TEST_GATEWAY_KEY", GATEWAY_KEY)  # present, but no key_env names it
     endpoint.key = GATEWAY_KEY
     url = f"{endpoint.base}/v1/models"
-    call = node(f"{{kind: magpie, health: '{url}'}}")
+    call = node(f"{{health: '{url}'}}")
     assert call("probe", "", "claude")["model_path_why"] == f"model path does not answer (magpie {url}: HTTP 401)"
 
 
-def test_a_magpie_node_asks_its_local_v1_models_by_default_and_not_the_ocx_check(node, tmp_path):
-    node("{kind: magpie}", model_check="http://127.0.0.1:1/healthz")
+def test_a_magpie_node_asks_its_local_v1_models_by_default_and_not_the_model_state(node, tmp_path):
+    node("{}", model_check="http://127.0.0.1:1/healthz")
     root = tmp_path / "node" / "worker"
-    assert device.model_check_url(root) == device.MAGPIE_CHECK == "http://127.0.0.1:3425/v1/models"
+    assert device.model_check_url(root) == device.settings.MODEL_CHECK == "http://127.0.0.1:3425/v1/models"
 
 
-@pytest.mark.parametrize("kind", [None, "{kind: magpie}"])
+@pytest.mark.parametrize("kind", [None, "{}"])
 def test_which_runners_need_the_model_path_on_either_kind(kind):
     worker = {"proxy": {"kind": "magpie"}} if kind else {}
     assert device.needs_model_path(worker, "omo", {"type": "omo"}) is True
@@ -193,41 +175,34 @@ def test_which_runners_need_the_model_path_on_either_kind(kind):
 
 
 def test_a_runner_that_needs_no_model_path_is_not_asked_on_a_magpie_node(node):
-    call = node(f"{{kind: magpie, health: '{_closed('/v1/models')}'}}")
+    call = node(f"{{health: '{_closed('/v1/models')}'}}")
     found = call("probe", "", "grok")
     assert "model_path" not in found and "model_path_why" not in found
 
 
-MAGPIE_UP = {"kind": "magpie", "health": 200, "models": 23}
+MAGPIE_UP = {"health": 200, "models": 23}
 
 
 @pytest.mark.parametrize(("found", "reason"), [
-    (probe(ocx=OCX_UP, proxy={"kind": "ocx", "health": 200, "version": "1.0.0"}), None),
-    (probe(ocx={**OCX_UP, "health": None}, proxy={"kind": "ocx", "health": None}), "ocx not answering"),
     (probe(model_path="ok", proxy=MAGPIE_UP), None),
     (probe(model_path="ok", proxy={**MAGPIE_UP, "health": None, "models": 0}), "magpie not answering"),
     (probe(model_path="ok", proxy={**MAGPIE_UP, "models": 0}), "magpie not answering"),
     (probe(proxy={**MAGPIE_UP, "health": None}), None),  # a runner that does not reach models through it
-    (probe(ocx={**OCX_UP, "health": 500}), "ocx not answering"),  # an older hello: only capabilities.ocx
-    (probe(ocx=OCX_UP), None),
     (probe(), None),  # no proxy at all
-    (probe(ocx={"external": False, "version": None, "health": None}), None),  # no OCX installed
 ])
-def test_the_bid_reads_the_proxy_by_kind_and_falls_back_to_ocx(found, reason):
+def test_the_bid_requires_health_and_models_only_for_proxy_runners(found, reason):
     assert bidding.readiness(Device("n", "n"), found, repo=None, min_free_gb=5) == reason
 
 
-def test_with_node_facts_carries_the_proxy_next_to_ocx(tmp_path):
+def test_with_node_facts_carries_the_reported_proxy(tmp_path):
     (tmp_path / "config.yaml").write_text("worker:\n  min_free_gb: 5\n", encoding="utf-8")
-    caps = {"ocx": OCX_UP, "proxy": MAGPIE_UP}
+    caps = {"proxy": MAGPIE_UP}
     found = bidding.with_node_facts(probe(), {"capabilities": caps}, "n", tmp_path / "worker")
-    assert (found["ocx"], found["proxy"]) == (OCX_UP, MAGPIE_UP)
+    assert found["proxy"] == MAGPIE_UP
 
 
 @pytest.mark.parametrize(("found", "text"), [
-    (probe(proxy=MAGPIE_UP), "proxy magpie 200, 23 models"),
-    (probe(ocx=OCX_UP, proxy={"kind": "ocx", "health": 200}), "proxy ocx 200"),
-    (probe(ocx={**OCX_UP, "health": None}), "proxy ocx none"),  # older hello
+    (probe(proxy=MAGPIE_UP), "magpie 200, 23 models"),
     (probe(), "proxy none"),
 ])
 def test_the_proxy_text_hosts_and_devices_show(found, text):
@@ -236,13 +211,12 @@ def test_the_proxy_text_hosts_and_devices_show(found, text):
 
 @pytest.fixture
 def fleet(tmp_path, monkeypatch):
-    """A magpie node whose list is empty, a healthy magpie node, an older OCX node and a node with no proxy."""
+    """A magpie node whose list is empty, a healthy magpie node, a node with no proxy."""
     (tmp_path / "config.yaml").write_text(
-        "devices:\n  workers:\n" + "".join(f"    {n}: {{host: {n}, cap: 2}}\n" for n in ("m-empty", "m-up", "old", "none"))
+        "devices:\n  workers:\n" + "".join(f"    {n}: {{host: {n}, cap: 2}}\n" for n in ("m-empty", "m-up", "none"))
         + "worker:\n  min_free_gb: 5\n", encoding="utf-8")
     nodes = {"m-empty": FakeNode(probe(model_path="ok"), {"proxy": {**MAGPIE_UP, "models": 0}}),
              "m-up": FakeNode(probe(model_path="ok"), {"proxy": MAGPIE_UP}),
-             "old": FakeNode(probe(), {"ocx": OCX_UP}),
              "none": FakeNode(probe(), {})}
 
     def for_device(dev, root):
@@ -257,10 +231,9 @@ def fleet(tmp_path, monkeypatch):
 def test_hosts_and_devices_show_the_proxy_and_agree_with_the_bid(fleet):
     lines: list[str] = []
     assert Hub(fleet / "worker", out=lines.append).hosts() == 0
-    hosts = {line.split()[0]: line for line in lines[:4]}
-    assert " · proxy magpie 200, 0 models · magpie not answering" in hosts["m-empty"]
-    assert hosts["m-up"].endswith(" · proxy magpie 200, 23 models · can take work")
-    assert hosts["old"].endswith(" · proxy ocx 200 · can take work")
+    hosts = {line.split()[0]: line for line in lines[:3]}
+    assert " · magpie 200, 0 models · magpie not answering" in hosts["m-empty"]
+    assert hosts["m-up"].endswith(" · magpie 200, 23 models · can take work")
     assert hosts["none"].endswith(" · proxy none · can take work")
 
     out: list[str] = []
@@ -268,13 +241,7 @@ def test_hosts_and_devices_show_the_proxy_and_agree_with_the_bid(fleet):
     rows = {row["name"]: row for row in json.loads(out[0])}
     assert (rows["m-empty"]["ready"], rows["m-empty"]["why"]) == (False, "magpie not answering")
     assert rows["m-up"]["proxy"] == MAGPIE_UP and rows["m-up"]["ready"] is True
-    assert rows["old"]["proxy"] == {"kind": "ocx", "health": 200} and rows["none"]["proxy"] is None
+    assert rows["none"]["proxy"] is None
     text: list[str] = []
     assert lina_devices.list_devices(fleet, out=text.append) == 0
-    assert any(line.startswith("m-empty ") and "proxy magpie 200, 0 models" in line for line in text)
-
-
-def test_the_hello_of_a_node_with_no_ocx_reports_no_proxy(node, monkeypatch):
-    monkeypatch.setattr("hermes_cli.lina_runner_sync_node.ocx_report",
-                        lambda root: {"external": False, "version": None, "health": None})
-    assert "proxy" not in node()("hello")["capabilities"]
+    assert any(line.startswith("m-empty ") and "magpie 200, 0 models" in line for line in text)

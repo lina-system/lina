@@ -12,7 +12,7 @@ import textwrap
 import pytest
 
 import hermes_yaml
-from hermes_cli import lina_models
+from hermes_cli import lina_magpie
 
 pytestmark = pytest.mark.platforms("posix")
 
@@ -52,10 +52,8 @@ def root(request, tmp_path, monkeypatch):
     if request.param == "today":
         (base / "config.yaml").write_text(TODAY, encoding="utf-8")
     monkeypatch.setenv("LINA_HOME", str(base))
-    monkeypatch.setattr(lina_models, "run", lambda args, root=None: {
-        ("models", "live", "--json"): [{"provider": "openai", "id": "m-open", "disabled": False,
-                                        "reasoningEfforts": ["high"], "defaultReasoningEffort": "high"}],
-        ("account", "list", "--quota", "--json"): {"accounts": []}}[tuple(args)])
+    monkeypatch.setattr(lina_magpie, "get", lambda proxy, path: {"data": [{"id": "hub/openai/m-open"}]})
+    monkeypatch.setattr(lina_magpie, "model_accounts", lambda proxy: [])
     from hermes_cli import lina_work_settings_models
     lina_work_settings_models.forget()
     return base
@@ -68,10 +66,10 @@ def _config(base) -> dict:
 def test_set_show_history_diff_and_rollback(root, capsys):
     assert _lina("settings", "set", "devices.workers.here", "{host: local, cap: 1}") == 0
     assert _lina("settings", "set", "worker.runners.dsh", "{type: command, argv: [dsh, '-']}") == 0
-    assert _lina("settings", "set", "worker.runners.dsh.model", "opencodex/x:high") == 0
+    assert _lina("settings", "set", "worker.runners.dsh.model", "codex/x:high") == 0
     out = capsys.readouterr().out
-    assert "worker.runners.dsh.model: - → opencodex/x:high" in out
-    assert _config(root)["worker"]["runners"]["dsh"]["model"] == "opencodex/x:high"
+    assert "worker.runners.dsh.model: - → codex/x:high" in out
+    assert _config(root)["worker"]["runners"]["dsh"]["model"] == "codex/x:high"
 
     assert _lina("settings", "show", "--json") == 0
     shown = json.loads(capsys.readouterr().out)
@@ -83,7 +81,7 @@ def test_set_show_history_diff_and_rollback(root, capsys):
     assert lines[0].startswith(last) and "cli" in lines[0] and "worker.runners.dsh.model" in lines[0]
 
     assert _lina("settings", "diff") == 0
-    assert capsys.readouterr().out.strip() == "worker.runners.dsh.model: - → opencodex/x:high"
+    assert capsys.readouterr().out.strip() == "worker.runners.dsh.model: - → codex/x:high"
 
     assert _lina("settings", "rollback") == 0
     assert "rollback of" in capsys.readouterr().out
@@ -220,5 +218,5 @@ def test_route_and_models(root, capsys):
     assert capsys.readouterr().out.strip() == "omo (default)"
     assert _lina("settings", "models") == 0
     table = capsys.readouterr().out.splitlines()
-    assert table[0].split()[:4] == ["PROVIDER", "MODEL", "EFFORTS", "STATE"]
-    assert table[1].split()[:4] == ["openai", "m-open", "high", "no_account"]
+    assert table[0].split()[:4] == ["PROVIDER", "MODEL", "STATE", "LEFT"]
+    assert table[1].split()[:4] == ["openai", "m-open", "no_account", "-"]

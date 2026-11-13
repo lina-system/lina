@@ -36,7 +36,7 @@ TODAY = textwrap.dedent("""\
           env: {CODEX_HOME: /srv/codex}
       models:
         aliases:
-          planner: {provider: opencodex, id: plan-model, thinking: medium}
+          planner: {provider: codex, id: plan-model, thinking: medium}
         defaults: {research: planner}
     """)
 
@@ -160,16 +160,16 @@ def test_a_change_is_one_revision_with_a_field_diff_and_keeps_the_comments_and_e
     store = _store(root)
     start = store.current()
     assert start.id == "r1" and _audit(root)[0]["by"]["kind"] == "outside"
-    rev, changes = store.apply(_set("worker.runners.codex.model", "opencodex/impl-model:high"), CLI)
+    rev, changes = store.apply(_set("worker.runners.codex.model", "codex/impl-model:high"), CLI)
     assert rev.id == "r2"
-    assert changes == [{"path": "worker.runners.codex.model", "from": None, "to": "opencodex/impl-model:high"}]
+    assert changes == [{"path": "worker.runners.codex.model", "from": None, "to": "codex/impl-model:high"}]
     line = _audit(root)[-1]
     assert line["rev"] == "r2" and line["base"] == "r1" and line["by"] == CLI and line["changes"] == changes
     assert isinstance(line["at"], float)
     text = (root / "config.yaml").read_text(encoding="utf-8")
     assert "# the fast one" in text and "# the work devices" in text
     assert _config(root)["worker"]["runners"]["codex"]["env"] == {"CODEX_HOME": "/srv/codex"}
-    assert _config(root)["worker"]["runners"]["codex"]["model"] == "opencodex/impl-model:high"
+    assert _config(root)["worker"]["runners"]["codex"]["model"] == "codex/impl-model:high"
     assert (root / "work-settings" / "revisions" / "r000002.yaml").is_file()
 
 
@@ -188,7 +188,7 @@ def test_two_rollbacks_return_to_the_start(root):
     store.current()
     store.apply(_set("devices.workers.build-a.cap", 3), CLI)
     start = store.current()
-    store.apply(_set("worker.models.defaults.research", "opencodex/other-model"), CLI)
+    store.apply(_set("worker.models.defaults.research", "codex/other-model"), CLI)
     changed = _config(root)
     once, _ = store.rollback({**CLI, "kind": "rollback"})
     assert once.doc == store.revision(start.n).doc and _config(root)["worker"]["models"]["defaults"] == {

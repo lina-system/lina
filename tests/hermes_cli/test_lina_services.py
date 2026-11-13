@@ -29,8 +29,6 @@ def account(tmp_path, monkeypatch):
     hermes_constants._default_hermes_root_memo = None
     monkeypatch.setattr("hermes_cli.store.store_dir", lambda: tmp_path / "store")
     monkeypatch.setattr(gateway_cli, "_is_service_installed", lambda: False)
-    # OCX's unit lives under the account's real config dir; keep `all` from seeing (and stopping) a real one.
-    monkeypatch.setattr("hermes_cli.lina_ocx_service.definition_path", lambda kind: tmp_path / "units" / "lina-ocx")
     monkeypatch.setattr("hermes_cli.lina_web_service.definition_path", lambda kind: tmp_path / "units" / "lina-web")
     verbs = []
     monkeypatch.setattr(gateway_cli, "gateway_command", lambda args: verbs.append(vars(args)))
@@ -146,7 +144,7 @@ def _gateway_process(tmp_path, home):
 @pytest.mark.spawns_gateway_lookalike
 @pytest.mark.platforms("linux")
 def test_only_a_gateway_of_this_lina_root_holds_the_store(account, tmp_path):
-    """The store and OCX refuse to stop while a gateway of THIS root runs; another home's gateway (a second root,
+    """The store refuses to stop while a gateway of THIS root runs; another home's gateway (a second root,
     a test's, Hermes Agent's beside LINA) on the same account does not count."""
     assert "gateway" in lina_services.USED_BY["store"]
     root = Path(os.environ["HERMES_HOME"])
@@ -183,10 +181,6 @@ def test_there_is_no_all_target(account):
         parser.parse_args(["services", "stop", "all"])
 
 
-def test_ocx_is_used_by_the_gateway(account):
-    """The gateway calls every model through OCX, so OCX is not stopped while a gateway runs."""
-    assert "gateway" in lina_services.USED_BY["ocx"]
-
 
 def test_start_installs_the_missing_gateway_service_through_the_gateway_verbs(account):
     assert _run("start", "gateway") == 0
@@ -203,12 +197,12 @@ def test_install_starts_the_gateway_only_with_services(account, capsys):
 def test_service_definition_seam_runs_the_given_argv(tmp_path):
     """launchd starts the argv under osascript with the service's own logs (lina#288); systemd runs it bare."""
     from hermes_cli.gateway_launchd import launchd_program_arguments
-    logs = lina_services.service_logs(tmp_path, "ocx")
+    logs = lina_services.service_logs(tmp_path, "worker")
     plist = plistlib.loads(lina_services.service_definition(
-        "launchd", "ai.lina.ocx", ["/opt/lina/bin/lina", "ocx", "run"], {"HERMES_HOME": "/srv/lina"},
+        "launchd", "ai.lina.worker", ["/opt/lina/bin/lina", "worker", "run"], {"HERMES_HOME": "/srv/lina"},
         logs=logs).encode())
     assert (plist["Label"], plist["ProgramArguments"], plist["EnvironmentVariables"]) == (
-        "ai.lina.ocx", launchd_program_arguments(["/opt/lina/bin/lina", "ocx", "run"], *logs),
+        "ai.lina.worker", launchd_program_arguments(["/opt/lina/bin/lina", "worker", "run"], *logs),
         {"HERMES_HOME": "/srv/lina"})
     unit = lina_services.service_definition("systemd", "lina-worker", ["/opt/lina/bin/lina", "worker"], {},
                                             logs=logs)

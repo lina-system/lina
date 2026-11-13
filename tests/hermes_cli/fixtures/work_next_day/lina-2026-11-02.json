@@ -150,7 +150,7 @@
   },
   {
    "number": 121,
-   "title": "feat(models): add the tools to take over a running OCX, rehearsed on a copy",
+   "title": "feat(models): add the tools to take over a running magpie, rehearsed on a copy",
    "body": "",
    "labels": [],
    "sub_issues_summary": {
@@ -250,7 +250,7 @@
   },
   {
    "number": 113,
-   "title": "feat(models): install a pinned OCX as LINA's own service and add lina models",
+   "title": "feat(models): install a pinned magpie as LINA's own service and add lina models",
    "body": "",
    "labels": [],
    "sub_issues_summary": {
@@ -635,7 +635,7 @@
   },
   {
    "number": 34,
-   "title": "feat(install): install a pinned omo on work devices with its OCX routing",
+   "title": "feat(install): install a pinned omo on work devices with its magpie routing",
    "body": "Sprint: M0 S3 — Work, worker and the client API (order in lina-system/lina#1).",
    "labels": [
     {
@@ -657,7 +657,7 @@
   },
   {
    "number": 33,
-   "title": "chore(ocx): take over the running OCX proxy",
+   "title": "chore(magpie): take over the running magpie proxy",
    "body": "Sprint: M0 S3 — Work, worker and the client API (order in lina-system/lina#1).",
    "labels": [
     {
@@ -679,7 +679,7 @@
   },
   {
    "number": 32,
-   "title": "feat(models): install a pinned OCX as a LINA service and add lina models",
+   "title": "feat(models): install a pinned magpie as a LINA service and add lina models",
    "body": "Sprint: M0 S3 — Work, worker and the client API (order in lina-system/lina#1).",
    "labels": [
     {
@@ -1415,9 +1415,9 @@
   },
   {
    "number": 121,
-   "title": "feat(models): add the tools to take over a running OCX, rehearsed on a copy",
+   "title": "feat(models): add the tools to take over a running magpie, rehearsed on a copy",
    "head": {
-    "ref": "feat/33-ocx-takeover"
+    "ref": "feat/33-magpie-takeover"
    },
    "base": {
     "ref": "dev"
@@ -1481,9 +1481,9 @@
   },
   {
    "number": 113,
-   "title": "feat(models): install a pinned OCX as LINA's own service and add lina models",
+   "title": "feat(models): install a pinned magpie as LINA's own service and add lina models",
    "head": {
-    "ref": "feat/32-pinned-ocx"
+    "ref": "feat/32-pinned-magpie"
    },
    "base": {
     "ref": "dev"
@@ -1533,10 +1533,10 @@
    "name": "feat/31-lina-services"
   },
   {
-   "name": "feat/32-pinned-ocx"
+   "name": "feat/32-pinned-magpie"
   },
   {
-   "name": "feat/33-ocx-takeover"
+   "name": "feat/33-magpie-takeover"
   },
   {
    "name": "feat/34-pinned-omo"

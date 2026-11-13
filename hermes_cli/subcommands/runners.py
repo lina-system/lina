@@ -7,10 +7,10 @@ import sys
 
 
 def _status(args) -> int:
-    from hermes_cli import lina_ocx, lina_runners
+    from hermes_cli import lina_deps, lina_runners
     if args.offered:
         from hermes_cli.worker import settings
-        rows = lina_runners.node_report(settings.root(lina_ocx.lina_root()))
+        rows = lina_runners.node_report(settings.root(lina_deps.lina_root()))
     else:
         rows = lina_runners.status()
     for line in [json.dumps(rows, indent=2, ensure_ascii=False)] if args.json else lina_runners.render(rows):
@@ -42,12 +42,12 @@ def _run(args) -> int:
 
 
 def _cmd_runners(args) -> None:
-    from hermes_cli.lina_ocx import OcxError
+    from hermes_cli.lina_deps import DepsError
     if not args.runners_action:
         args.runners_action, args.json, args.offered = "status", False, False
     try:
         sys.exit(_run(args))
-    except OcxError as exc:
+    except DepsError as exc:
         print(f"runners: {exc}")
         sys.exit(1)
 

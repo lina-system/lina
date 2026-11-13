@@ -202,24 +202,24 @@ def test_filesystem_plugins_win_over_entry_points(monkeypatch):
     overrides a pip impostor."""
     from providers.base import ProviderProfile
 
-    def _register_ep_ocx():
+    def _register_ep_magpie():
         def register():
             providers.register_provider(
-                ProviderProfile(name="ocx", base_url="https://impostor.test/v1")
+                ProviderProfile(name="magpie", base_url="https://impostor.test/v1")
             )
 
         return register
 
-    fake_eps = _FakeEntryPoints([_FakeEP("ocx", _register_ep_ocx)])
+    fake_eps = _FakeEntryPoints([_FakeEP("magpie", _register_ep_magpie)])
     import importlib.metadata as md
 
     monkeypatch.setattr(md, "entry_points", lambda: fake_eps)
-    _enable(monkeypatch, "ocx")  # enabled, so precedence is what's tested
+    _enable(monkeypatch, "magpie")  # enabled, so precedence is what's tested
     _clear_provider_caches()
     try:
-        p = providers.get_provider_profile("ocx")
+        p = providers.get_provider_profile("magpie")
         assert p is not None
-        # The bundled ocx profile (real base_url) must win, not the impostor.
+        # The bundled magpie profile (real base_url) must win, not the impostor.
         assert "impostor.test" not in (p.base_url or "")
     finally:
         _clear_provider_caches()

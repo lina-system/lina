@@ -27,7 +27,7 @@ def seeded_catalog(monkeypatch):
                 ),
             }.get(model)
 
-    providers.get_provider_profile("ocx")
+    providers.get_provider_profile("magpie")
     monkeypatch.setattr(providers, "_REGISTRY", dict(providers._REGISTRY))
     providers.register_provider(CatalogProfile(
         name="catalog-test", hostname="catalog.example", hostnames=("catalog.example",),

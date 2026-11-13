@@ -207,13 +207,11 @@ def _outcomes(kept: list[dict], job: dict, receipts: list[dict], told: tuple) ->
 
 def served_model(job: dict) -> dict | None:
     """The run's model as the client API serves it: ``{provider, id, thinking, source}``, None on the runner's own
-    default. Provider and id are the canonical form (lina#385), whichever form was written."""
-    from hermes_cli.worker.models import canonical
+    default. Provider and id are as they were written."""
     model = job.get("model")
     if not isinstance(model, dict):
         return None
-    provider, model_id = canonical(model.get("provider"), model.get("id"))
-    return {"provider": provider, "id": model_id, "thinking": model.get("thinking"),
+    return {"provider": model.get("provider"), "id": model.get("id"), "thinking": model.get("thinking"),
             "source": model.get("source") or "runner"}
 
 

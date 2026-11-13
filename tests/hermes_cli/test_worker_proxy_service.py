@@ -1,7 +1,4 @@
-"""The node's own model proxy service by its kind (lina#589), through the node's ``service proxy`` verb: ``magpie``
-restarts the local service ``worker.proxy.service`` names (default ``magpie``), ``ocx`` the OCX as ``service ocx``
-does, and neither restarts while a run holds a slot on the node. systemd and launchd are local fakes.
-"""
+"""The node restarts only its local magpie service and holds the slot lock (lina#589)."""
 
 import fcntl
 import json
@@ -10,7 +7,6 @@ import textwrap
 
 import pytest
 
-from hermes_cli import lina_runners
 from hermes_cli.worker import device, proxy_service, slots
 
 pytestmark = pytest.mark.platforms("posix")
@@ -58,8 +54,8 @@ def node(tmp_path, monkeypatch):
 
 
 def test_a_magpie_node_restarts_the_local_service_its_setting_names(node, systemd):
-    call = node("{kind: magpie, service: lab-magpie}")
-    assert call("service", "proxy", "restart") == {"service": "proxy", "kind": "magpie", "action": "restart",
+    call = node("{service: lab-magpie}")
+    assert call("service", "proxy", "restart") == {"service": "proxy", "action": "restart",
                                                    "name": "lab-magpie", "state": "running"}
     assert ["systemctl", "--user", "restart", "lab-magpie"] in systemd.calls
     assert call("service", "proxy", "status")["name"] == "lab-magpie"
@@ -67,31 +63,22 @@ def test_a_magpie_node_restarts_the_local_service_its_setting_names(node, system
 
 def test_the_magpie_service_defaults_to_magpie(node, systemd):
     systemd.active = "failed"
-    assert node("{kind: magpie}")("service", "proxy", "status") == {
-        "service": "proxy", "kind": "magpie", "action": "status", "name": "magpie", "state": "stopped"}
+    assert node("{}")("service", "proxy", "status") == {
+        "service": "proxy", "action": "status", "name": "magpie", "state": "stopped"}
 
 
-@pytest.mark.parametrize("proxy_yaml, kind", [("{kind: magpie}", "magpie"), (None, "ocx")])
-def test_no_restart_while_a_run_is_active_on_the_node(node, systemd, monkeypatch, proxy_yaml, kind):
-    ocx = []
-    monkeypatch.setattr(lina_runners, "_ocx_act", lambda action: ocx.append(action) or {})
+@pytest.mark.parametrize("proxy_yaml", ["{}", None])
+def test_no_restart_while_a_run_is_active_on_the_node(node, systemd, proxy_yaml):
     call = node(proxy_yaml)
     node.held[0] = 1
     assert call("service", "proxy", "restart", code=1) == {
-        "service": "proxy", "kind": kind, "action": "error", "busy": 1,
-        "reason": f"1 run(s) active on this node: the {kind} restart waits until they end"}
-    assert not [argv for argv in systemd.calls if "restart" in argv] and ocx == []
-
-
-def test_an_ocx_node_restarts_its_ocx_as_service_ocx_does(node, systemd, monkeypatch):
-    monkeypatch.setattr(lina_runners, "_ocx_act",
-                        lambda action: {"service": "ocx", "action": action, "state": "running (1.0.0, port 10100)"})
-    assert node()("service", "proxy", "restart") == {"service": "proxy", "kind": "ocx", "action": "restart",
-                                                     "state": "running (1.0.0, port 10100)"}
+        "service": "proxy", "action": "error", "busy": 1,
+        "reason": "1 run(s) active on this node: the magpie restart waits until they end"}
     assert not [argv for argv in systemd.calls if "restart" in argv]
 
 
-@pytest.mark.parametrize("proxy_yaml", ["{kind: magpie}", None])
+
+@pytest.mark.parametrize("proxy_yaml", ["{}", None])
 def test_no_slot_is_admitted_while_the_proxy_restarts(node, systemd, monkeypatch, tmp_path, proxy_yaml):
     """admit() and reserve() take the slot lock; the restart holds it from the busy check to its end."""
     probes = []
@@ -106,7 +93,6 @@ def test_no_slot_is_admitted_while_the_proxy_restarts(node, systemd, monkeypatch
                 probes.append("free")
         return {}
 
-    monkeypatch.setattr(lina_runners, "_ocx_act", restart_probe)
     monkeypatch.setattr(proxy_service, "_magpie_restart", lambda unit: (restart_probe() or True, ""))
     node(proxy_yaml)("service", "proxy", "restart")
     assert probes == ["held"]

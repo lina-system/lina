@@ -17,7 +17,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import hermes_yaml
-from hermes_cli import lina_models
+from hermes_cli import lina_magpie
 
 pytestmark = pytest.mark.platforms("posix")
 
@@ -88,7 +88,9 @@ class Env:
         self.whois({"testclient": (OWNER, "phone-a")})
         self.owner(True)
         monkeypatch.setenv("LINA_HOME", str(self.root))
-        monkeypatch.setattr(lina_models, "run", self._ocx)
+        monkeypatch.setattr(lina_magpie, "get", lambda proxy, path: {"data": [{"id": "hub/openai/m-open"}]})
+        monkeypatch.setattr(lina_magpie, "model_accounts", lambda proxy: [
+            {"provider": "openai", "id": "a1", "quota": {"weeklyPercent": 25, "weeklyResetAt": 1_700_000_000}}])
         from hermes_cli import lina_work_settings_gate, lina_work_settings_models
         lina_work_settings_gate.GATE.reset()
         lina_work_settings_models.forget()
@@ -98,15 +100,6 @@ class Env:
 
     def owner(self, on: bool) -> None:
         (self.root / "config.yaml").write_text(_config(on, self.tool), encoding="utf-8")
-
-    @staticmethod
-    def _ocx(args, root=None):
-        return {("models", "live", "--json"): [
-            {"provider": "openai", "id": "m-open", "namespaced": "openai/m-open", "disabled": False,
-             "reasoningEfforts": ["low", "high"], "defaultReasoningEffort": "high"}],
-            ("account", "list", "--quota", "--json"): {"accounts": [
-                {"provider": "openai", "id": "a1", "quota": {"weeklyPercent": 25, "weeklyResetAt": 1_700_000_000}}]},
-        }[tuple(args)]
 
     def config(self) -> dict:
         return hermes_yaml.safe_load((self.root / "config.yaml").read_text(encoding="utf-8"))
@@ -237,13 +230,13 @@ def test_route_answers_400_for_labels_that_are_present_but_not_a_list(env, clien
 
 
 def test_the_cli_the_api_and_lina_devices_write_the_one_config_the_worker_reads(env, client):
-    """LINA_HOME (the worker's root, lina#227) and lina_ocx.lina_root() differ here, as they can in production."""
+    """LINA_HOME (the worker's root, lina#227) and lina_deps.lina_root() differ here, as they can in production."""
     import argparse
 
-    from hermes_cli import lina_devices, lina_ocx
+    from hermes_cli import lina_devices, lina_deps
     from hermes_cli.subcommands.worker import build_worker_parser
     from hermes_cli.worker import settings
-    assert lina_ocx.lina_root() != env.root and settings.lina_home() == env.root
+    assert lina_deps.lina_root() != env.root and settings.lina_home() == env.root
     parser = argparse.ArgumentParser(prog="lina")
     build_worker_parser(parser.add_subparsers(dest="command"))
     args = parser.parse_args(["worker", "settings", "set", "devices.workers.cli-dev", "{host: cli-dev}"])
@@ -257,7 +250,7 @@ def test_the_cli_the_api_and_lina_devices_write_the_one_config_the_worker_reads(
     names = {dev.name for dev in settings.devices()}
     assert {"cli-dev", "api-dev", "add-dev"} <= names
     assert settings.section().get("settings")  # the same file also holds the write gate's owner
-    assert not (lina_ocx.lina_root() / "config.yaml").exists()
+    assert not (lina_deps.lina_root() / "config.yaml").exists()
 
 
 def test_an_unexpected_failure_is_a_500_without_its_message(env, monkeypatch):

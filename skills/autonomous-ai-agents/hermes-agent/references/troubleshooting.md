@@ -6,7 +6,7 @@
 
 ## Model failures
 
-Inspect OCX reachability, selected model identifier, endpoint, and admission credential. Check auxiliary/delegation routing separately. Do not switch to a vendor provider or add unrelated keys as a generic repair. Verify with a bounded `lina chat --oneshot -q <prompt>`.
+Inspect magpie reachability, selected model identifier, endpoint, and admission credential. Check auxiliary/delegation routing separately. Do not switch to a vendor provider or add unrelated keys as a generic repair. Verify with a bounded `lina chat --oneshot -q <prompt>`.
 
 ## Missing tools or skills
 
@@ -14,7 +14,7 @@ Use `lina tools list` and `lina skills list`. Check platform enablement through 
 
 ## Messaging and audio
 
-Use `lina gateway status` and the gateway log. For Discord check Message Content Intent; for Slack check subscribed channel events. Verify STT/TTS configuration and actual audio independently of OCX inference. Do not restart a busy process without accounting for its active work.
+Use `lina gateway status` and the gateway log. For Discord check Message Content Intent; for Slack check subscribed channel events. Verify STT/TTS configuration and actual audio independently of magpie inference. Do not restart a busy process without accounting for its active work.
 
 ## Changes not visible
 

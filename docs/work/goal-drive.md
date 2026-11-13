@@ -142,7 +142,7 @@ records the outage as settled for that task (`outages` in the ledger).
 GitHub is read at most once per run per tick, and each pull request and check read is kept 60 s.
 
 The usage-limit pattern is a runner's `usage_limit` in the work settings; without it the drive matches the 429,
-"usage limit", "rate limit", "too many requests" and "quota exceeded" wording of OCX, Anthropic and OpenAI runners.
+"usage limit", "rate limit", "too many requests" and "quota exceeded" wording of magpie, Anthropic and OpenAI runners.
 
 ## Parking and waking
 

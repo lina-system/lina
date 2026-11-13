@@ -59,9 +59,9 @@ def test_auth_surface_names_oauth_vs_api_key_recovery():
     assert oauth["auth_kind"] == "oauth"
     assert oauth["provider_label"] == "Nous Portal"
 
-    key = build_error_surface_from_result(_failed_result("auth"), provider="ocx")
+    key = build_error_surface_from_result(_failed_result("auth"), provider="magpie")
     assert key["auth_kind"] == "api_key"
-    assert key["api_key_env"] == "OCX_API_KEY"
+    assert key["api_key_env"] == "MAGPIE_API_KEY"
     assert "api_key_env" not in oauth
 
     # Non-auth layers never carry the field (clients gate the button on it).

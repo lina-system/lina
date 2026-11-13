@@ -12,7 +12,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from hermes_cli import lina_ocx, lina_talk, web_server_cron
+from hermes_cli import lina_deps, lina_talk, web_server_cron
 from tests.hermes_cli._work_env import WorkEnv
 from tests.hermes_cli.test_lina_talk_api import FakeGateway, _valid, fake_model
 
@@ -82,7 +82,7 @@ class Multiplexed:
 @pytest.fixture
 def work(tmp_path, monkeypatch):
     env = WorkEnv(tmp_path, monkeypatch)
-    monkeypatch.setattr(lina_ocx, "lina_root", lambda: env.root)
+    monkeypatch.setattr(lina_deps, "lina_root", lambda: env.root)
     env.goal_and_todos()
     return env
 

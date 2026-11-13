@@ -537,7 +537,7 @@ class TestKeyedCustomProviderReasoningWire:
 
     @pytest.mark.parametrize("provider", ["groq", "main", "custom:groq"])
     def test_keyed_entry_sends_top_level_reasoning_effort(self, tmp_path, provider):
-        """OCX projects keyed routes to top-level effort; the bare-key case uses ``call_llm``."""
+        """MAGPIE projects keyed routes to top-level effort; the bare-key case uses ``call_llm``."""
         _write_config(tmp_path, self._KEYED)
         from agent.auxiliary_client import _build_call_kwargs, call_llm
         common = dict(reasoning_config={"enabled": True, "effort": "medium"}, base_url="https://api.groq.com/openai/v1")

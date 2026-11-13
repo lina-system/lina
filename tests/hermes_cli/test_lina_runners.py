@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from hermes_cli import lina_ocx, lina_runners, lina_services
+from hermes_cli import lina_deps, lina_runners, lina_services
 from hermes_cli.lina_runners import RunnerPin
 
 INTEGRITY = "sha512-" + "B" * 86 + "=="
@@ -83,7 +83,7 @@ def world(tmp_path, monkeypatch):
     for key in ("CURSOR_API_KEY", "FAKE_REPORT", "DISABLE_AUTOUPDATER"):
         monkeypatch.delenv(key, raising=False)
 
-    real = lina_ocx.pins()
+    real = lina_deps.pins()
     node = _tar({f"node-v{real.node_version}/bin/node": _FAKE_NODE.format(
                     python=sys.executable, integrity=INTEGRITY, cli=_FAKE_CLI),
                  f"node-v{real.node_version}/lib/node_modules/npm/bin/npm-cli.js": "// npm\n"})
@@ -91,16 +91,15 @@ def world(tmp_path, monkeypatch):
     cursor = _tar({"dist-package/cursor-agent": f"#!{sys.executable}\nprint('2026.10.22-27dcf5f')\n"})
     blobs = {"https://nodejs.invalid": node, "https://grok.invalid/grok": grok,
              "https://cursor.invalid/agent.tar.gz": cursor}
-    monkeypatch.setattr(lina_ocx, "pins", lambda path=None: lina_ocx.Pins(
+    monkeypatch.setattr(lina_deps, "pins", lambda path=None: lina_deps.Pins(
         real.node_version, "https://nodejs.invalid/dist",
-        {key: hashlib.sha256(node).hexdigest() for key in real.node_sha256}, real.package, real.version,
-        real.integrity))
-    monkeypatch.setattr(lina_ocx, "lina_root", lambda: root)
-    monkeypatch.setattr(lina_ocx, "LOCK_DIR", tmp_path / "npm-locks")
-    key = lina_ocx.platform_key()
+        {key: hashlib.sha256(node).hexdigest() for key in real.node_sha256}))
+    monkeypatch.setattr(lina_deps, "lina_root", lambda: root)
+    monkeypatch.setattr(lina_deps, "LOCK_DIR", tmp_path / "npm-locks")
+    key = lina_deps.platform_key()
     table = {
-        "codex": _npm("codex", "@openai/codex", "1.0.0", sign_in="ocx"),
-        "claude": _npm("claude", "@anthropic-ai/claude", "2.0.0", sign_in="ocx", env={"DISABLE_AUTOUPDATER": "1"}),
+        "codex": _npm("codex", "@openai/codex", "1.0.0", sign_in="magpie"),
+        "claude": _npm("claude", "@anthropic-ai/claude", "2.0.0", sign_in="magpie", env={"DISABLE_AUTOUPDATER": "1"}),
         "grok": RunnerPin(name="grok", installer="binary", version="1.0.70", bin="grok", entry="grok", sign_in="grok",
                           artifacts={key: {"url": "https://grok.invalid/grok",
                                            "sha256": hashlib.sha256(grok).hexdigest()}}),
@@ -110,14 +109,15 @@ def world(tmp_path, monkeypatch):
                                                    "sha512": hashlib.sha512(cursor).hexdigest()}}),
     }
     monkeypatch.setattr(lina_runners, "pins", lambda path=None: dict(table))
-    ocx = {"state": "running (pid 1)"}
-    monkeypatch.setattr(lina_services, "state", lambda service: ocx["state"] if service.name == "ocx" else "stopped")
+    from hermes_cli.worker import device
+    proxy = {"url": "http://127.0.0.1:3425/v1/models", "health": 200, "models": 2}
+    monkeypatch.setattr(device, "proxy_check", lambda worker_root: dict(proxy))
 
     def fetch(url, dest):
         Path(dest).write_bytes(next(blob for prefix, blob in blobs.items() if url.startswith(prefix)))
 
     return {"root": root, "account": account, "person": person, "fetch": fetch, "table": table, "blobs": blobs,
-            "ocx": ocx}
+            "proxy": proxy}
 
 
 def _install(world, name=None) -> int:
@@ -172,7 +172,7 @@ def test_an_artifact_whose_hash_is_not_the_pin_is_not_kept(world):
 def test_upgrade_trials_the_new_version_then_switches_and_rolls_back(world, monkeypatch):
     assert _install(world, "codex") == 0
     root, lines = world["root"], []
-    world["table"]["codex"] = _npm("codex", "@openai/codex", "1.1.0", sign_in="ocx")
+    world["table"]["codex"] = _npm("codex", "@openai/codex", "1.1.0", sign_in="magpie")
 
     monkeypatch.setenv("FAKE_REPORT", "0.0.1")
     assert lina_runners.upgrade("codex", root, fetch=world["fetch"], out=lines.append) == 1
@@ -193,7 +193,7 @@ def test_upgrade_trials_the_new_version_then_switches_and_rolls_back(world, monk
 def test_upgrade_switches_back_when_the_switched_shim_does_not_answer(world):
     assert _install(world, "codex") == 0
     root, lines = world["root"], []
-    world["table"]["codex"] = _npm("codex", "@openai/codex", "1.1.0", sign_in="ocx")
+    world["table"]["codex"] = _npm("codex", "@openai/codex", "1.1.0", sign_in="magpie")
     shim = str(lina_runners.shim_path(root, "codex"))
 
     def run(argv, **kwargs):
@@ -226,13 +226,13 @@ def test_status_reports_versions_sign_in_and_one_reason_per_runner(world, monkey
     assert _snapshot(world["account"] / ".local") == before
 
     assert _install(world) == 0
-    world["table"]["codex"] = _npm("codex", "@openai/codex", "1.1.0", sign_in="ocx")
+    world["table"]["codex"] = _npm("codex", "@openai/codex", "1.1.0", sign_in="magpie")
     monkeypatch.setenv("CURSOR_API_KEY", "k")
-    world["ocx"]["state"] = "stopped"
+    world["proxy"]["health"] = None
     rows = {row["name"]: row for row in lina_runners.status(world["root"])}
     assert (rows["codex"]["installed"], rows["codex"]["why"]) == ("1.0.0", "update")
     assert (rows["claude"]["sign_in"], rows["claude"]["why"]) == ("unknown", "prepare")
-    assert "OCX is stopped" in rows["claude"]["sign_in_why"]
+    assert "HTTP none" in rows["claude"]["sign_in_why"]
     assert (rows["cursor-agent"]["sign_in"], rows["cursor-agent"]["ready"]) == ("api_key", True)
     assert rows["grok"]["ready"] is True and rows["grok"]["why"] is None
 
@@ -271,14 +271,14 @@ def test_hello_carries_the_runner_rows(world):
     rows = {row["name"]: row for row in json.loads(output)["capabilities"]["runners"]}
     assert rows["codex"]["type"] == "command"
     assert (rows["codex"]["pinned"], rows["codex"]["installed"], rows["codex"]["ready"]) == ("1.0.0", "1.0.0", True)
-    assert rows["codex"]["person_installed"]["version"] == "0.9.0" and rows["codex"]["sign_in"] == "ocx"
+    assert rows["codex"]["person_installed"]["version"] == "0.9.0" and rows["codex"]["sign_in"] == "magpie"
 
 
 @pytest.mark.platforms("posix")
 def test_an_acp_runner_is_pinned_by_its_adapter_before_its_name(world):
     world["table"]["claude-agent-acp"] = _npm("claude-agent-acp", "@zed-industries/claude-agent-acp", "0.23.1",
-                                              sign_in="ocx", check="package")
-    world["table"]["codex-acp"] = _npm("codex-acp", "@zed-industries/codex-acp", "0.16.0", sign_in="ocx",
+                                              sign_in="magpie", check="package")
+    world["table"]["codex-acp"] = _npm("codex-acp", "@zed-industries/codex-acp", "0.16.0", sign_in="magpie",
                                        check="package")
     (world["root"] / "config.yaml").write_text(textwrap.dedent("""\
         worker:
@@ -303,34 +303,6 @@ def test_an_acp_runner_is_pinned_by_its_adapter_before_its_name(world):
     assert "pinned 0.23.1 · installed 0.23.1" in "\n".join(lina_runners.render([rows["claude"]])), \
         "`lina devices` shows the adapter's pinned and installed versions"
 
-
-@pytest.mark.platforms("posix")
-def test_a_node_whose_ocx_is_external_is_signed_in_when_it_answers_health(world, monkeypatch):
-    assert _install(world, "codex") == 0
-    root = world["root"]
-    answered = {10999: 200}
-    monkeypatch.setattr(lina_ocx, "http_get",
-                        lambda port, path, timeout=3: (answered.get(port, 0), b"{}" if answered.get(port) else b""))
-    world["ocx"]["state"] = "not installed"  # LINA's own OCX is not installed on this node
-    (root / "config.yaml").write_text(textwrap.dedent("""\
-        ocx:
-          port: 10999
-          external: {cli: /opt/ocx/bin/ocx}
-        """), encoding="utf-8")
-
-    row = {item["name"]: item for item in lina_runners.status(root)}["codex"]
-    assert (row["sign_in"], row["sign_in_why"], row["ready"]) == ("ocx", None, True), \
-        "the node's runs reach the models through the operator's OCX"
-
-    answered.clear()
-    row = {item["name"]: item for item in lina_runners.status(root)}["codex"]
-    assert (row["sign_in"], row["why"]) == ("unknown", "prepare")
-    assert "external OCX is not answering on port 10999" in row["sign_in_why"]
-
-    (root / "config.yaml").write_text("worker: {}\n", encoding="utf-8")
-    row = {item["name"]: item for item in lina_runners.status(root)}["codex"]
-    assert (row["sign_in"], row["sign_in_why"]) == ("unknown", "OCX is not installed"), \
-        "a node with no OCX at all says so instead of pretending to be signed in"
 
 
 @pytest.mark.platforms("posix")
@@ -421,3 +393,22 @@ def test_hello_reads_the_runner_report_at_most_once_a_minute(world, monkeypatch)
     assert len(calls) == 1
     assert lina_runners.cached_node_report(worker_root, max_age=0) == [{"name": "codex"}]
     assert len(calls) == 2
+
+
+@pytest.mark.platforms("posix")
+@pytest.mark.parametrize(("health", "models", "signed", "ready", "reason"), [
+    (200, 2, "magpie", True, None),
+    (503, 0, "unknown", False, "model path does not answer"),
+    (200, 0, "unknown", False, "model path lists no model"),
+])
+def test_magpie_readiness_requires_a_successful_nonempty_model_list(world, health, models, signed, ready, reason):
+    assert _install(world, "codex") == 0
+    world["proxy"].update(health=health, models=models)
+
+    row = lina_runners.row(world["root"], world["table"]["codex"])
+
+    assert (row["sign_in"], row["ready"]) == (signed, ready)
+    if reason is None:
+        assert row["sign_in_why"] is None and row["why"] is None
+    else:
+        assert reason in row["sign_in_why"] and row["why"] == "prepare"

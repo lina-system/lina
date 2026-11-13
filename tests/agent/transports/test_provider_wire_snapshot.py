@@ -1,4 +1,4 @@
-"""Shared request assembly for OCX routes and a profile-free compatible endpoint."""
+"""Shared request assembly for MAGPIE routes and a profile-free compatible endpoint."""
 
 from __future__ import annotations
 
@@ -113,10 +113,10 @@ def _load() -> dict[str, Any]:
     return json.loads(SNAPSHOT.read_text(encoding="utf-8")) if SNAPSHOT.exists() else {}
 
 
-@pytest.mark.parametrize("provider", ["ocx", "custom", "custom:relay"])
+@pytest.mark.parametrize("provider", ["magpie", "custom", "custom:relay"])
 def test_provider_wire_matches_snapshot(offline, provider):
     """The remaining profile owns reasoning and affinity; history and tools survive assembly."""
-    wire = _wire(provider, "relay-model", "http://127.0.0.1:10100/v1")
+    wire = _wire(provider, "relay-model", "http://127.0.0.1:3425/v1")
     assert wire["api_mode"] == "chat_completions"
     for label, effort in (("unset", "medium"), ("high", "high"), ("off", "none")):
         request = wire[label]

@@ -2552,14 +2552,14 @@ class TestKimiTemperatureOmitted:
 
 
 class TestAuxiliaryTaskExtraBody:
-    def test_task_reasoning_disable_uses_ocx_effort_wire(self, monkeypatch):
+    def test_task_reasoning_disable_uses_magpie_effort_wire(self, monkeypatch):
         """Task-level ``none`` must reach an always-toggle profile as its native disable shape."""
         import agent.auxiliary_client as aux
 
         monkeypatch.setattr(aux, "_get_auxiliary_task_config", lambda _task: {"reasoning_effort": "none"})
 
         kwargs = aux._build_call_kwargs(
-            provider="ocx",
+            provider="magpie",
             model="vendor/reasoning-model",
             messages=[{"role": "user", "content": "hello"}],
             extra_body=aux._get_task_extra_body("compression"),
@@ -3185,7 +3185,7 @@ class TestAnthropicAuxiliaryReasoningTranslation:
         )
         assert kwargs["_reasoning_config"] == rc
         chat_kwargs = _build_call_kwargs(
-            "ocx", "Qwen/Qwen3.7-Max", [{"role": "user", "content": "hi"}],
+            "magpie", "Qwen/Qwen3.7-Max", [{"role": "user", "content": "hi"}],
             reasoning_config=rc, base_url="https://synthetic.example/v1",
         )
         assert "_reasoning_config" not in chat_kwargs
@@ -3219,7 +3219,7 @@ class TestAuxiliaryProviderProfileReasoning:
         )
         create = AsyncMock(return_value=response)
         client = SimpleNamespace(
-            base_url="http://127.0.0.1:10100/v1",
+            base_url="http://127.0.0.1:3425/v1",
             chat=SimpleNamespace(
                 completions=SimpleNamespace(create=create),
             ),
@@ -3228,9 +3228,9 @@ class TestAuxiliaryProviderProfileReasoning:
         with patch(
             "agent.auxiliary_client._resolve_task_provider_model",
             return_value=(
-                "ocx",
+                "magpie",
                 "kimi-k2-turbo-preview",
-                "http://127.0.0.1:10100/v1",
+                "http://127.0.0.1:3425/v1",
                 "test-key",
                 None,
             ),
@@ -3239,7 +3239,7 @@ class TestAuxiliaryProviderProfileReasoning:
             return_value=(client, "kimi-k2-turbo-preview"),
         ):
             result = await async_call_llm(
-                provider="ocx",
+                provider="magpie",
                 model="kimi-k2-turbo-preview",
                 messages=[{"role": "user", "content": "hi"}],
                 reasoning_config={"enabled": True, "effort": "high"},

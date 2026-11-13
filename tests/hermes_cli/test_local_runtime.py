@@ -304,8 +304,8 @@ def test_llamacpp_aliases_route_to_custom_profile():
     for alias in ("llamacpp", "llama.cpp", "llama-cpp"):
         profile = get_provider_profile(normalize_provider(alias))
         assert profile is not None, alias
-        assert profile.name == "ocx"
-        assert profile.env_vars == ("OCX_API_KEY", "OCX_BASE_URL")
+        assert profile.name == "magpie"
+        assert profile.env_vars == ("MAGPIE_API_KEY", "MAGPIE_BASE_URL")
 
 
 def test_llamacpp_endpoint_resolution_prefers_managed(tmp_path, monkeypatch, stub_server):

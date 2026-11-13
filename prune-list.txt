@@ -85,8 +85,6 @@ ui-tui
 web
 website
 
-# Model providers: OCX replaces all 39 bundled provider profiles.
-# LINA adds its own plugins/model-providers/ocx (not upstream, so not listed).
 plugins/model-providers/actual
 plugins/model-providers/ai-gateway
 plugins/model-providers/alibaba

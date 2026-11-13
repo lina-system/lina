@@ -330,4 +330,4 @@ def test_get_api_env_passes_provider_primary_through(hermes_home):
     assert resp.status_code == 200, resp.text
     env = resp.json()
 
-    assert env["OCX_API_KEY"]["provider_primary"] is True
+    assert env["MAGPIE_API_KEY"]["provider_primary"] is True

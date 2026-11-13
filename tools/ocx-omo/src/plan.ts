@@ -1,61 +1,25 @@
 import type { Catalog, CatalogModel } from "./catalog.js";
-import { magpieProvider, type Names } from "./names.js";
 import type { Chains, Rung } from "./upstream.js";
 
 export type Extra = { model: string; reasoning?: string };
 export type Policy = {
-  provider: string;
-  /** opencodex namespaces tried for every model, in order; "" is the bare OpenAI namespace. */
-  namespaces: string[];
-  /** Exact opencodex ids never routed to. */
-  exclude: string[];
+  /** Magpie providers tried for every model, in order. */
+  providers: string[];
   /** Models appended after the upstream chain, by route path. */
   extras: Record<string, Extra[]>;
 };
 export type Entry = { model: string; reasoning?: string };
 export type RoutePlan = { models: Entry[]; skipped: string[] };
 export type Plan = { routes: Record<string, RoutePlan>; warnings: string[] };
-/**
- * The proxy the routes go through (lina#587): OCX's own provider, or a node's magpie, whose catalog names a model
- * `<remoteId>/<provider>/<id>` and whose provider is the OCX namespace's per the name table. An empty `remoteId`
- * (lina#623) is a node whose own magpie holds the models: its catalog names them `<provider>/<id>`.
- */
-export type Target = { kind: "ocx" } | { kind: "magpie"; remoteId: string; names: Names };
-export const OCX_TARGET: Target = { kind: "ocx" };
 export const MAGPIE_PROVIDER = "magpie";
 type Resolved = { model: string; entry: CatalogModel };
 
 const LEVELS = ["minimal", "low", "medium", "high", "xhigh", "max"];
-const FAST_SUFFIX = "-fast";
-
-/** Upstream writes a priority tier as `x-fast`; opencodex publishes it as `x--fast`. */
-const ocxIds = (base: string, name: string) =>
-  name.endsWith(FAST_SUFFIX) ? [base, `${base.slice(0, -FAST_SUFFIX.length)}--fast`] : [base];
-
-function resolveIds(name: string, policy: Policy, catalog: Catalog): Resolved[] {
+function resolveMagpie(name: string, policy: Policy, catalog: Catalog, remoteId: string): Resolved[] {
   const resolved: Resolved[] = [];
-  for (const namespace of policy.namespaces) {
-    const base = namespace ? `${namespace}/${name}` : name;
-    const id = ocxIds(base, name).find((candidate) => catalog.has(candidate));
-    const model = id === undefined ? undefined : catalog.get(id);
-    if (model && !policy.exclude.includes(model.id)) resolved.push({ model: `${policy.provider}/${model.id}`, entry: model });
-  }
-  return resolved;
-}
-
-/**
- * The same walk over the policy's namespaces, each mapped to its magpie provider: a namespace with no provider, an
- * excluded OCX id, or a model the magpie catalog does not carry (the `-fast` tiers) gives no candidate. Two namespaces
- * of one provider give the same name; the caller keeps the first.
- */
-function resolveMagpie(name: string, policy: Policy, catalog: Catalog, remoteId: string, names: Names): Resolved[] {
-  const resolved: Resolved[] = [];
-  for (const namespace of policy.namespaces) {
-    const base = namespace ? `${namespace}/${name}` : name;
-    if (ocxIds(base, name).some((id) => policy.exclude.includes(id))) continue;
-    const provider = magpieProvider(names, namespace, name);
+  for (const provider of policy.providers) {
     const id = remoteId ? `${remoteId}/${provider}/${name}` : `${provider}/${name}`;
-    const model = provider === undefined ? undefined : catalog.get(id);
+    const model = catalog.get(id);
     if (model) resolved.push({ model: `${MAGPIE_PROVIDER}/${model.id}`, entry: model });
   }
   return resolved;
@@ -73,7 +37,7 @@ export function clampReasoning(model: CatalogModel, requested: string | undefine
   return [...below, ...above].find(supported);
 }
 
-function planRoute(path: string, chain: Rung[], policy: Policy, catalog: Catalog, target: Target): RoutePlan {
+function planRoute(path: string, chain: Rung[], policy: Policy, catalog: Catalog, remoteId: string): RoutePlan {
   const wanted: Extra[] = [
     ...chain.map((rung) => ({ model: rung.model, ...(rung.variant ? { reasoning: rung.variant } : {}) })),
     ...(policy.extras[path] ?? []),
@@ -82,9 +46,7 @@ function planRoute(path: string, chain: Rung[], policy: Policy, catalog: Catalog
   const skipped: string[] = [];
   const seen = new Set<string>();
   for (const { model: name, reasoning } of wanted) {
-    const resolved = target.kind === "magpie"
-      ? resolveMagpie(name, policy, catalog, target.remoteId, target.names)
-      : resolveIds(name, policy, catalog);
+    const resolved = resolveMagpie(name, policy, catalog, remoteId);
     if (resolved.length === 0 && !skipped.includes(name)) skipped.push(name);
     for (const { model, entry } of resolved) {
       if (seen.has(model)) continue;
@@ -96,12 +58,12 @@ function planRoute(path: string, chain: Rung[], policy: Policy, catalog: Catalog
   return { models, skipped };
 }
 
-export function buildPlan(chains: Chains, policy: Policy, catalog: Catalog, target: Target = OCX_TARGET): Plan {
+export function buildPlan(chains: Chains, policy: Policy, catalog: Catalog, remoteId = "hub"): Plan {
   const routes: Record<string, RoutePlan> = {};
   for (const scope of ["categories", "agents"] as const) {
     for (const [name, chain] of Object.entries(chains[scope])) {
       const path = `${scope}.${name}`;
-      routes[path] = planRoute(path, chain, policy, catalog, target);
+      routes[path] = planRoute(path, chain, policy, catalog, remoteId);
     }
   }
   const warnings = Object.keys(policy.extras)

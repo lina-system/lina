@@ -13,7 +13,7 @@ from hermes_cli.worker import bidding, device, transport
 from hermes_cli.worker.hub import Hub
 from hermes_cli.worker.hub_store import Store
 from hermes_cli.worker.settings import Device
-from tests.hermes_cli.test_worker_bidding_skip_reasons import OCX_UP, FakeNode, probe
+from tests.hermes_cli.test_worker_bidding_skip_reasons import MAGPIE_UP, FakeNode, probe
 
 T0 = 1_000_000.0
 COOLING = "cooling off after 2 quick failures"
@@ -148,7 +148,7 @@ def test_an_older_node_without_the_new_fields_is_judged_as_before(root, manual):
 
 
 def test_the_score_order_is_unchanged_with_the_new_fields():
-    healthy = {"ocx": OCX_UP, "mem_available_gb": 32, "mem_floor_gb": 4}
+    healthy = {"proxy": MAGPIE_UP, "mem_available_gb": 32, "mem_floor_gb": 4}
     idle = [Device("slow", "slow", cap=2), Device("fast", "fast", cap=2, fast=True), Device("spare", "spare", last=1)]
     winner, rows = bidding.choose(idle, [probe(load=0.0, **healthy), probe(load=7.0, **healthy),
                                          probe(**healthy)], repo=None)

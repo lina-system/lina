@@ -1,12 +1,12 @@
 # Model Provider Plugins
 
 Each subdirectory is a self-contained provider profile plugin. LINA ships one:
-`ocx/`, because every model call goes through the local OCX proxy. The
+`magpie/`, because every model call goes through the local magpie proxy. The
 directory layout mirrors `plugins/platforms/`:
 
 ```
 plugins/model-providers/
-└── ocx/
+└── magpie/
     ├── __init__.py      # registers the ProviderProfile
     └── plugin.yaml      # manifest: name, kind, version, description
 ```
@@ -61,6 +61,6 @@ chat_completions transport all auto-wire from the registry.
 ## Non-trivial profiles
 
 Override the `ProviderProfile` hooks in a subclass for per-provider
-quirks — see `plugins/model-providers/ocx/__init__.py` for a
+quirks — see `plugins/model-providers/magpie/__init__.py` for a
 `build_api_kwargs_extras` example (reasoning effort and a session
 affinity header).

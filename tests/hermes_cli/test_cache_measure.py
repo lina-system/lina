@@ -1,4 +1,4 @@
-"""lina#25: ``lina memory cache-report`` computes the lina#17 baseline's numbers from OCX usage rows."""
+"""lina#25: ``lina memory cache-report`` computes the lina#17 baseline's numbers from MAGPIE usage rows."""
 
 from __future__ import annotations
 

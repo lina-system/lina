@@ -72,7 +72,7 @@ def _provider_default_routes(provider: str) -> set[str]:
 
     with suppress(Exception):
         from providers import get_provider_profile
-        p = get_provider_profile(provider)  # a custom route borrows ocx's wire policy, not its endpoint
+        p = get_provider_profile(provider)  # a custom route borrows magpie's wire policy, not its endpoint
         add(p.base_url if p is not None and provider in (p.name, *p.aliases) else "")
     with suppress(Exception):
         from hermes_cli.auth import PROVIDER_REGISTRY

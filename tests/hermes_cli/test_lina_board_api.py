@@ -1,5 +1,5 @@
 """``GET /api/lina/board``, ``/work/due``, ``/devices`` and ``/quota`` (lina#39) over a scratch LINA root: a work
-record in the sqlite store, hub job files of ``lina worker``, a fake device probe and a fake OCX account read.
+record in the sqlite store, hub job files of ``lina worker``, a fake device probe and a fake magpie account read.
 
 Ported from the board's ``tests/test_board_api.py``: the sidebar-count test is rewritten as "every count is the length
 of the list it labels" (the sidebar HTML is not served); the reply-shape test is rewritten as validation against
@@ -18,7 +18,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import hermes_yaml
-from hermes_cli import lina_ocx
+from hermes_cli import lina_deps
 from tests.hermes_cli._work_env import NOW, WorkEnv
 
 pytestmark = pytest.mark.platforms("posix")
@@ -53,7 +53,7 @@ def _valid(schema_name: str, data):
 
 
 class Fakes:
-    """What the board reads beyond the record: hub jobs and receipts, the live view per run, probes, OCX accounts."""
+    """What the board reads beyond the record: hub jobs and receipts, the live view per run, probes, magpie accounts."""
 
     def __init__(self, work: WorkEnv, monkeypatch):
         self.work = work
@@ -62,8 +62,8 @@ class Fakes:
         self.live: dict[str, dict] = {}
         self.probes = [{"error": "ssh: connect timed out"}, dict(READY)]
         self.accounts: list[dict] = []
-        self.ocx_error: str | None = None
-        monkeypatch.setattr(lina_ocx, "lina_root", lambda: work.root)
+        self.magpie_error: str | None = None
+        monkeypatch.setattr(lina_deps, "lina_root", lambda: work.root)
         from hermes_cli.worker import hub
         monkeypatch.setattr(hub.Hub, "meta", lambda _hub, job, live=False: self.live.get(job["id"], {"state": "running"}))
         from hermes_cli import lina_board_devices, lina_devices
@@ -74,14 +74,14 @@ class Fakes:
         monkeypatch.setattr(lina_board_devices, "_spawn", lambda work: work())
         lina_board_devices.OMO.reset()
         lina_board_devices.PERSON.reset()
-        from hermes_cli import lina_models
-        monkeypatch.setattr(lina_models, "query", self._query)
+        from hermes_cli import lina_magpie
+        monkeypatch.setattr(lina_magpie, "quota_accounts", self._query)
 
-    def _query(self, view, root=None):
-        assert view == "accounts" and root == self.work.root
-        if self.ocx_error:
-            raise lina_ocx.OcxError(self.ocx_error)
-        return {"accounts": [dict(a) for a in self.accounts], "notes": []}
+    def _query(self, proxy):
+        if self.magpie_error:
+            from hermes_cli.lina_magpie import MagpieError
+            raise MagpieError(self.magpie_error)
+        return [dict(a) for a in self.accounts]
 
     def job(self, tid: str, *, agent: str = "alpha", state: str = "running", heading: str = "", ended: float | None = None,
             created: float = NOW - 3600, **extra) -> None:
@@ -194,7 +194,7 @@ def test_board_serves_every_part_with_counts_equal_to_its_lists(work, fakes, cli
     assert [(m["name"], m["state"], m["why"]) for m in board["machines"]] == [("build-a", "down", "unreachable"),
                                                                               ("here", "ok", None)]
     assert [(s["service"], s["percent"], [a["number"] for a in s["accounts"]]) for s in board["quota"]] == [("OpenAI", 40.0,
-                                                                                                      [1])]
+                                                                                                      [1]), ("Claude", None, [1])]
     assert "someone@example.com" not in json.dumps(board)
 
     counts, inbox = board["counts"], board["inbox"]
@@ -250,7 +250,7 @@ def test_each_route_validates_and_answers_304_until_its_data_changes(work, fakes
 def test_a_source_that_fails_is_an_error_and_its_counts_are_null(work, fakes, client):
     (work.work / "work.db").mkdir(parents=True)  # the record cannot be opened
     (fakes.hub / "jobs" / "OT-BROKEN.json").write_text("{not json", encoding="utf-8")
-    fakes.ocx_error = "LINA's OCX is not running on port 10111. Run `lina services start ocx`."
+    fakes.magpie_error = "LINA's magpie is not running on port 10111. Run `lina services start magpie`."
 
     board = _valid("BoardSnapshot", client.get("/api/lina/board").json())
 

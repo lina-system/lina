@@ -68,7 +68,7 @@ class TestQueryOllamaNumCtx:
 
 
     def test_strips_provider_prefix(self):
-        """Should strip 'ocx:' prefix from model name before querying."""
+        """Should strip 'magpie:' prefix from model name before querying."""
         show_data = {
             "model_info": {"qwen2.context_length": 32768},
             "parameters": "",
@@ -78,9 +78,9 @@ class TestQueryOllamaNumCtx:
         with patch("agent.model_metadata.detect_local_server_type", return_value="ollama"):
             import httpx
             with patch.object(httpx, "Client", return_value=mock_ctx):
-                result = query_ollama_num_ctx("ocx:qwen2.5:7b", "http://localhost:11434/v1")
+                result = query_ollama_num_ctx("magpie:qwen2.5:7b", "http://localhost:11434/v1")
 
-        # Verify the post was called with stripped name (no "ocx:" prefix)
+        # Verify the post was called with stripped name (no "magpie:" prefix)
         call_args = mock_client.post.call_args
         assert call_args.kwargs["json"]["name"] == "qwen2.5:7b"
         assert result == 32768

@@ -14,7 +14,7 @@ KO_GUIDE = {
                  "내부 도구 이름: `장부`는 쓰지 않는다. `작업판`은 `대시보드`로, `LCM`은 `기억 압축`으로, "
                  "`omo`는 `작업`으로 쓴다."),
     "products": ("GitHub", "Claude", "OpenAI", "Gemini", "Slack", "Telegram", "NAS"),
-    "english_ok": ("Codex", "Grok", "Cursor", "Antigravity", "OCX", "Synology", "iPhone", "Mac"),
+    "english_ok": ("Codex", "Grok", "Cursor", "Antigravity", "magpie", "Synology", "iPhone", "Mac"),
 }
 # (rule, regex). re.ASCII: a Korean particle right after a name (ctl에서, T12를) still ends the word.
 KO_BANNED = (

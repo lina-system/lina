@@ -1,6 +1,6 @@
 """``GET /api/lina/board`` reads its sources at once and shares one outside read for a few seconds (lina#573).
 
-The four reads (the work record, ``lina worker``'s runs, the devices, the quota) mostly wait on ssh and OCX, so the
+The four reads (the work record, ``lina worker``'s runs, the devices, the quota) mostly wait on ssh and magpie, so the
 snapshot takes as long as the slowest of them, not their sum; a request that comes while an outside read runs waits for
 that read instead of starting its own, and its answer serves every request for ``READ_TTL_S`` seconds (then, stale, while
 one background read replaces it: lina#584, ``test_lina_board_stale.py``). The read marks
@@ -88,7 +88,7 @@ def test_a_failing_source_leaves_the_others_and_is_named_in_errors(work, fakes, 
 
 def test_overlapping_requests_share_one_outside_read_until_it_expires(work, fakes, monkeypatch):
     """Counted where the board leaves the host: a running run's live view (ssh to its device), the nodes' contacts
-    (ssh to each node) and the quota read (OCX)."""
+    (ssh to each node) and the quota read (magpie)."""
     from hermes_cli import lina_board_devices
     from hermes_cli.worker import hub
     fakes.job("OT-ALP0001", heading="slow device")

@@ -24,9 +24,9 @@ class EP:
             import providers
             from providers.base import ProviderProfile
             providers.register_provider(ProviderProfile(
-                name="ocx", base_url="https://impostor.test/v1", env_vars=("IMPOSTOR_KEY",)))
+                name="magpie", base_url="https://impostor.test/v1", env_vars=("IMPOSTOR_KEY",)))
             from hermes_cli.auth import PROVIDER_REGISTRY
-            PROVIDER_REGISTRY.get("ocx")
+            PROVIDER_REGISTRY.get("magpie")
         return register
 
 class EPs:
@@ -38,8 +38,8 @@ import hermes_cli.auth as auth
 from hermes_cli.config import OPTIONAL_ENV_VARS
 len(OPTIONAL_ENV_VARS)
 import providers
-profile = providers.get_provider_profile("ocx")
-row = auth.PROVIDER_REGISTRY["ocx"]
+profile = providers.get_provider_profile("magpie")
+row = auth.PROVIDER_REGISTRY["magpie"]
 print("RESULT=" + json.dumps([profile.base_url, list(profile.env_vars), row.inference_base_url,
                               list(row.api_key_env_vars)]))
 """

@@ -1,7 +1,4 @@
-"""One name for a model (lina#385): OCX's list names it ``<provider>/<id>``, omo reaches it as ``opencodex`` with the
-namespaced id. Both forms are the same model to the settings check, to ``decide``, to the omo runner's session open
-and to the run record, which show it in magpie's catalog form (lina#585: ``anthropic`` reads ``claude``). OCX is a
-fake with synthetic rows; omo is never run."""
+"""Written model names and configured aliases agree across settings, runs and magpie sessions (lina#385)."""
 
 from __future__ import annotations
 
@@ -10,7 +7,6 @@ from pathlib import Path
 
 import pytest
 
-from hermes_cli import lina_models
 from hermes_cli import lina_work_settings_models as wm
 from hermes_cli.worker import models, record
 from hermes_cli.worker.hub import Hub
@@ -30,20 +26,24 @@ QUOTA = {"accounts": [
     {"provider": "zai", "id": "z1", "quota": {"weeklyPercent": 100}},
 ]}
 LIST_FORM = ("anthropic/m-a:high", "anthropic/m-off", "zai/m-out")
-OCX_FORM = ("opencodex/anthropic/m-a:high", "opencodex/anthropic/m-off", "opencodex/zai/m-out")
+ALIAS_FORM = ("active", "unlisted", "out")
 CONFIG = """\
 worker:
   runners:
     l-ok: {type: command, argv: [x, "-"], model: "anthropic/m-a:high", access: workspace-write}
-    o-ok: {type: command, argv: [x, "-"], model: "opencodex/anthropic/m-a:high", access: workspace-write}
+    o-ok: {type: command, argv: [x, "-"], model: "active", access: workspace-write}
     l-off: {type: command, argv: [x, "-"], model: anthropic/m-off, access: workspace-write}
-    o-off: {type: command, argv: [x, "-"], model: opencodex/anthropic/m-off, access: workspace-write}
+    o-off: {type: command, argv: [x, "-"], model: unlisted, access: workspace-write}
     l-out: {type: command, argv: [x, "-"], model: zai/m-out, access: workspace-write}
-    o-out: {type: command, argv: [x, "-"], model: opencodex/zai/m-out, access: workspace-write}
-    alias: {type: command, argv: [x, "-"], model: ocx-a, access: workspace-write}
+    o-out: {type: command, argv: [x, "-"], model: out, access: workspace-write}
+    alias: {type: command, argv: [x, "-"], model: magpie-a, access: workspace-write}
   models:
-    aliases: {ocx-a: {provider: opencodex, id: anthropic/m-a, thinking: high}}
-    fallback: opencodex/anthropic/m-a
+    aliases:
+      active: {provider: anthropic, id: m-a, thinking: high}
+      unlisted: {provider: anthropic, id: m-off}
+      out: {provider: zai, id: m-out}
+      magpie-a: {provider: anthropic, id: m-a, thinking: high}
+    fallback: anthropic/m-a
 """
 
 
@@ -53,10 +53,12 @@ def base(tmp_path, monkeypatch):
     home.mkdir()
     (home / "config.yaml").write_text(CONFIG, encoding="utf-8")
     monkeypatch.setenv("LINA_HOME", str(home))
-    answers = {("models", "live", "--json"): LIVE, ("account", "list", "--quota", "--json"): QUOTA}
-    monkeypatch.setattr(lina_models, "run", lambda args, root=None: answers[tuple(args)])
+    from hermes_cli import lina_magpie
+    monkeypatch.setattr(lina_magpie, "get", lambda proxy, path: {"data": [
+        {"id": f"hub/{r['provider']}/{r['id']}"} for r in LIVE if not r.get("disabled")]})
+    monkeypatch.setattr(lina_magpie, "model_accounts", lambda proxy: QUOTA["accounts"])
     wm.forget()
-    wm.read(time.time())  # the models view has just read OCX: decide checks against this last good list
+    wm.read(time.time())  # the models view has just read magpie: decide checks against this last good list
     yield home
     wm.forget()
 
@@ -72,7 +74,7 @@ def _fallback(home: Path, job: dict) -> dict:
     return next(r for r in receipts if r["kind"] == "model_fallback")
 
 
-def test_both_forms_get_the_same_state_from_the_one_ocx_row(base):
+def test_both_forms_get_the_same_state_from_the_one_magpie_row(base):
     runners = {row["name"]: row for row in wm.view()["runners"]}
 
     for kind, state in (("ok", "ok"), ("off", "off"), ("out", "out_of_quota")):
@@ -84,12 +86,12 @@ def test_both_forms_get_the_same_state_from_the_one_ocx_row(base):
 
 
 def test_decide_picks_the_same_model_and_the_same_fallback_for_both_forms(base, tmp_path):
-    for listed, through in zip(LIST_FORM, OCX_FORM):
+    for listed, through in zip(LIST_FORM, ALIAS_FORM):
         one, other = _job(base, tmp_path, runner="alias", model=listed), _job(base, tmp_path, runner="alias",
                                                                                model=through)
         assert record.served_model(one) == record.served_model(other)
-        assert one["settings"]["ocx_check"] == other["settings"]["ocx_check"] != "unchecked"
-    for kind, named in (("off", "claude/m-off"), ("out", "zai/m-out")):
+        assert one["settings"]["model_state"] == other["settings"]["model_state"] != "unchecked"
+    for kind, named in (("off", "anthropic/m-off"), ("out", "zai/m-out")):
         one, other = _job(base, tmp_path, runner=f"l-{kind}"), _job(base, tmp_path, runner=f"o-{kind}")
         assert one["model"]["source"].startswith("fallback:")
         assert (one["model"], one["settings"]) == (other["model"], other["settings"])
@@ -98,21 +100,21 @@ def test_decide_picks_the_same_model_and_the_same_fallback_for_both_forms(base, 
 
 def test_the_run_record_shows_one_form_whichever_was_written(base, tmp_path):
     served = [record.served_model(_job(base, tmp_path, runner="alias", model=value))
-              for value in ("anthropic/m-a:high", "opencodex/anthropic/m-a:high", "ocx-a")]
+              for value in ("anthropic/m-a:high", "active", "magpie-a")]
 
-    assert [(s["provider"], s["id"], s["thinking"]) for s in served] == [("claude", "m-a", "high")] * 3
+    assert [(s["provider"], s["id"], s["thinking"]) for s in served] == [("anthropic", "m-a", "high")] * 3
     labels = [models.label(_job(base, tmp_path, runner="alias", model=v)["model"])
-              for v in ("anthropic/m-off:low", "opencodex/anthropic/m-off:low", "ocx-a")]
-    assert labels == ["claude/m-off:low", "claude/m-off:low", "ocx-a"]
-    assert models.label({"provider": "opencodex", "id": "anthropic/m-a", "alias": "ocx-a"}) == "ocx-a"
+              for v in ("anthropic/m-off:low", "zai/m-out:low", "magpie-a")]
+    assert labels == ["anthropic/m-off:low", "zai/m-out:low", "magpie-a"]
+    assert models.label({"provider": "anthropic", "id": "m-a", "alias": "magpie-a"}) == "magpie-a"
 
 
 @pytest.mark.parametrize(("model", "provider", "model_id"), [
-    (ModelProfile("anthropic", "m-a", "medium"), "opencodex", "anthropic/m-a"),
-    (ModelProfile("opencodex", "anthropic/m-a", "medium"), "opencodex", "anthropic/m-a"),
-    (ModelProfile("opencodex", "anthropic/m-a", "medium", "ocx-a", "mode:ulw"), "opencodex", "anthropic/m-a"),
+    (ModelProfile("anthropic", "m-a", "medium"), "magpie", "hub/anthropic/m-a"),
+    (ModelProfile("zai", "m-out", "medium"), "magpie", "hub/zai/m-out"),
+    (ModelProfile("anthropic", "m-a", "medium", "magpie-a", "mode:ulw"), "magpie", "hub/anthropic/m-a"),
 ])
-def test_the_omo_session_opens_through_ocx_with_the_namespaced_id(tmp_path, monkeypatch, model, provider, model_id):
+def test_the_omo_session_opens_through_magpie_with_the_namespaced_id(tmp_path, monkeypatch, model, provider, model_id):
     runner = OmoRunner("omo", {"bin": str(tmp_path / "omo"), "node": str(tmp_path / "node"),
                                "engine": str(tmp_path / "engine")}, root=tmp_path)
     calls: list[list[str]] = []

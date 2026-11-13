@@ -152,7 +152,7 @@ def test_user_provider_plugin_name_and_model_never_leave(direct_runtime, tmp_pat
                 assert dims[key] == "custom", (name, dims)
         if "model" in dims:
             assert dims["model"] == "custom", (name, dims)
-    assert catalog.provider_metric_name("ocx") == "ocx"
+    assert catalog.provider_metric_name("magpie") == "magpie"
 
 
 def test_network_address_model_ids_and_raw_injected_marks_never_reach_counters(direct_runtime, tmp_path):

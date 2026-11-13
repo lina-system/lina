@@ -106,8 +106,8 @@ are not resolved to people. The tables have no `agent_id` column, so row-level s
 ## Measuring the cache
 
 `lina memory cache-report --usage <usage.jsonl> [--from ISO --to ISO] [--conversation <id> ...] [--baseline <pct> ...]
-[--fingerprints <file>] [--format md|tsv]` computes the lina#17 baseline's numbers from OCX usage rows only:
-the token-weighted hit rate `sum(cacheReadInputTokens) / sum(inputTokens)` (OCX's input total includes reads and
+[--fingerprints <file>] [--format md|tsv]` computes the lina#17 baseline's numbers from usage-log rows only:
+the token-weighted hit rate `sum(cacheReadInputTokens) / sum(inputTokens)` (the input total includes reads and
 writes), the per-request mean and median, unreported rows apart (never a miss or a zero), cache writes by tier, and
 the cache retreat `max(0, previous_input_total - current_cache_read)` along each conversation. A gap to a baseline
 within two standard errors of the rate (linearized ratio estimator over the metered requests) is reported as within

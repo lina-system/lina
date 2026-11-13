@@ -188,7 +188,7 @@ def test_the_record_and_the_card_serve_the_run_s_model_and_settings_revision(fak
     both null for a run from before, or on the runner's own default."""
     model = {"provider": "prov", "id": "m-open", "thinking": "high", "alias": "builder", "source": "fallback:off"}
     fakes.job("OT-ALP0011", state="done", model=model, settings={"rev": "r3", "runner_source": "default",
-                                                                  "model_source": "fallback:off", "ocx_check": "off"})
+                                                                  "model_source": "fallback:off", "model_state": "off"})
     fakes.job("OT-ALP0012", state="done")
     cards = {c["id"]: c for c in _valid("BoardSnapshot", client.get("/api/lina/board").json())["cards"]}
 

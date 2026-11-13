@@ -25,7 +25,7 @@ from fastapi.testclient import TestClient
 import hermes_yaml
 from hermes_cli import kanban_db as kb
 from hermes_cli import kanban_db_connect as kbc
-from hermes_cli import lina_board, lina_board_hermes, lina_ocx
+from hermes_cli import lina_board, lina_board_hermes, lina_deps
 from tests.hermes_cli._work_env import NOW, WorkEnv
 from tests.waiting import wait_until
 
@@ -179,7 +179,7 @@ class Hermes:
 @pytest.fixture
 def work(tmp_path, monkeypatch):
     env = WorkEnv(tmp_path, monkeypatch)
-    monkeypatch.setattr(lina_ocx, "lina_root", lambda: env.root)
+    monkeypatch.setattr(lina_deps, "lina_root", lambda: env.root)
     monkeypatch.setattr(lina_board, "devices_read", lambda root, now, errors: [])
     monkeypatch.setattr(lina_board, "quota_read", lambda root, now: [])
     (env.root / "worker" / "hub" / "jobs").mkdir(parents=True)

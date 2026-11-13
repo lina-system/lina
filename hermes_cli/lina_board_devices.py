@@ -15,11 +15,11 @@ service. One ssh call in the person's login shell prints the first line of ``--v
 pins and of omo, at most every 15 minutes in the background, started by a read; a failed read marks the device
 unreachable and keeps the last versions. The read changes nothing on the device.
 
-Each node carries ``proxy``, the model proxy its hello reports (lina#589, from #586's ``capabilities.proxy``, else an
-older node's ``capabilities.ocx``; null for a node that reports none): ``ocx`` shows as before, ``magpie`` its link to
-the hub (``link``, the node's ``remote_id``; ``local`` when its own magpie holds the models), the model count of its local ``/v1/models`` and its local service state.
-On a ``magpie`` node the runners that sign in through the proxy show ``signIn: magpie`` and are not signed in on the
-node: their accounts are on the hub's magpie (``proxy.signIn: hub``).
+Each node carries ``proxy``, the magpie its hello reports (lina#589, from #586's ``capabilities.proxy``; null for a node
+that reports none): its link to the hub (``link``, the node's ``remote_id``; ``local`` when its own magpie holds the
+models), the model count of its local ``/v1/models`` and its local service state. The runners that sign in through
+magpie show ``signIn: magpie`` and are not signed in on the node: their accounts are on the hub's magpie
+(``proxy.signIn: hub``).
 
 ``restart`` and ``sign_in`` are the owner's actions (the route checks the owner-device gate first). Both write one
 line to ``<LINA root>/board/device-actions.jsonl``; a sign-in, which can take long, writes a second line when it
@@ -51,9 +51,9 @@ PERSON_TIMEOUT_S = 30
 SSH_UNREACHABLE = 255
 NODE_ROLES = ("work", "files")
 STATES = ("down", "warn", "ok")
-SIGN_IN = ("signed_in", "signed_out", "api_key", "ocx", "magpie", "unknown")
+SIGN_IN = ("signed_in", "signed_out", "api_key", "magpie", "unknown")
 WHY = {"update": "update", "prepare": "prepare", "sign in": "sign_in", "sign_in": "sign_in", "unknown": "unknown"}
-SERVICES = ("worker", "ocx", "proxy")
+SERVICES = ("worker", "proxy")
 MAGPIE = "magpie"
 SIGN_IN_MODULE = "hermes_cli.lina_sign_in"
 ACTIONS_LOG = Path("board") / "device-actions.jsonl"
@@ -170,13 +170,13 @@ def runner_cell(row: dict, fleet: dict) -> dict:
 def omo_cell(name: str, kind, status: dict | None, probe_ready: bool | None, fleet: str | None) -> dict:
     """omo on a node: its own pin and ``lina omo status`` (served from the last background read)."""
     if status is None:
-        return _cell(name, kind, fleet, None, "ocx", False, "unknown")
+        return _cell(name, kind, fleet, None, MAGPIE, False, "unknown")
     installed = status.get("current")
     daemon = status.get("daemon") or {}
     ready = probe_ready if probe_ready is not None else bool(daemon.get("running"))
     why = ("prepare" if installed is None else "update" if fleet is not None and installed != fleet
            else None if ready else "prepare")
-    return _cell(name, kind, fleet, installed, "ocx", why is None, why)
+    return _cell(name, kind, fleet, installed, MAGPIE, why is None, why)
 
 
 def _file_node_omo(rows: list[dict]) -> dict:
@@ -214,7 +214,7 @@ def _cells(dev: settings.Device, base: Path, probe: dict, descriptor: dict | Non
     cells = []
     for name, kind, pin in offers:
         if kind == "omo":
-            cells.append(_cell(name, kind, omo_fleet, None, "ocx", False, why))
+            cells.append(_cell(name, kind, omo_fleet, None, MAGPIE, False, why))
         elif pin is not None:
             cells.append(_cell(name, kind, pin.version, None, None, False, why))
     return cells
@@ -273,32 +273,25 @@ def nodes(base: Path, metrics: dict | None, now: float) -> tuple[list[dict], flo
         cells = _cells(dev, base, probe, descriptor, reachable, runner)
         _mark_signing(base, dev.name, cells, reachable)
         proxy = proxy_view(descriptor) if reachable and not probe.get("protocol_error") else None
-        if proxy is not None and proxy["kind"] == MAGPIE:
-            for cell in cells:
-                cell["signIn"] = MAGPIE if cell["signIn"] == "ocx" else cell["signIn"]
         row.update(role=dev.role, reachable=reachable, runners=cells, proxy=proxy)
         rows.append(row)
     return sorted(rows, key=lambda row: (NODE_ROLES.index(row["role"]), STATES.index(row["state"]))), read.at
 
 
 def proxy_view(descriptor: dict | None) -> dict | None:
-    """The node's model proxy as the screen shows it: ``{kind, health, version, models, link, service, signIn}``.
-    ``ocx`` as before (health and version; sign-in on the node); ``magpie`` the link to the hub (``link``, the node's
-    ``remote_id``), the model count of its local ``/v1/models``, its local service ``{name, state}`` and sign-in on
-    the hub's magpie. None when the hello reports no proxy (a file node, no OCX)."""
+    """The node's magpie as the screen shows it: ``{health, models, link, service, signIn}``: the link to the hub
+    (``link``, the node's ``remote_id``), the model count of its local ``/v1/models``, its local service
+    ``{name, state}`` and sign-in on the hub's magpie. None when the hello reports no proxy (a file node)."""
     from hermes_cli.worker import bidding
     caps = (descriptor or {}).get("capabilities") if isinstance(descriptor, dict) else None
     caps = caps if isinstance(caps, dict) else {}
-    fact = bidding.proxy_fact({key: caps[key] for key in ("proxy", "ocx") if key in caps})
+    fact = bidding.proxy_fact({"proxy": caps["proxy"]} if "proxy" in caps else {})
     if fact is None:
         return None
-    magpie = fact["kind"] == MAGPIE
     service = fact.get("service") if isinstance(fact.get("service"), dict) else None
-    return {"kind": fact["kind"], "health": _int(fact.get("health")), "version": fact.get("version"),
-            "models": _int(fact.get("models")) if magpie else None,
-            "link": _link(fact.get("remote_id")) if magpie else None,
+    return {"health": _int(fact.get("health")), "models": _int(fact.get("models")), "link": _link(fact.get("remote_id")),
             "service": {"name": str(service.get("name")), "state": str(service.get("state"))} if service else None,
-            "signIn": "hub" if magpie else "node"}
+            "signIn": "hub"}
 
 
 def _link(remote_id) -> str:
@@ -433,16 +426,16 @@ def _logged(base: Path, by: dict, name: str, action: str, target: dict, work: Ca
 
 
 def restart(name: str, body, by: dict, base: Path) -> dict:
-    """``POST /devices/{name}/restart`` ``{"service": "worker"|"ocx"|"proxy"}``: through the node's service layer.
-    ``proxy`` is the node's own model proxy service by the kind the node itself runs (lina#589): its OCX, or its local
-    magpie service; the node refuses it while a run is active on it, and that refusal is a 409."""
+    """``POST /devices/{name}/restart`` ``{"service": "worker"|"proxy"}``: through the node's service layer.
+    ``proxy`` is the node's own local magpie service (lina#589); the node refuses it while a run is active on it, and
+    that refusal is a 409."""
     service = _field(body, "service")
 
     def work() -> dict:
         from hermes_cli.lina_devices import service_call
         dev = _node(base, name)
         if service not in SERVICES:
-            raise Refused(400, 'the body is {"service": "worker"|"ocx"|"proxy"}')
+            raise Refused(400, 'the body is {"service": "worker"|"proxy"}')
         result = service_call(dev, settings.root(base), service, "restart")
         if service == "proxy" and result.get("busy"):
             raise Refused(409, clean(result.get("reason")) or f"a run is active on {name}")
@@ -454,8 +447,8 @@ def restart(name: str, body, by: dict, base: Path) -> dict:
 
 def _restarted(service: str, result: dict) -> bool:
     """Only the node's own answer to a restart it carried out: the worker's names the instance it compared
-    (``protocol.service_action``), OCX's the service layer's state after it (``lina_runners._ocx_act``)."""
-    proof = result.get("instance_id") if service == "worker" else result.get("state")  # ocx and proxy: the state
+    (``protocol.service_action``), magpie's the service's state after it (``proxy_service.act``)."""
+    proof = result.get("instance_id") if service == "worker" else result.get("state")
     return (result.get("service") == service and result.get("action") == "restart" and isinstance(proof, str)
             and bool(proof.strip()))
 
@@ -485,14 +478,12 @@ def _offered_by(base: Path, runner: str, hello: Callable[[], dict]) -> bool:
 
 def _signs_in_on_hub(base: Path, runner: str, hello: Callable[[], dict]) -> bool:
     """Whether *runner*'s account on the node is the hub's magpie, not the node's (lina#589): the runner reaches
-    models through the node's proxy and the node's hello reports a ``magpie`` proxy. Asks the node only for such a
-    runner."""
+    models through the node's magpie and the node's hello reports one. Asks the node only for such a runner."""
     from hermes_cli.worker import device, runners
     worker = settings.section(base)
     if not device.needs_model_path(worker, runner, runners.specs(worker).get(runner)):
         return False
-    proxy = proxy_view(hello())
-    return proxy is not None and proxy["kind"] == MAGPIE
+    return proxy_view(hello()) is not None
 
 
 def _start_sign_in(name: str, runner: str, base: Path) -> dict:

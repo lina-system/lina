@@ -9,7 +9,6 @@ different provider depending on the network, and disagreed with the credential r
 
 import pytest
 
-from hermes_cli.auth import resolve_provider
 from hermes_cli.providers import resolve_provider_full
 
 
@@ -20,27 +19,11 @@ def _entry(key: str, api: str) -> dict:
 
 # Each alias as models.dev lists it, so the catalog leg has the colliding entry to resolve to.
 _CATALOG = {
-    "opencodex": _entry("opencodex", "http://127.0.0.1:10100/v1"),
     "meta": _entry("meta", "https://api.meta.ai/v1"),
     "azure": _entry("azure", "https://example.openai.azure.com/openai"),
     "google": _entry("google", "https://generativelanguage.googleapis.com/v1beta"),
     "google-vertex": _entry("google-vertex", "https://aiplatform.googleapis.com/v1"),
 }
-
-_ALIASES = {"opencodex": "ocx"}
-
-
-@pytest.mark.parametrize("registry", [_CATALOG, {}], ids=["catalog", "offline"])
-@pytest.mark.parametrize("alias", sorted(_ALIASES))
-def test_plugin_alias_resolves_to_the_plugin_id(monkeypatch, alias, registry):
-    monkeypatch.setattr("agent.models_dev.fetch_models_dev", lambda *a, **k: registry)
-
-    pdef = resolve_provider_full(alias)
-
-    assert pdef is not None
-    assert pdef.id == _ALIASES[alias]
-    assert pdef.id == resolve_provider(alias)
-
 
 def test_user_provider_named_like_the_alias_still_wins(monkeypatch):
     """A configured ``providers.meta`` pointing elsewhere keeps its own identity."""

@@ -84,7 +84,7 @@ class TestSupportsMediaInToolResults:
         import providers
         from providers.base import ProviderProfile
 
-        providers.get_provider_profile("ocx")
+        providers.get_provider_profile("magpie")
         monkeypatch.setattr(providers, "_REGISTRY", dict(providers._REGISTRY))
         providers.register_provider(ProviderProfile(
             name="vision-veto-test", supports_vision=True,

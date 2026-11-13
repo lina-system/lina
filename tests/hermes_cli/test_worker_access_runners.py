@@ -128,7 +128,7 @@ def test_omo_sets_session_permission_with_or_without_model(task, omo, mode, pres
     opened = json.loads((fake / "state.json").read_text())["opened"]
     assert {key: value for key, value in opened.items() if key == "permissionPreset"} == (
         {"permissionPreset": preset} if preset else {})
-    assert opened.get("modelId") == ("proxy/model-x" if model else None)
+    assert opened.get("modelId") == ("hub/proxy/model-x" if model else None)
     assert Handle.load(task).data["access"] == handle.data["access"] == mode
     assert runner.honours(mode) == (True, "")
 

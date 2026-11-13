@@ -2,7 +2,7 @@
 
 ``pm/lina-deps.json`` ``runners`` pins each runner with the installer that owns its binary:
 
-* ``npm``: the pinned Node's npm with ``--prefix`` (``lina_ocx.npm_install``, the same path as omo and OCX); the lock
+* ``npm``: the pinned Node's npm with ``--prefix`` (``lina_deps.npm_install``, the same path as omo); the lock
   must carry the pinned npm integrity before any package code runs.
 * ``binary`` / ``tarball``: the per-platform URL the runner's own installer script downloads, checked against the
   pinned ``sha256`` or ``sha512`` before anything is kept.
@@ -20,9 +20,8 @@ refreshed), ``route`` (a route source such as ``ocx-omo``) and ``probe`` (the on
 keep its install outside ``vendor/runners`` (``home``, ``shim``) and run an npm package's script on the pinned Node
 (``entry``), which is how omo keeps ``vendor/omo`` and ``bin/omo``.
 
-Sign-in is checked read-only, one way per runner (owner, 11-06): Claude and Codex (and their ACP adapters) through
-OCX -- LINA's own service, or the operator's external OCX (``ocx.external``) when it answers ``/healthz`` (lina#452)
--- Grok and Antigravity through their own CLI's credential file (existence only, never its content), Cursor with
+Sign-in is checked read-only: Claude and Codex (and their ACP adapters) through the node's magpie;
+accounts are signed in on the hub's magpie. Grok and Antigravity through their own CLI's credential file (existence only, never its content), Cursor with
 ``CURSOR_API_KEY``. The node only checks and reports; Grok and Antigravity are signed in from the hub's browser by
 ``lina devices sign-in <node> <runner>`` (``lina_sign_in``, #230). A runner whose sign-in has no read-only check
 (``unknown``) is reported as unknown, never as a failure.
@@ -30,9 +29,7 @@ OCX -- LINA's own service, or the operator's external OCX (``ocx.external``) whe
 
 from __future__ import annotations
 
-import contextlib
 import hashlib
-import io
 import json
 import os
 import re
@@ -47,15 +44,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from hermes_cli import lina_ocx
+from hermes_cli import lina_deps
 
-OcxError = lina_ocx.OcxError
+DepsError = lina_deps.DepsError
 PROBE_TIMEOUT_S = 10.0
 HELLO_TIMEOUT_S = 20.0
 _VERSION = re.compile(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.\-]+)?")
-SIGN_IN_OK = ("signed_in", "api_key", "ocx", "none")
+SIGN_IN_OK = ("signed_in", "api_key", "magpie", "none")
 BLOCK_KEYS = ("sign_in", "models", "route", "probe")  # a config block's parts beside ``install`` (lina#531)
-SERVICE_ACTIONS = {"ocx": ("status", "restart"), "worker": ("status", "stop", "restart"),
+SERVICE_ACTIONS = {"worker": ("status", "stop", "restart"),
                    "proxy": ("status", "restart")}
 # downloads.cursor.com answers 403 to urllib's default ``Python-urllib`` agent.
 USER_AGENT = "lina-runners"
@@ -69,7 +66,7 @@ ACP_PERMISSION_OBSERVATIONS: dict[str, dict[str, bool]] = {
 }
 
 
-class RunnersError(OcxError):
+class RunnersError(DepsError):
     pass
 
 
@@ -89,7 +86,7 @@ class RunnerPin:
     artifacts: dict = field(default_factory=dict)
     follow: dict = field(default_factory=dict)  # where the daily sync reads the newest version (lina#238)
     trial: dict = field(default_factory=dict)  # the probe: the one real request (lina#238, lina#531)
-    models: dict = field(default_factory=dict)  # {file, refresh: {ocx_client}}: the model list and its refresh
+    models: dict = field(default_factory=dict)  # {file}: the model list
     route: dict = field(default_factory=dict)  # {source}: the route source that maps models for this runner
     home: str = ""  # the install's folder under the LINA root; "" = vendor/runners/<name>
     shim: str = ""  # the shim under the LINA root; "" = bin/runners/<name>
@@ -121,10 +118,10 @@ def config_blocks(root: Path) -> dict[str, dict]:
     return blocks
 
 
-def pins(path: Path = lina_ocx.PIN_FILE, root: Path | None = None, *, moved: bool = True) -> dict[str, RunnerPin]:
+def pins(path: Path = lina_deps.PIN_FILE, root: Path | None = None, *, moved: bool = True) -> dict[str, RunnerPin]:
     """The repo pins, each config block laid over its name (lina#531), with the daily sync's moves
     (``<root>/runner-pins.json``, lina#238) on top; a move below the pin is ignored, the pin is the floor."""
-    root = root or lina_ocx.lina_root()
+    root = root or lina_deps.lina_root()
     table = json.loads(path.read_text(encoding="utf-8-sig")).get("runners", {})
     for name, block in config_blocks(root).items():
         table[name] = {**table.get(name, {}), **block}
@@ -154,7 +151,7 @@ def shim_path(root: Path, runner: RunnerPin | str) -> Path:
 
 
 def current_version(root: Path, runner: RunnerPin) -> str | None:
-    return lina_ocx.current_version(root, vendor_dir(root, runner))
+    return lina_deps.current_version(root, vendor_dir(root, runner))
 
 
 def entry_path(root: Path, runner: RunnerPin, version: str = "current") -> Path:
@@ -183,7 +180,7 @@ def installed_versions(root: Path, runner: RunnerPin) -> list[str]:
 
 
 def _node(root: Path, runner: RunnerPin) -> Path | None:
-    return lina_ocx.node_dir(root, lina_ocx.pins().node_version) if runner.installer == "npm" else None
+    return lina_deps.node_dir(root, lina_deps.pins().node_version) if runner.installer == "npm" else None
 
 
 def run_env(root: Path, runner: RunnerPin) -> dict[str, str]:
@@ -279,7 +276,7 @@ def install_artifact(root: Path, runner: RunnerPin, fetch: Callable[[str, Path],
     dest = vendor / runner.version
     if (dest / runner.entry).exists():
         return dest
-    key = lina_ocx.platform_key()
+    key = lina_deps.platform_key()
     artifact = runner.artifacts.get(key)
     if not artifact:
         raise RunnersError(f"{runner.name} {runner.version}: no pinned artifact for {key}")
@@ -308,8 +305,8 @@ def install_artifact(root: Path, runner: RunnerPin, fetch: Callable[[str, Path],
 def _install_version(root: Path, runner: RunnerPin, version: str, integrity: str, fetch, run) -> None:
     """*version* beside the others with the installer that owns the binary; it must report *version* (the trial)."""
     if runner.installer == "npm":
-        node = lina_ocx.install_node(root, lina_ocx.pins(), fetch)
-        lina_ocx.npm_install(root, node, vendor_dir(root, runner), runner.package, version, integrity, run)
+        node = lina_deps.install_node(root, lina_deps.pins(), fetch)
+        lina_deps.npm_install(root, node, vendor_dir(root, runner), runner.package, version, integrity, run)
     else:
         install_artifact(root, runner, fetch)
     got = reported_version(root, runner, version, run)
@@ -325,12 +322,12 @@ def install(name: str | None = None, root: Path | None = None, *,
             fetch: Callable[[str, Path], None] = download,
             run: Callable[..., subprocess.CompletedProcess] = subprocess.run, out=print) -> int:
     """``lina runners install [name]``: the pinned version of one runner, or of every pinned runner."""
-    root = root or lina_ocx.lina_root()
+    root = root or lina_deps.lina_root()
     code = 0
     for runner in _selected(name):
         try:
             install_pin(root, runner, fetch=fetch, run=run, out=out)
-        except OcxError as exc:
+        except DepsError as exc:
             out(f"{runner.name}: {exc}")
             code = 1
     return code
@@ -339,11 +336,11 @@ def install(name: str | None = None, root: Path | None = None, *,
 def install_pin(root: Path, runner: RunnerPin, *, fetch: Callable[[str, Path], None] = download,
                 run: Callable[..., subprocess.CompletedProcess] = subprocess.run, out=print) -> str:
     """The pinned version of one block beside the others, ``current`` when there was none, and its shim; returns the
-    active version. Raises ``OcxError`` when the install or its ``--version`` trial fails."""
+    active version. Raises ``DepsError`` when the install or its ``--version`` trial fails."""
     _install_version(root, runner, runner.version, runner.integrity, fetch, run)
     active = current_version(root, runner)
     if active is None:
-        lina_ocx.set_current(root, runner.version, vendor_dir(root, runner))
+        lina_deps.set_current(root, runner.version, vendor_dir(root, runner))
         active = runner.version
     note = "" if active == runner.version else f"; current stays {active} (`lina runners upgrade {runner.name}`)"
     out(f"✓ {runner.name} {runner.version}: {write_shim(root, runner)}{note}")
@@ -363,13 +360,13 @@ def _through_shim(root: Path, runner: RunnerPin, run) -> str | None:
 def _switch(root: Path, runner: RunnerPin, previous: str, version: str, run, out) -> int:
     vendor = vendor_dir(root, runner)
     _previous_file(root, runner).write_text(previous + "\n", encoding="utf-8")
-    lina_ocx.set_current(root, version, vendor)
+    lina_deps.set_current(root, version, vendor)
     write_shim(root, runner)
     got = _through_shim(root, runner, run)
     if got == version:
         out(f"✓ {runner.name} current: {previous} -> {version} (`lina runners rollback {runner.name}` switches back)")
         return 0
-    lina_ocx.set_current(root, previous, vendor)
+    lina_deps.set_current(root, previous, vendor)
     _previous_file(root, runner).unlink()
     out(f"{runner.name} {version} answered {got or 'nothing'} through the shim; switched back to {previous}")
     return 1
@@ -380,7 +377,7 @@ def upgrade(name: str, root: Path | None = None, version: str | None = None, int
             run: Callable[..., subprocess.CompletedProcess] = subprocess.run, out=print) -> int:
     """Install *version* beside the current one, trial it, switch ``current``, and switch back when the switched
     shim does not answer with *version*. Moving a pin across nodes is #238; this upgrades one node."""
-    root = root or lina_ocx.lina_root()
+    root = root or lina_deps.lina_root()
     return upgrade_pin(root, pin(name), version, integrity, fetch=fetch, run=run, out=out)
 
 
@@ -404,14 +401,14 @@ def upgrade_pin(root: Path, runner: RunnerPin, version: str | None = None, integ
         return 0
     try:
         _install_version(root, runner, version, integrity or runner.integrity, fetch, run)
-    except OcxError as exc:
+    except DepsError as exc:
         out(f"{name}: trial failed: {exc}; current stays {previous}")
         return 1
     return _switch(root, runner, previous, version, run, out)
 
 
 def rollback(name: str, root: Path | None = None, *, out=print) -> int:
-    return rollback_pin(root or lina_ocx.lina_root(), pin(name), out=out)
+    return rollback_pin(root or lina_deps.lina_root(), pin(name), out=out)
 
 
 def rollback_pin(root: Path, runner: RunnerPin, *, out=print) -> int:
@@ -422,7 +419,7 @@ def rollback_pin(root: Path, runner: RunnerPin, *, out=print) -> int:
         out(f"Nothing to roll back to: no upgrade recorded a previous {name} version")
         return 1
     current = current_version(root, runner)
-    lina_ocx.set_current(root, previous, vendor_dir(root, runner))
+    lina_deps.set_current(root, previous, vendor_dir(root, runner))
     write_shim(root, runner)
     record.unlink()
     out(f"✓ {name} current: {current} -> {previous}")
@@ -435,24 +432,11 @@ def _file_sign_in(path: Path) -> tuple[str, str | None]:
     return ("signed_in", None) if path.exists() else ("signed_out", f"no {shown}")
 
 
-def _ocx_sign_in(root: Path) -> tuple[str, str | None]:
-    """Signed in through the OCX *root* uses (lina#452): LINA's own service, or the operator's external OCX
-    (``ocx.external``) when it answers ``/healthz`` -- read the way ``lina_runner_sync_node.ocx_report`` reads it.
-    A node with no OCX at all stays ``unknown`` naming that."""
-    from hermes_cli import lina_services
-    try:
-        external = lina_ocx.external(root) is not None
-    except lina_ocx.OcxError as exc:
-        return ("unknown", str(exc))
-    if external:
-        try:
-            port = lina_ocx.configured_port(root)
-        except (lina_ocx.OcxError, KeyError, ValueError, TypeError):
-            port = lina_ocx.DEFAULT_PORT
-        status, _ = lina_ocx.http_get(port, "/healthz", timeout=1)
-        return ("ocx", None) if status == 200 else ("unknown", f"the external OCX is not answering on port {port}")
-    state = lina_services.state(lina_services.BY_NAME["ocx"])
-    return ("ocx", None) if state.startswith("running") else ("unknown", f"OCX is {state}")
+def _magpie_sign_in(root: Path) -> tuple[str, str | None]:
+    """The node reaches models through magpie; accounts are signed in on the hub."""
+    from hermes_cli.worker import device, settings
+    check = device.proxy_check(settings.root(root))
+    return ("magpie", None) if device.proxy_up(check) else ("unknown", device.proxy_down_why(check))
 
 
 def _env_sign_in(name: str) -> tuple[str, str | None]:
@@ -464,7 +448,7 @@ def _cursor_sign_in(root: Path) -> tuple[str, str | None]:
 
 
 SIGN_IN: dict[str, Callable[[Path], tuple[str, str | None]]] = {
-    "ocx": _ocx_sign_in,
+    "magpie": _magpie_sign_in,
     "none": lambda root: ("none", None),
     "grok": lambda root: _file_sign_in(Path.home() / ".grok" / "auth.json"),
     "agy": lambda root: _file_sign_in(Path.home() / ".gemini" / "antigravity-cli" / "antigravity-oauth-token"),
@@ -472,7 +456,7 @@ SIGN_IN: dict[str, Callable[[Path], tuple[str, str | None]]] = {
     "unknown": lambda root: ("unknown", "no read-only sign-in check is known for this runner"),
 }
 HOW_TO_SIGN_IN = {
-    "ocx": "sign in through LINA's OCX on {node} (`lina models status`)",
+    "magpie": "sign accounts in on the hub's magpie",
     "grok": "run `lina devices sign-in {node} {runner}` on the hub",
     "agy": "run `lina devices sign-in {node} {runner}` on the hub",
     "cursor": "put CURSOR_API_KEY into the LINA .env on {node}",
@@ -548,7 +532,7 @@ def _why(runner: RunnerPin, installed: str | None, sign_in: str) -> str | None:
         return "update"
     if sign_in in SIGN_IN_OK or sign_in_kind(runner) == "unknown":
         return None
-    return "prepare" if sign_in_kind(runner) == "ocx" else "sign in"
+    return "prepare" if sign_in_kind(runner) == "magpie" else "sign in"
 
 
 def row(root: Path, runner: RunnerPin, *, run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
@@ -571,7 +555,7 @@ def row(root: Path, runner: RunnerPin, *, run: Callable[..., subprocess.Complete
 
 def status(root: Path | None = None, *, run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> list[dict]:
     """``lina runners status``: every pinned runner on this node (read-only), probed in parallel."""
-    root = root or lina_ocx.lina_root()
+    root = root or lina_deps.lina_root()
     selected = list(pins().values())
     with ThreadPoolExecutor(max_workers=max(1, len(selected))) as pool:
         return list(pool.map(lambda runner: row(root, runner, run=run), selected))
@@ -660,38 +644,15 @@ def cached_node_report(worker_root: Path, *, max_age: float = REPORT_MAX_AGE_S) 
     return rows
 
 
-def _ocx_act(action: str) -> dict:
-    """``lina services restart ocx`` as it is (its refusals included), with its printed lines as the reason."""
-    from hermes_cli import lina_services
-    printed = io.StringIO()
-    with contextlib.redirect_stdout(printed):
-        try:
-            code = lina_services.act(action, "ocx")
-        except SystemExit as exc:
-            code = exc.code if isinstance(exc.code, int) else 1
-    state = lina_services.state(lina_services.BY_NAME["ocx"])
-    if code:
-        return {"service": "ocx", "action": "error", "reason": " ".join(printed.getvalue().split()) or
-                f"ocx {action} failed", "state": state}
-    return {"service": "ocx", "action": action, "state": state}
-
-
 def node_service(worker_root: Path, service: str, action: str, instance_id: str = "") -> dict:
-    """The node side of ``lina devices service`` (lina#222): status and restart of OCX and the worker through the
-    service layer (lina#31). The worker restart keeps #218's compare-and-act on *instance_id*; OCX has no instance,
-    its state comes from the service layer. ``proxy`` is the node's own model proxy service by its kind
-    (``worker.proxy_service``, lina#589)."""
+    """The node side of device service actions: magpie status/restart and worker lifecycle."""
     from hermes_cli import lina_services
     from hermes_cli.worker import protocol, proxy_service
     if action not in SERVICE_ACTIONS.get(service, ()):
         return {"service": service, "action": "error",
-                "reason": "service expects ocx|proxy status|restart or worker status|stop|restart"}
+                "reason": "service expects proxy status|restart or worker status|stop|restart"}
     if service == "proxy":
-        return proxy_service.act(worker_root, action, _ocx_act)
-    if service == "ocx":
-        if action == "status":
-            return {"service": "ocx", "action": "status", "state": lina_services.state(lina_services.BY_NAME["ocx"])}
-        return _ocx_act(action)
+        return proxy_service.act(worker_root, action)
     if action == "status":
         serve, instance_id = protocol.identity(worker_root)
         return {"service": "worker", "action": "status", "state": lina_services.state(lina_services.BY_NAME["worker"]),

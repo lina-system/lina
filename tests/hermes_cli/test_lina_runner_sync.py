@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from hermes_cli import lina_ocx, lina_runner_sync, lina_runners
+from hermes_cli import lina_deps, lina_runner_sync, lina_runners
 from hermes_cli import lina_runner_sync_state as state
 from hermes_cli.lina_runner_sync import Env, NodeView
 from hermes_cli.worker.transport import LocalTransport, Reply
@@ -61,7 +61,7 @@ class FakeNode:
         row = {"name": "grok", "pin": "grok", "pinned": self.installed, "installed": self.installed,
                "sign_in": "signed_in"}
         return NodeView(self.name, True, platform="linux-x64", verbs=tuple(self.verbs), rows={"grok": row},
-                        running=self.running, ocx={"external": False, "version": "2.95.0", "health": 200},
+                        running=self.running, proxy={"url": "http://127.0.0.1:3425/v1/models", "health": 200, "models": 2},
                         call=self.call)
 
     def call(self, verb, data, timeout):
@@ -88,14 +88,14 @@ def make_hub(tmp_path, monkeypatch) -> dict:
     entry = vendor / "1.0.70" / "grok"
     entry.write_bytes(release("1.0.70"))
     entry.chmod(0o755)
-    lina_ocx.set_current(root, "1.0.70", vendor)
-    monkeypatch.setattr(lina_ocx, "lina_root", lambda: root)
-    monkeypatch.setattr(lina_ocx, "platform_key", lambda: "linux-x64")
+    lina_deps.set_current(root, "1.0.70", vendor)
+    monkeypatch.setattr(lina_deps, "lina_root", lambda: root)
+    monkeypatch.setattr(lina_deps, "platform_key", lambda: "linux-x64")
     http = FakeHttp()
     nodes: list[FakeNode] = []
     notices: list[str] = []
     env = Env(http=http, fetch=lambda url, dest: pytest.fail(f"unexpected fetch {url}"),
-              ocx_logs=lambda root: pytest.fail("grok does not go through OCX"),
+
               nodes=lambda root: [node.view() for node in nodes], sign_in=lambda runner: "signed_in",
               notify=lambda root, text: notices.append(text) or "kept")
     return {"root": root, "http": http, "nodes": nodes, "env": env, "notices": notices}
@@ -365,72 +365,14 @@ def test_a_run_starting_on_the_hub_during_the_trial_stops_the_switch(hub):
     assert state.holds(root)["holds"] == []
 
 
-def _ocx_runner(root: Path, match: dict | None):
-    trial = {"argv": ["-p", "{prompt}"], "ocx": True, **({"ocx_match": match} if match else {})}
+def _trial_runner(root: Path):
     runner = lina_runners.RunnerPin(name="claude", installer="binary", version="2.0.0", bin="claude",
-                                    sign_in="ocx", entry="claude", trial=trial)
+                                    sign_in="magpie", entry="claude", trial={"argv": ["-p", "{prompt}"]})
     folder = lina_runners.vendor_dir(root, "claude") / "2.0.0"
     folder.mkdir(parents=True)
     (folder / "claude").write_bytes(release("2.0.0"))
     (folder / "claude").chmod(0o755)
     return runner
-
-
-BEGAN = 2_000_000_000.0
-HAIKU = "anthropic/claude-haiku-5-5"
-
-
-def _row(rid: str, model: str, at: float, status: int = 200) -> dict:
-    return {"requestId": rid, "requestedModel": model, "inboundProtocol": "chat", "status": status,
-            "timestamp": int(at * 1000), "client": "unknown"}
-
-
-def _ocx_trial(tmp_path, before, after, match=None, run=None):
-    """The OCX log reads *before* until the runner was asked, *after* from then on."""
-    import subprocess
-    from hermes_cli import lina_runner_sync_trial as trials
-    asked: list[bool] = []
-
-    def ask(argv, **kwargs):
-        asked.append(True)
-        return (run or subprocess.run)(argv, **kwargs)
-
-    def logs(root):
-        value = after if asked else before
-        if isinstance(value, Exception):
-            raise value
-        return value
-    return trials.trial(tmp_path, _ocx_runner(tmp_path, match if match is not None else {"model_contains": "haiku"}),
-                        "2.0.0", run=ask, ocx_logs=logs, clock=lambda: BEGAN)
-
-
-def test_an_ocx_trial_ignores_200s_of_other_models(tmp_path):
-    after = {"logs": [_row("bot-1", "anthropic/claude-sonnet-5", BEGAN + 1), _row("bot-2", "anthropic/opus", BEGAN + 2)]}
-    assert _ocx_trial(tmp_path, {"logs": []}, after)[0] is False
-
-
-def test_an_ocx_trial_ignores_200s_that_were_there_before_it(tmp_path):
-    old = _row("old-1", HAIKU, BEGAN + 1)
-    assert _ocx_trial(tmp_path, {"logs": [old]}, {"logs": [old]})[0] is False
-
-
-def test_an_ocx_trial_passes_on_a_new_matching_200(tmp_path):
-    old = _row("old-1", HAIKU, BEGAN + 1)
-    after = {"logs": [old, _row("bot-1", "anthropic/claude-sonnet-5", BEGAN + 2), _row("new-1", HAIKU, BEGAN + 3)]}
-    assert _ocx_trial(tmp_path, {"logs": [old]}, after) == (True, "OCX answered 200")
-
-
-def test_an_ocx_pin_without_ocx_match_fails_before_the_trial(tmp_path):
-    after = {"logs": [_row("new-1", HAIKU, BEGAN + 3)]}
-    ok, why = _ocx_trial(tmp_path, {"logs": []}, after, match={},
-                         run=lambda *a, **k: pytest.fail("the trial must not run"))
-    assert (ok, why) == (False, "no ocx_match in the pin")
-
-
-def test_an_unreadable_ocx_log_before_the_trial_fails_without_a_trial(tmp_path):
-    ok, why = _ocx_trial(tmp_path, lina_runners.OcxError("proxy down"), {"logs": []},
-                         run=lambda *a, **k: pytest.fail("the trial must not run"))
-    assert ok is False and why.startswith("OCX log could not be read before the trial")
 
 
 def _timing_out_trial(tmp_path, partial):
@@ -439,8 +381,8 @@ def _timing_out_trial(tmp_path, partial):
 
     def hang(argv, **kwargs):
         raise subprocess.TimeoutExpired(argv, 300.0, output=partial)
-    return trials.trial(tmp_path, _ocx_runner(tmp_path, {"model_contains": "haiku"}), "2.0.0", run=hang,
-                        ocx_logs=lambda root: {"logs": []})
+    return trials.trial(tmp_path, _trial_runner(tmp_path), "2.0.0", run=hang)
+
 
 
 @pytest.mark.parametrize("partial", [b"OK\n", "OK\n"])
@@ -457,3 +399,23 @@ def test_a_second_run_waits_for_the_first(hub):
     with lina_runner_sync.run_lock(hub["root"]):
         code, lines = run(hub)
     assert code == 1 and lines == ["another `lina runners sync` is running"]
+
+
+@pytest.mark.parametrize(("reachable", "proxy", "issues", "notes"), [
+    (True, {"url": "http://127.0.0.1:3425/v1/models", "health": 503, "models": 0},
+     ["- proxy: build-a health 503"], []),
+    (True, {"url": "http://127.0.0.1:3425/v1/models", "health": None, "models": 0},
+     ["- proxy: build-a health None"], []),
+    (True, {"url": "http://127.0.0.1:3425/v1/models", "health": 200, "models": 0},
+     ["- proxy: build-a model path lists no model (magpie http://127.0.0.1:3425/v1/models: HTTP 200, 0 models)"], []),
+    (True, {"url": "http://127.0.0.1:3425/v1/models", "health": 200, "models": 2}, [], []),
+    (True, None, [], []),
+    (False, {"url": "http://127.0.0.1:3425/v1/models", "health": 503, "models": 0},
+     [], ["- unreachable: build-a"]),
+])
+def test_daily_issues_report_only_reachable_nodes_with_an_unhealthy_proxy(tmp_path, reachable, proxy, issues, notes):
+    """Regression for #614: read the node's proxy fact, preserve missing and unreachable nodes."""
+    record = {"nodes": {"build-a": {"reachable": reachable, **({"proxy": proxy} if proxy is not None else {})}}}
+    state.write_json(state.record_path(tmp_path, 2_000_000_000), record)
+
+    assert lina_runner_sync.issue_lines(tmp_path, now=2_000_000_001) == (issues, notes)

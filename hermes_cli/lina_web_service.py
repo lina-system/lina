@@ -131,7 +131,7 @@ def running(root: Path) -> bool:
 
 
 def state(root: Path | None = None) -> str:
-    from hermes_cli.lina_ocx import lina_root
+    from hermes_cli.lina_deps import lina_root
     root = root or lina_root()
     kind = backend()
     if kind is None or not definition_path(kind).exists():
@@ -144,7 +144,7 @@ def state(root: Path | None = None) -> str:
 
 
 def start(root: Path | None = None, out=print) -> int:
-    from hermes_cli.lina_ocx import lina_root
+    from hermes_cli.lina_deps import lina_root
     root = root or lina_root()
     kind = backend()
     if kind is None:
@@ -193,7 +193,7 @@ def start(root: Path | None = None, out=print) -> int:
 
 def stop(root: Path | None = None, out=print) -> int:
     """Unload this service's own label; another dashboard on the account (Hermes Agent's) is never touched."""
-    from hermes_cli.lina_ocx import lina_root
+    from hermes_cli.lina_deps import lina_root
     root = root or lina_root()
     kind = backend()
     if kind is None or not definition_path(kind).exists():

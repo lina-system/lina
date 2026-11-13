@@ -219,7 +219,7 @@ Merged into P12.
 - **Habit.** Reports and releases the person relies on still happen when the model provider is down.
 - **Worked.** A fallback to a second provider, which fired once. The person's decision: fallback is the person's switch and off by default, and model-free scheduled duties run either way.
 - **Hurt.** Every account of the main provider returned rate limits for about seven hours. Every wake of the management session failed, including the morning report and the release of a hold on the build hosts. The failures repeated silently.
-- **LINA form.** `fallback_providers`, empty by default (`hermes_cli/config_defaults.py`, `agent/agent_init_fallback.py`). Model calls through OCX: #7, #32. Cron holds a job while a provider window is closed (`cron/quota_hold.py`) and runs script jobs with no agent (`cron/jobs.py`). Person reports on a model-free path: not built.
+- **LINA form.** `fallback_providers`, empty by default (`hermes_cli/config_defaults.py`, `agent/agent_init_fallback.py`). Model calls go through magpie (#7, #32). Cron holds a job while a provider window is closed (`cron/quota_hold.py`) and runs script jobs with no agent (`cron/jobs.py`). Person reports on a model-free path: not built.
 
 ## Open
 
@@ -238,7 +238,7 @@ Merged into P12.
 | N4. What needs me, and progress as lines | App surface, owned by lina-app. |
 | N5. Parallel coding hand-off | Product direction, now issues #35 and #63. |
 | N6. Signed catalog and tool-definition hashes | Go core plugin contract. The fork uses Hermes MCP. |
-| N7. Subscription-aware accounts | Product direction, now OCX in #32. |
+| N7. Subscription-aware accounts | Product direction, now magpie in #32. |
 | N8. Records as files in Git | Product direction with no operating lesson behind it. |
 | N9. Harness improvement as a development loop | The Go `lina replay` command, which the fork does not have. |
 | N10. Autonomy as data | Go core grant contracts. Covered by P11. |

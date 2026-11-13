@@ -112,6 +112,16 @@ def _no_detached_commit_graph_writer(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_live_magpie_service_probe(monkeypatch):
+    """``hello`` reads the node's magpie service state with ``systemctl --user show`` / ``launchctl print``: in a test,
+    that asks the host's real service manager, and the subprocess wait loop calls ``time.sleep``, which hub tests
+    replace. Answering "did not answer" keeps every test off it; ``test_worker_proxy_service`` sets its own ``_run``."""
+    from hermes_cli.worker import proxy_service
+
+    monkeypatch.setattr(proxy_service, "_run", lambda argv: None)
+
+
+@pytest.fixture(autouse=True)
 def _discharge_host_update_obligation():
     """Start and end every ``hermes_cli`` test with NO host update-restart obligation.
 
@@ -193,8 +203,8 @@ def _worker_model_path_answers(request, monkeypatch):
     """Default every work node's model path to answering ``200`` for a test (lina#416).
 
     ``worker.device.probe``/``hello`` ask the node's model path for a runner that reaches models
-    through the node's own OCX (omo, claude, codex) and a node that does not answer is never bid
-    on, so without this every test that places work on such a device would depend on a live OCX
+    through the node's own MAGPIE (omo, claude, codex) and a node that does not answer is never bid
+    on, so without this every test that places work on such a device would depend on a live MAGPIE
     on the machine running the suite — and would give a different answer on a host that runs one.
     Only the socket is stubbed: the URL, the runner the field is asked for, the
     ``model_path``/``model_path_why`` shape and the bid's use of it run as they do on a node. The

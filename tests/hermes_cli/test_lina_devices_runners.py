@@ -1,5 +1,5 @@
 """``lina devices`` per runner (lina#222): every device shows its runners with one reason when not ready, a runner
-waiting for a person's sign-in becomes one question naming the nodes and how, and OCX and worker status/restart go
+waiting for a person's sign-in becomes one question naming the nodes and how, and magpie and worker status/restart go
 through the service layer. Probes and runner reports are fakes; the worker service runs through #218's real
 negotiated transport against a local device with fake ``stop``/``start``.
 """
@@ -11,12 +11,12 @@ import textwrap
 
 import pytest
 
-from hermes_cli import lina_devices, lina_runners, lina_services
+from hermes_cli import lina_devices, lina_runners
 from hermes_cli.worker import device, protocol, service, settings
 from hermes_cli.worker.transport import LocalTransport, NegotiatedTransport, Reply
 
-CODEX = {"name": "codex", "type": "command", "pin": "codex", "pinned": "1.0.0", "installed": "1.0.0", "sign_in": "ocx",
-         "sign_in_by": "ocx", "ready": True, "why": None}
+CODEX = {"name": "codex", "type": "command", "pin": "codex", "pinned": "1.0.0", "installed": "1.0.0", "sign_in": "magpie",
+         "sign_in_by": "magpie", "ready": True, "why": None}
 GROK_OUT = {"name": "grok", "type": "command", "pin": "grok", "pinned": "1.0.70", "installed": "1.0.70", "sign_in": "signed_out",
             "sign_in_by": "grok", "sign_in_why": "no ~/.grok/auth.json", "ready": False, "why": "sign in"}
 GROK_IN = {**GROK_OUT, "sign_in": "signed_in", "sign_in_why": None, "ready": True, "why": None}
@@ -98,9 +98,9 @@ def test_a_node_that_cannot_be_asked_lists_an_acp_runner_by_its_adapter(base, mo
         """), encoding="utf-8")
     adapter = lina_runners.RunnerPin(name="claude-agent-acp", installer="npm",
                                      package="@zed-industries/claude-agent-acp", version="0.23.1", integrity="sha512-x",
-                                     bin="claude-agent-acp", sign_in="ocx", check="package")
+                                     bin="claude-agent-acp", sign_in="magpie", check="package")
     cli = lina_runners.RunnerPin(name="claude", installer="npm", package="@anthropic-ai/claude-code", version="2.1.311",
-                                 integrity="sha512-y", bin="claude", sign_in="ocx")
+                                 integrity="sha512-y", bin="claude", sign_in="magpie")
     monkeypatch.setattr(lina_runners, "pins", lambda path=None: {"claude": cli, "claude-agent-acp": adapter})
 
     rows = lina_devices.runner_rows(lina_devices.device("build-b", base["root"]),
@@ -150,25 +150,6 @@ def test_worker_status_and_restart_go_through_the_negotiated_service_verb(here):
     assert here["effects"] == ["stop", "start"]
 
 
-def test_ocx_restart_keeps_the_service_layers_refusal_while_the_worker_runs(here, monkeypatch):
-    acted: list[str] = []
-    monkeypatch.setattr(lina_services, "state", lambda svc: "running (pid 7)")
-    monkeypatch.setitem(lina_services._RUNNING, "worker", lambda: True)
-    monkeypatch.setitem(lina_services._RUNNING, "gateway", lambda: False)
-    monkeypatch.setitem(lina_services._VERBS, "ocx", lambda verb: acted.append(verb))
-    monkeypatch.setattr("hermes_cli.lina_ocx.refuse_external", lambda what, root=None: None)
-    lines: list[str] = []
-
-    assert lina_devices.service("here", "ocx", "status", base=here["root"], as_json=True, out=lines.append) == 0
-    assert json.loads(lines[-1])["state"] == "running (pid 7)"
-
-    assert lina_devices.service("here", "ocx", "restart", base=here["root"], as_json=True, out=lines.append) == 1
-    assert "worker still runs on it" in json.loads(lines[-1])["reason"] and acted == []
-
-    monkeypatch.setitem(lina_services._RUNNING, "worker", lambda: False)
-    assert lina_devices.service("here", "ocx", "restart", base=here["root"], as_json=True, out=lines.append) == 0
-    assert acted == ["restart"]
-
 
 def _remote(here, monkeypatch, name="build-x"):
     """A device reached over ssh, whose wire is the real node dispatch of this LINA root."""
@@ -206,21 +187,6 @@ def test_a_device_whose_hello_predates_runner_rows_shows_update(here, monkeypatc
         assert [(row["name"], row["why"]) for row in rows] == [("mine", "update")], "omo has its own column"
 
 
-def test_ocx_on_another_node_goes_through_its_service_verb(here, monkeypatch):
-    dev, _ = _remote(here, monkeypatch)
-    monkeypatch.setattr(lina_services, "state", lambda svc: "running (pid 9)")
-    monkeypatch.setitem(lina_services._RUNNING, "worker", lambda: False)
-    monkeypatch.setitem(lina_services._RUNNING, "gateway", lambda: False)
-    acted: list[str] = []
-    monkeypatch.setitem(lina_services._VERBS, "ocx", lambda verb: acted.append(verb))
-    monkeypatch.setattr("hermes_cli.lina_ocx.refuse_external", lambda what, root=None: None)
-    lines: list[str] = []
-
-    assert lina_devices.service(dev.name, "ocx", "status", base=here["root"], as_json=True, out=lines.append) == 0
-    assert json.loads(lines[-1]) == {"service": "ocx", "action": "status", "state": "running (pid 9)"}
-    assert lina_devices.service(dev.name, "ocx", "restart", base=here["root"], as_json=True, out=lines.append) == 0
-    assert acted == ["restart"]
-
 
 def test_the_service_verb_keeps_the_218_form_for_the_worker(here):
     worker_root = settings.root(here["root"])
@@ -233,5 +199,5 @@ def test_the_service_verb_keeps_the_218_form_for_the_worker(here):
 
     code, out = device.dispatch(worker_root, ["service", "worker", "restart", "someone-else"])
     assert json.loads(out)["stale_instance"] is True and here["effects"] == ["stop", "start", "stop"]
-    code, out = device.dispatch(worker_root, ["service", "ocx", "stop"])
-    assert json.loads(out)["action"] == "error", "OCX takes status and restart only"
+    code, out = device.dispatch(worker_root, ["service", "proxy", "stop"])
+    assert json.loads(out)["action"] == "error", "magpie takes status and restart only"

@@ -19,7 +19,7 @@ import uuid
 from pathlib import Path
 
 from agent.memory_provider import spawn_context_thread
-from hermes_cli import lina_ocx
+from hermes_cli import lina_deps
 from hermes_cli.lina_work_settings import ACCESS
 from hermes_cli.worker.runners import lina_copy
 from hermes_cli.worker.runners.access import recorded_access
@@ -117,7 +117,7 @@ class AcpRunner:
         self.name, self.argv, self.flavor = name, list(argv), flavor
         self.env = {str(key): str(value) for key, value in (spec.get("env") or {}).items()}
         self.limits = limits or {}
-        self.root = root or lina_ocx.lina_root()
+        self.root = root or lina_deps.lina_root()
         self._sessions: dict[int, _Session] = {}
 
     def available(self) -> tuple[bool, str]:
@@ -431,7 +431,7 @@ class _Session:
             if requested.get("source") == "--model":
                 raise RunnerError(f"explicit model was not applied: {exc}") from exc
             return
-        # ACP confirms an ID, not an OCX alias or a requested reasoning level.
+        # ACP confirms an ID, not a proxy alias or a requested reasoning level.
         self.handle.data["model"] = ModelProfile(requested.get("provider"), self.current_model,
                                                 source=requested.get("source", "runner")).as_dict()
         self.handle.save()

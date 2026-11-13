@@ -169,7 +169,7 @@ async def settings_models(if_none_match: Optional[str] = Header(default=None)):
             data = view(_base())
         except SettingsError as exc:
             raise HTTPException(status_code=503, detail=_invalid(exc.errors)["detail"]) from exc
-        # OCX's own error text stays in the CLI and the log; the API names only the source that failed
+        # magpie's own error text stays in the CLI and the log; the API names only the source that failed
         data["errors"] = [{"source": str(e.get("source")), "message": "could not be read; the list is the last good one"
                            if data["models"] else "could not be read"} for e in data["errors"]]
         return {"version": _version(), "at": time.time(), **data}

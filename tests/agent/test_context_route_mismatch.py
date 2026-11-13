@@ -49,8 +49,8 @@ class TestContextRouteMismatchNamedCustomProvider:
             _context_route_mismatch(
                 None,
                 "http://127.0.0.1:8080/v1",
-                "ocx",
-                "ocx",
+                "magpie",
+                "magpie",
             )
             is True
         )

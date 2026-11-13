@@ -2,8 +2,8 @@
 
 A request's cached prefix is the longest byte prefix it shares with any request of the last hour, in whole
 1024-token blocks at 4 bytes a token: the cache holds each block-aligned prefix with its last use, a read refreshes
-the blocks it read, and every whole block past the read is written. Each request also becomes one OCX usage row (``inputTokens`` with reads and writes included), so the rows
-go to ``lina memory cache-report`` as they would from OCX. The model writes everything to the 1h tier: its cache
+the blocks it read, and every whole block past the read is written. Each request also becomes one MAGPIE usage row (``inputTokens`` with reads and writes included), so the rows
+go to ``lina memory cache-report`` as they would from MAGPIE. The model writes everything to the 1h tier: its cache
 lives an hour.
 """
 

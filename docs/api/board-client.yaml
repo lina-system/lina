@@ -78,11 +78,11 @@ paths:
     post:
       operationId: restartDeviceService
       summary: >
-        The owner restarts a node's worker or OCX through the node's service layer (lina#234). Only from the owner's
-        devices (the work settings' owner-device gate); logged to <LINA root>/board/device-actions.jsonl. proxy
-        (lina#589) is the node's own model proxy service by the kind the node runs: its OCX as ocx does, or its local
-        magpie service (worker.proxy.service, default magpie); the node refuses it while a run is active on it (409).
-        LINA never touches magpie's accounts or its link to the hub.
+        The owner restarts a node's worker or local magpie service through the node's service layer (lina#234,
+        lina#589). Only from the owner's devices (the work settings' owner-device gate); logged to
+        <LINA root>/board/device-actions.jsonl. proxy is the node's own local magpie service (worker.proxy.service,
+        default magpie); the node refuses it while a run is active on it (409). LINA never touches magpie's accounts
+        or its link to the hub.
       parameters:
         - name: name
           in: path
@@ -99,7 +99,7 @@ paths:
               properties:
                 service:
                   type: string
-                  enum: [worker, ocx, proxy]
+                  enum: [worker, proxy]
       responses:
         "200":
           description: Restarted.
@@ -181,7 +181,7 @@ paths:
   /quota:
     get:
       operationId: getQuota
-      summary: Quota per service from LINA's OCX, with the burn rate of each window.
+      summary: Quota per service from this machine's magpie, with the burn rate of each window.
       parameters:
         - $ref: "#/components/parameters/IfNoneMatch"
       responses:
@@ -200,8 +200,7 @@ paths:
     get:
       operationId: getUsage
       summary: >
-        Tokens, estimated cost and requests of one range from OCX, by model, provider, account and machine (lina#232).
-        No split by agent: every agent sends with the same OCX key, so OCX records none.
+        Tokens, estimated cost and requests of one range from magpie, by model, provider, account and caller key (lina#232, lina#588).
       parameters:
         - $ref: "#/components/parameters/IfNoneMatch"
         - name: range
@@ -224,11 +223,11 @@ paths:
         "304":
           description: Unchanged since the ETag sent.
         "503":
-          description: OCX could not be read (not running, not installed, or the external OCX's proxy is down).
+          description: magpie could not be read.
   /models/state:
     get:
       operationId: getModelsState
-      summary: The models on and off, and for each machine whether its OCX link answered recently (lina#232).
+      summary: The models magpie lists (lina#232, lina#588).
       parameters:
         - $ref: "#/components/parameters/IfNoneMatch"
       responses:
@@ -244,7 +243,7 @@ paths:
         "304":
           description: Unchanged since the ETag sent.
         "503":
-          description: OCX could not be read.
+          description: magpie could not be read.
   /work/items:
     get:
       operationId: listWorkItems
@@ -692,7 +691,7 @@ components:
           type: string
           description: >
             Where it came from: --model, runner:<runner> (the runner's model in the work settings), mode:<mode> (the
-            mode default), fallback:<off|out_of_quota|no_account> (the fallback model, because OCX said so of the
+            mode default), fallback:<off|out_of_quota|no_account> (the fallback model, because magpie said so of the
             chosen one), runner (the runner's own default).
     SettingsRevision:
       type: string
@@ -982,36 +981,29 @@ components:
       type: object
       nullable: true
       additionalProperties: false
-      required: [kind, health, version, models, link, service, signIn]
+      required: [health, models, link, service, signIn]
       description: >
-        The node's model proxy from its hello (lina#589; capabilities.proxy, lina#586, else an older node's
-        capabilities.ocx as ocx); null when the node reports none (a file node, no OCX) or was not reached.
+        The node's magpie from its hello (lina#589; capabilities.proxy, lina#586); null when the node reports none
+        (a file node) or was not reached.
       properties:
-        kind:
-          type: string
-          enum: [ocx, magpie]
         health:
           type: integer
           nullable: true
-          description: HTTP status of the node's proxy check (ocx /healthz, magpie its local /v1/models); null when nothing answers.
-        version:
-          type: string
-          nullable: true
-          description: The OCX version (ocx); null otherwise.
+          description: HTTP status of the node's local /v1/models check; null when nothing answers.
         models:
           type: integer
           nullable: true
-          description: magpie only, the number of models its local /v1/models lists (it does not prove the link works).
+          description: The number of models its local /v1/models lists (it does not prove the link works).
         link:
           type: string
           nullable: true
-          description: magpie only, the remote_id of the node's link to the hub's magpie (model ids <link>/<provider>/<model>); local when the node's own magpie holds the models (remote_id "", model ids <provider>/<model>).
+          description: The remote_id of the node's link to the hub's magpie (model ids <link>/<provider>/<model>); local when the node's own magpie holds the models (remote_id "", model ids <provider>/<model>).
         service:
           type: object
           nullable: true
           additionalProperties: false
           required: [name, state]
-          description: magpie only, the node's local magpie service (worker.proxy.service) and its state.
+          description: The node's local magpie service (worker.proxy.service) and its state.
           properties:
             name:
               type: string
@@ -1020,8 +1012,8 @@ components:
               description: running, stopped, not installed or unknown.
         signIn:
           type: string
-          enum: [node, hub]
-          description: Where the accounts behind the proxy are signed in; hub for magpie (the hub's magpie, not the node).
+          enum: [hub]
+          description: Where the accounts behind the proxy are signed in (hub = the hub's magpie, not the node).
     RunnerCell:
       type: object
       additionalProperties: false
@@ -1048,9 +1040,9 @@ components:
         signIn:
           type: string
           nullable: true
-          enum: [signed_in, signed_out, api_key, ocx, magpie, unknown, null]
+          enum: [signed_in, signed_out, api_key, magpie, unknown, null]
           description: >
-            magpie (lina#589): on a magpie node, a runner that reaches models through the proxy; its account is on
+            magpie (lina#589): a runner that reaches models through the node's magpie; its account is on
             the hub's magpie and is not signed in on the node (POST /devices/{name}/sign-in answers 409).
         signingIn:
           type: boolean
@@ -1127,10 +1119,10 @@ components:
       properties:
         key:
           type: string
-          description: weekly, fiveHour, monthly, or custom:<OCX label>.
+          description: weekly, fiveHour, monthly, or custom:<label>.
         percent:
           type: number
-          description: The used share, as OCX reports it.
+          description: The used share, as magpie reports it.
         left:
           type: number
           description: 100 - percent, clamped to 0..100.
@@ -1150,7 +1142,7 @@ components:
       properties:
         id:
           type: string
-          description: A hash of the OCX account id.
+          description: A hash of the account id.
         number:
           type: integer
           description: The account's place in its service (1, 2, ...).
@@ -1160,11 +1152,11 @@ components:
           type: boolean
         active:
           type: boolean
-          description: OCX's active account of its provider.
+          description: Whether the account is marked active.
         state:
           type: string
           enum: [ok, paused, reauth]
-          description: reauth when OCX needs the account signed in again, else paused when paused, else ok.
+          description: reauth when the account needs to sign in again, else paused when paused, else ok.
         unavailable:
           type: boolean
         windows:
@@ -1192,13 +1184,9 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/QuotaAccount"
-        proxy:
-          type: string
-          enum: [ocx, magpie]
-          description: The proxy this service was read from; present only when more than one is read (lina#588).
     UsageTokens:
       type: object
-      description: Token counts; null only from magpie, when it does not give that count (unknown, never 0).
+      description: Token counts; null when magpie does not give that count (unknown, never 0).
       required: [total, input, output, cacheRead]
       properties:
         total:
@@ -1215,7 +1203,7 @@ components:
           nullable: true
     UsageRow:
       type: object
-      description: Requests, tokens and OCX's estimated cost in USD (null when OCX prices none of them).
+      description: Requests, tokens and magpie's estimated cost in USD (null when none of the calls are priced).
       required: [requests, tokens, costUsd]
       properties:
         requests:
@@ -1235,12 +1223,10 @@ components:
         account:
           type: string
           nullable: true
-          description: OCX's accountLogLabel as given (may be a hash).
+          description: The account label from magpie (an address is hashed).
         machine:
           type: string
-          description: >-
-            The name after `link:` of the machine's OCX access key; from magpie, the caller key name the machine
-            calls with (lina#588).
+          description: The caller key name the machine calls magpie with (lina#588).
     UsageView:
       type: object
       required: [version, at, range, generatedAt, requests, tokens, costUsd, byModel, byProvider, byAccount, byMachine]
@@ -1260,26 +1246,6 @@ components:
           nullable: true
         tokens:
           $ref: "#/components/schemas/UsageTokens"
-        proxy:
-          type: string
-          enum: [ocx, magpie]
-          description: >-
-            The proxy the figures above were read from; present only when `worker.proxy` reads magpie (lina#588).
-            With more than one, `proxies` holds each one's view, or `data: null` and `unknown` for one unread.
-        proxies:
-          type: array
-          items:
-            type: object
-            required: [kind, data]
-            properties:
-              kind:
-                type: string
-                enum: [ocx, magpie]
-              data:
-                type: object
-                nullable: true
-              unknown:
-                type: string
         costUsd:
           type: number
           nullable: true
@@ -1297,11 +1263,7 @@ components:
             $ref: "#/components/schemas/UsageRow"
         byMachine:
           type: array
-          description: >-
-            One row per OCX access key named `link:<machine>`, summed over this range's days from one 30-day
-            `usage --api-key-id` read per machine key. Those reads run in the background, started by a usage read at
-            most every 15 minutes; a read serves the last finished ones and never waits, so the list is empty until
-            the first one finishes and a day they have no record for counts 0 until the next.
+          description: One row per caller key name from magpie's usage summary.
           items:
             $ref: "#/components/schemas/UsageRow"
     LinkState:
@@ -1311,11 +1273,11 @@ components:
         machine:
           type: string
           nullable: true
-          description: The link's alias in OCX.
+          description: The link's alias.
         state:
           type: string
           nullable: true
-          description: OCX's link state (connected, failed, ...).
+          description: The link state.
         reportedAt:
           type: number
           nullable: true
@@ -1336,7 +1298,7 @@ components:
           type: integer
         enabledModels:
           type: array
-          description: The models on, by provider and model name.
+          description: The models magpie lists, by provider and model name.
           items:
             type: object
             required: [provider, model]
@@ -1465,7 +1427,7 @@ components:
         missing:
           type: array
           nullable: true
-          description: Services OCX holds no account for (null when OCX could not be read).
+          description: Services magpie holds no account for (null when magpie could not be read).
           items:
             type: string
     Person:

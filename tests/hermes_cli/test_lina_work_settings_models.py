@@ -1,6 +1,6 @@
-"""The OCX model list of the work settings (lina#256) on recorded ``models live`` / ``account list --quota`` shapes with
-synthetic values: only enabled rows, efforts, state, quota left (100 - the used percent) and reset per model, the
-per-runner check with its warning line, and the last good list while OCX cannot be read."""
+"""The magpie model list of the work settings (lina#256) on synthetic gateway replies:
+listed models, state, quota left (100 - the used percent) and reset per model, the
+per-runner check with its warning line, and the last good list while magpie cannot be read."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import textwrap
 
 import pytest
 
-from hermes_cli import lina_models, lina_ocx
+from hermes_cli import lina_magpie
 
 pytestmark = pytest.mark.platforms("posix")
 
@@ -61,28 +61,28 @@ CONFIG = textwrap.dedent("""\
     """)
 
 
-class FakeOcx:
+class FakeMagpie:
     def __init__(self):
         self.error: str | None = None
         self.calls: list[tuple] = []
 
-    def run(self, args, root=None):
-        args = tuple(args)
-        self.calls.append(args)
-        assert "--refresh" not in args
+    def get(self, proxy, path):
+        self.calls.append(path)
         if self.error:
-            raise lina_ocx.OcxError(self.error)
-        return {("models", "live", "--json"): LIVE, ("account", "list", "--quota", "--json"): QUOTA}[args]
+            raise lina_magpie.MagpieError(self.error)
+        return {"data": [{"id": f"hub/{r['provider']}/{r['id']}"} for r in LIVE
+                         if not r.get("disabled") and not r.get("initialSelectionPending")]}
 
 
 @pytest.fixture
-def ocx(tmp_path, monkeypatch):
+def magpie(tmp_path, monkeypatch):
     base = tmp_path / "lina"
     base.mkdir()
     (base / "config.yaml").write_text(CONFIG, encoding="utf-8")
     monkeypatch.setenv("LINA_HOME", str(base))
-    fake = FakeOcx()
-    monkeypatch.setattr(lina_models, "run", fake.run)
+    fake = FakeMagpie()
+    monkeypatch.setattr(lina_magpie, "get", fake.get)
+    monkeypatch.setattr(lina_magpie, "model_accounts", lambda proxy: QUOTA["accounts"])
     from hermes_cli import lina_work_settings_models
     lina_work_settings_models.forget()
     return fake
@@ -93,11 +93,11 @@ def _view(now=T):
     return view(now=now)
 
 
-def test_only_enabled_rows_are_listed_each_with_efforts_state_left_and_reset(ocx):
+def test_listed_models_have_state_left_reset_and_account_count(magpie):
     models = {(m["provider"], m["id"]): m for m in _view()["models"]}
     assert ("openai", "m-off") not in models and ("openai", "m-pending") not in models
     open_ = models[("openai", "m-open")]
-    assert open_["efforts"] == ["low", "medium", "high"] and open_["defaultEffort"] == "medium"
+    assert set(open_) == {"provider", "id", "state", "left", "resetAt", "accounts"}
     assert (open_["state"], open_["left"], open_["resetAt"], open_["accounts"]) == ("ok", 50, T + 2000, 2)
     assert {key: (m["state"], m["left"]) for key, m in models.items() if key[0] != "openai"} == {
         ("anthropic", "m-claude-a"): ("ok", 90),
@@ -110,10 +110,10 @@ def test_only_enabled_rows_are_listed_each_with_efforts_state_left_and_reset(ocx
     assert models[("anthropic", "m-claude-a")]["resetAt"] == T + 3000  # milliseconds read as seconds
     assert models[("anthropic", "m-claude-b")]["resetAt"] == T + 5000
     assert models[("zai", "m-out")]["resetAt"] == T + 6000
-    assert set(ocx.calls) == {("models", "live", "--json"), ("account", "list", "--quota", "--json")}
+    assert set(magpie.calls) == {"/v1/models"}
 
 
-def test_each_runner_mode_default_and_the_fallback_say_whether_their_model_is_usable(ocx):
+def test_each_runner_mode_default_and_the_fallback_say_whether_their_model_is_usable(magpie):
     data = _view()
     runners = {row["name"]: row for row in data["runners"]}
     assert (runners["codex"]["state"], runners["codex"]["usable"]) == ("off", False)
@@ -130,8 +130,18 @@ def test_each_runner_mode_default_and_the_fallback_say_whether_their_model_is_us
     assert data["errors"] == []
 
 
+def test_a_model_of_a_balance_backed_provider_is_unknown_not_without_an_account(magpie, monkeypatch):
+    import json
+    from pathlib import Path
+    quotas = json.loads((Path(__file__).parent / "fixtures" / "magpie" / "quotas.json").read_text(encoding="utf-8"))
+    monkeypatch.setattr(lina_magpie, "get", lambda proxy, path: {"data": [{"id": "hub/openrouter/some-model"}]})
+    monkeypatch.setattr(lina_magpie, "model_accounts", lambda proxy: lina_magpie.accounts(quotas, balances=True))
+    row = next(r for r in _view()["models"] if r["provider"] == "openrouter")
+    assert (row["state"], row["accounts"]) == ("unknown", 1)
+
+
 @pytest.mark.parametrize("models", ["x", 3, ["planner"], {"defaults": ["research"], "aliases": "y", "fallback": 4}])
-def test_a_wrong_typed_models_section_written_by_hand_reads_as_absent(ocx, tmp_path, models):
+def test_a_wrong_typed_models_section_written_by_hand_reads_as_absent(magpie, tmp_path, models):
     import json as _json
     path = tmp_path / "lina" / "config.yaml"
     path.write_text(CONFIG.split("\n  models:")[0] + f"\n  models: {_json.dumps(models)}\n", encoding="utf-8")
@@ -139,14 +149,14 @@ def test_a_wrong_typed_models_section_written_by_hand_reads_as_absent(ocx, tmp_p
     assert data["modes"] == [] and {row["name"] for row in data["runners"]} >= {"omo", "codex"}
 
 
-def test_ocx_unreadable_serves_the_last_good_list_for_ten_minutes_with_an_error_and_writes_nothing(ocx, tmp_path):
+def test_magpie_unreadable_serves_the_last_good_list_for_ten_minutes_with_an_error_and_writes_nothing(magpie, tmp_path):
     good = _view(T)
     config = (tmp_path / "lina" / "config.yaml").read_bytes()
-    ocx.error = "the OCX of ocx.external is not running"
+    magpie.error = "magpie is not reachable"
     stale = _view(T + 300)
     assert stale["models"] == good["models"]
-    assert stale["errors"] == [{"source": "ocx", "message": "the OCX of ocx.external is not running"}]
+    assert stale["errors"] == [{"source": "magpie", "message": "magpie is not reachable"}]
     gone = _view(T + 601)
-    assert gone["models"] == [] and gone["errors"][0]["source"] == "ocx"
+    assert gone["models"] == [] and gone["errors"][0]["source"] == "magpie"
     assert {row["state"] for row in gone["runners"] if row["model"]} == {"unknown"}
     assert (tmp_path / "lina" / "config.yaml").read_bytes() == config

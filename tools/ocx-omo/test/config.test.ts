@@ -7,9 +7,9 @@ import type { Plan } from "../src/plan.js";
 const plan: Plan = {
   warnings: [],
   routes: {
-    "categories.quick": { models: [{ model: "opencodex/a", reasoning: "low" }], skipped: [] },
+    "categories.quick": { models: [{ model: "magpie/hub/codex/a", reasoning: "low" }], skipped: [] },
     "categories.empty": { models: [], skipped: ["x"] },
-    "agents.explore": { models: [{ model: "opencodex/b" }], skipped: [] },
+    "agents.explore": { models: [{ model: "magpie/hub/claude/b" }], skipped: [] },
   },
 };
 const ORIGINAL = `{
@@ -28,7 +28,7 @@ describe("editRouting", () => {
   test("replaces routing keys and keeps the route's other keys", () => {
     assert.deepEqual(parsed["categories"].quick, {
       prompt_append: "stay",
-      models: [{ model: "opencodex/a", reasoning: "low" }],
+      models: [{ model: "magpie/hub/codex/a", reasoning: "low" }],
     });
   });
 
@@ -38,7 +38,7 @@ describe("editRouting", () => {
   });
 
   test("creates a missing section and leaves empty routes unwritten", () => {
-    assert.deepEqual(parsed["agents"].explore.models, [{ model: "opencodex/b" }]);
+    assert.deepEqual(parsed["agents"].explore.models, [{ model: "magpie/hub/claude/b" }]);
     assert.equal(parsed["categories"].empty, undefined);
   });
 

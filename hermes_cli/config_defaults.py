@@ -2595,9 +2595,6 @@ DEFAULT_CONFIG = {
         # (`*.foo.com`) supported.
         "extra_allowed_hosts": [],
     },
-    # LINA's one pinned OCX per root (hermes_cli/lina_ocx.py configured_port); external: {cli, data_dir} of an OCX run
-    # outside LINA, read only (lina_ocx.external, lina#232)
-    "ocx": {"port": 10100, "external": None},
     "desktop": {  # Hermes Desktop (Electron) launch options; only affect `hermes desktop`.
         # CSS font-family for the app's chat and UI text (e.g. "OpenDyslexic"). Layered in front
         # of the active theme's own sans stack so missing glyphs still fall through. Empty = the

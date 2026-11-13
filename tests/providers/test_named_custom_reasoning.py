@@ -6,16 +6,16 @@ from providers import get_provider_profile, register_provider
 from providers.base import ProviderProfile
 
 
-def test_configured_custom_routes_resolve_to_the_ocx_profile_never_none(monkeypatch):
+def test_configured_custom_routes_resolve_to_the_magpie_profile_never_none(monkeypatch):
     """A configured route (bare ``custom``, ``custom:<name>``, a named ``providers:`` key) always
-    gets a wire policy: the ocx profile. ``None`` would silently drop it onto the generic path."""
+    gets a wire policy: the magpie profile. ``None`` would silently drop it onto the generic path."""
     import providers
-    ocx = get_provider_profile("ocx")
-    assert ocx is not None and providers.CUSTOM_ROUTE_PROFILE == "ocx"
+    magpie = get_provider_profile("magpie")
+    assert magpie is not None and providers.CUSTOM_ROUTE_PROFILE == "magpie"
     with monkeypatch.context() as m:
         m.setattr("hermes_cli.runtime_provider_custom.has_named_custom_provider", lambda n: n == "my-endpoint")
         for name in ("custom", "custom:my-endpoint", "my-endpoint"):
-            assert get_provider_profile(name) is ocx, name
+            assert get_provider_profile(name) is magpie, name
         assert get_provider_profile("not-configured") is None
 
 

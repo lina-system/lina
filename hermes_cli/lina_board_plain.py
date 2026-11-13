@@ -184,7 +184,7 @@ _SCHEMA = ("CREATE TABLE IF NOT EXISTS line (kind TEXT NOT NULL, board TEXT NOT 
 
 
 def _root(root: Path | None) -> Path:
-    from hermes_cli.lina_ocx import lina_root
+    from hermes_cli.lina_deps import lina_root
     return lina_root() if root is None else root
 
 

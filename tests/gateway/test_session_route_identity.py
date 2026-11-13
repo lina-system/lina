@@ -16,7 +16,6 @@ CONFIG = {'providers': {'team': {'base_url': A, 'api_key': 'sk-team'}}}
     ({'provider': 'team'}, {'provider': 'team'},
      {'providers': {'team': {'base_url': B}}}, True),
     ({'provider': 'auto'}, {'provider': 'custom', 'base_url': B}, {}, True),
-    ({'provider': 'ocx'}, {'provider': 'opencodex'}, {}, True),
     ({'provider': 'openrouter'}, {'provider': 'anthropic'}, {}, False),
     ({'provider': 'custom', 'base_url': A}, {'provider': 'custom', 'base_url': B}, {}, False),
 ])

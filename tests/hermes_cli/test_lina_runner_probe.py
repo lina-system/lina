@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from hermes_cli import lina_ocx, lina_runner_probe, lina_runners
+from hermes_cli import lina_deps, lina_runner_probe, lina_runners
 from hermes_cli.worker import device, slots
 
 TOOL = (f"#!{sys.executable}\nimport os, sys\nif '--version' in sys.argv:\n    print('faketool 3.1.0')\n"
@@ -31,11 +31,11 @@ def node(tmp_path, monkeypatch):
     root.mkdir(parents=True)
     monkeypatch.setenv("HOME", str(account))
     monkeypatch.delenv("FAKETOOL_ANSWER", raising=False)
-    monkeypatch.setattr(lina_ocx, "lina_root", lambda: root)
+    monkeypatch.setattr(lina_deps, "lina_root", lambda: root)
     shim = lina_runners.shim_path(root, "faketool")
     block = {"type": "command", "argv": [str(shim), "-p"],
              "install": {"installer": "binary", "version": "3.1.0", "bin": "faketool", "entry": "faketool",
-                         "artifacts": {lina_ocx.platform_key(): {"url": URL,
+                         "artifacts": {lina_deps.platform_key(): {"url": URL,
                                                                   "sha256": hashlib.sha256(TOOL).hexdigest()}}},
              "sign_in": "none", "probe": {"argv": ["-p", "{prompt}"]}}
     (root / "config.yaml").write_text(json.dumps({"worker": {"default_runner": "faketool",

@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from hermes_cli import lina_ocx, lina_runners, lina_work_settings
+from hermes_cli import lina_deps, lina_runners, lina_work_settings
 from hermes_cli.lina_runner_routes import source as route_source
 
 TOOL = f"#!{sys.executable}\nprint('faketool 3.1.0')\n".encode()
@@ -21,7 +21,7 @@ URL = "https://fake.invalid/faketool"
 def block(**extra) -> dict:
     return {"type": "command", "argv": ["faketool", "-"],
             "install": {"installer": "binary", "version": "3.1.0", "bin": "faketool", "entry": "faketool",
-                        "artifacts": {lina_ocx.platform_key(): {"url": URL, "sha256": hashlib.sha256(TOOL).hexdigest()}}},
+                        "artifacts": {lina_deps.platform_key(): {"url": URL, "sha256": hashlib.sha256(TOOL).hexdigest()}}},
             "sign_in": {"env": "FAKETOOL_API_KEY"}, "probe": {"argv": ["-p", "{prompt}"]},
             "models": {"file": "~/.faketool/models.json"}, **extra}
 
@@ -33,7 +33,7 @@ def root(tmp_path, monkeypatch):
     root.mkdir(parents=True)
     monkeypatch.setenv("HOME", str(account))
     monkeypatch.delenv("FAKETOOL_API_KEY", raising=False)
-    monkeypatch.setattr(lina_ocx, "lina_root", lambda: root)
+    monkeypatch.setattr(lina_deps, "lina_root", lambda: root)
     (root / "config.yaml").write_text(json.dumps({"worker": {"runners": {"faketool": block()}}}))
     return root
 

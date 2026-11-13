@@ -18,7 +18,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import hermes_yaml
-from hermes_cli import lina_ocx
+from hermes_cli import lina_deps
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -45,7 +45,7 @@ def _valid(data):
 def root(tmp_path, monkeypatch):
     root = tmp_path / "lina"
     (root / "status").mkdir(parents=True)
-    monkeypatch.setattr(lina_ocx, "lina_root", lambda: root)
+    monkeypatch.setattr(lina_deps, "lina_root", lambda: root)
     return root
 
 @pytest.fixture

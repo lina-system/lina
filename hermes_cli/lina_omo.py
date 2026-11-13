@@ -29,9 +29,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from hermes_cli import lina_ocx, lina_runners
+from hermes_cli import lina_deps, lina_runners
 
-OcxError = lina_ocx.OcxError
+DepsError = lina_deps.DepsError
 NAME = "omo"  # omo's runner block (lina#531)
 
 
@@ -42,7 +42,7 @@ class OmoPin:
     integrity: str
 
 
-def omo_pin(path: Path = lina_ocx.PIN_FILE) -> OmoPin:
+def omo_pin(path: Path = lina_deps.PIN_FILE) -> OmoPin:
     """omo's block in ``pm/lina-deps.json`` ``runners`` (lina#531), with the config block and the daily sync's move."""
     block = lina_runners.pins(path)[NAME]
     return OmoPin(block.package, block.version, block.integrity)
@@ -60,7 +60,7 @@ def vendor_dir(root: Path) -> Path:
 
 
 def current_version(root: Path) -> str | None:
-    return lina_ocx.current_version(root, vendor_dir(root))
+    return lina_deps.current_version(root, vendor_dir(root))
 
 
 def entry_path(root: Path, version: str = "current") -> Path:
@@ -84,7 +84,7 @@ def shim_path(root: Path) -> Path:
 
 
 def node_bin(root: Path) -> Path:
-    return lina_ocx.node_dir(root, lina_ocx.pins().node_version) / "bin" / "node"
+    return lina_deps.node_dir(root, lina_deps.pins().node_version) / "bin" / "node"
 
 
 def omo_env() -> dict[str, str]:
@@ -94,12 +94,12 @@ def omo_env() -> dict[str, str]:
     return build_subprocess_env(scrub_secrets=False, inherit_profile_home=False, extra={"OMO_RUNTIME": "node"})
 
 
-def install(root: Path | None = None, *, fetch: Callable[[str, Path], None] = lina_ocx.download,
+def install(root: Path | None = None, *, fetch: Callable[[str, Path], None] = lina_deps.download,
             run: Callable[..., subprocess.CompletedProcess] = subprocess.run, out=print) -> int:
     """``lina omo install`` without the routing step: ``lina_runners.install_pin`` of omo's block (its ``--version``
     must print the pin, ``omo 5.1.69 (engine: …)``), then its route source prepared (``lina_runner_routes``)."""
     from hermes_cli import lina_runner_routes
-    root = root or lina_ocx.lina_root()
+    root = root or lina_deps.lina_root()
     block = runner()
     lina_runners.install_pin(root, block, fetch=fetch, run=run, out=out)
     prepared = lina_runner_routes.prepare(root, block, run=run)
@@ -129,10 +129,10 @@ def _handoff_hint(root: Path, out, run) -> None:
 
 
 def upgrade(root: Path | None = None, version: str | None = None, integrity: str | None = None, *,
-            fetch: Callable[[str, Path], None] = lina_ocx.download,
+            fetch: Callable[[str, Path], None] = lina_deps.download,
             run: Callable[..., subprocess.CompletedProcess] = subprocess.run, out=print) -> int:
     """``lina_runners.upgrade_pin`` of omo's block; a running daemon is left on the old version (one hint)."""
-    root = root or lina_ocx.lina_root()
+    root = root or lina_deps.lina_root()
     code = lina_runners.upgrade_pin(root, runner(), version, integrity, fetch=fetch, run=run, out=out)
     if code == 0:
         _handoff_hint(root, out, run)
@@ -141,7 +141,7 @@ def upgrade(root: Path | None = None, version: str | None = None, integrity: str
 
 def rollback(root: Path | None = None, *, run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
              out=print) -> int:
-    root = root or lina_ocx.lina_root()
+    root = root or lina_deps.lina_root()
     code = lina_runners.rollback_pin(root, runner(), out=out)
     if code == 0:
         _handoff_hint(root, out, run)
@@ -157,7 +157,7 @@ def installed_versions(root: Path) -> list[str]:
 def status(root: Path | None = None, *, run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> dict:
     """``lina omo status``: pin, installed versions, ``current``, the daemon and the routing check (all read-only)."""
     from hermes_cli import lina_omo_routing
-    root = root or lina_ocx.lina_root()
+    root = root or lina_deps.lina_root()
     host = daemon(root, run)
     code, output = lina_omo_routing.check(root, run=run)
     return {"pinned": omo_pin().version, "installed": installed_versions(root), "current": current_version(root),

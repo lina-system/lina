@@ -506,9 +506,9 @@ class TestPerResponseRunNonceIsolation:
 
         assert chat_key(self.RESPONSE_1) != chat_key(self.RESPONSE_2)
 
-    @pytest.mark.parametrize("profile_name", ["ocx"])
+    @pytest.mark.parametrize("profile_name", ["magpie"])
     def test_distinct_ids_keep_distinct_provider_sticky_keys(self, profile_name):
-        """OCX routes by this key, and it isolates distinct ids.
+        """MAGPIE routes by this key, and it isolates distinct ids.
 
         Same invariant as above on the sticky-routing surface: two ids of one
         Studio conversation re-key it on every reply, and a declared logical

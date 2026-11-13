@@ -10,7 +10,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from hermes_cli import lina_ocx
+from hermes_cli import lina_deps
 from tests.hermes_cli._work_env import NOW, WorkEnv
 
 AREA = {"id": "A1", "kind": "영역", "title": "Dev", "parent": "", "by": "alpha"}
@@ -26,7 +26,7 @@ def _todo(i: str, word: str) -> dict:
 @pytest.fixture
 def work(tmp_path, monkeypatch):
     env = WorkEnv(tmp_path, monkeypatch)
-    monkeypatch.setattr(lina_ocx, "lina_root", lambda: env.root)
+    monkeypatch.setattr(lina_deps, "lina_root", lambda: env.root)
     src = tmp_path / "mixed.jsonl"
     base = {"state": "open", "created": NOW - 7200, "progress_at": NOW - 3600, "op": "add", "writer": "alpha",
             "links": [], "notes": []}

@@ -1,7 +1,7 @@
 """``lina runners sync``: once a day the runner pins follow their sources, after a trial on the hub (lina#238).
 
 For each runner block whose pin has ``follow`` (omo, codex, claude, dsh, grok, cursor-agent, agy, and any block the
-settings add; OCX and the ACP adapters keep LINA's pins):
+settings add; the ACP adapters keep LINA's pins):
 
 1. the source names its newest version (``lina_runner_sync_sources``);
 2. a version above the hub's pin is installed on the hub beside the current one (``lina_runners._install_version``:
@@ -40,7 +40,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from hermes_cli import lina_ocx, lina_runner_models, lina_runners
+from hermes_cli import lina_deps, lina_runners
 from hermes_cli import lina_runner_sync_hub as hub_view
 from hermes_cli import lina_runner_sync_sources as sources
 from hermes_cli import lina_runner_sync_state as state
@@ -66,7 +66,7 @@ class NodeView:
     verbs: tuple = ()
     rows: dict = field(default_factory=dict)
     running: int = 0
-    ocx: dict | None = None
+    proxy: dict | None = None
     call: Callable[..., object] | None = None
 
 
@@ -76,8 +76,6 @@ class Env:
     run: Callable[..., subprocess.CompletedProcess] = subprocess.run
     popen: Callable[..., object] = subprocess.Popen
     fetch: Callable[[str, Path], None] = lina_runners.download
-    ocx_logs: Callable[[Path], object] = trials.read_ocx_logs
-    ocx_models: Callable[[Path], object] = lina_runner_models.read_ocx_models
     nodes: Callable[[Path], list[NodeView]] | None = None
     sign_in: Callable[[lina_runners.RunnerPin], str] | None = None
     clock: Callable[[], float] = time.time
@@ -118,7 +116,7 @@ def _contact(dev, worker_root: Path) -> NodeView:
     found = lina_devices.probe(dev, worker_root, runners.default_name(settings.section(worker_root.parent)))
     rows = {row.get("pin") or row.get("name"): row for row in caps.get("runners") or [] if isinstance(row, dict)}
     return NodeView(dev.name, True, platform=caps.get("platform"), verbs=tuple(caps.get("verbs") or ()), rows=rows,
-                    running=int(found.get("running") or 0), ocx=caps.get("ocx"),
+                    running=int(found.get("running") or 0), proxy=caps.get("proxy"),
                     call=lambda verb, data, timeout: transport.call(verb, data, timeout=timeout))
 
 
@@ -156,8 +154,8 @@ class Run:
     def needed_platforms(self) -> set[str]:
         wanted = {node.platform for node in self.nodes if node.reachable and node.platform}
         try:
-            wanted.add(lina_ocx.platform_key())
-        except lina_ocx.OcxError:
+            wanted.add(lina_deps.platform_key())
+        except lina_deps.DepsError:
             pass
         return wanted
 
@@ -265,10 +263,10 @@ class Run:
                 self.env.fetch(url, dest)
         try:
             lina_runners._install_version(self.root, moved, moved.version, moved.integrity, fetch, self.env.run)
-        except lina_runners.OcxError as exc:
+        except lina_runners.DepsError as exc:
             return False, f"install: {exc}"
         ok, why = trials.trial(self.root, moved, moved.version, run=self.env.run, popen=self.env.popen,
-                               ocx_logs=self.env.ocx_logs, clock=self.env.clock)
+                               clock=self.env.clock)
         if not ok:
             self.discard(moved)
         return ok, why if ok else f"trial: {why}"
@@ -360,7 +358,7 @@ def run_lock(root: Path):
 
 def _summarise_nodes(nodes: list[NodeView]) -> dict:
     return {node.name: {"reachable": node.reachable, "why": scrub(node.why), "platform": node.platform,
-                        "ocx": node.ocx, "running": node.running,
+                        "proxy": node.proxy, "running": node.running,
                         "runners": {name: {"installed": row.get("installed"), "pinned": row.get("pinned"),
                                            "sign_in": row.get("sign_in")} for name, row in node.rows.items()}}
             for node in nodes}
@@ -420,7 +418,7 @@ def notify(root: Path, text: str) -> str:
 
 def sync(root: Path | None = None, *, plan: bool = False, only: list[str] | None = None, as_json: bool = False,
          env: Env | None = None, out=print) -> int:
-    root = root or lina_ocx.lina_root()
+    root = root or lina_deps.lina_root()
     env = env or Env()
     if plan:
         record = execute(root, env, plan=True, only=only)
@@ -489,9 +487,12 @@ def issue_lines(root: Path, now: float | None = None) -> tuple[list[str], list[s
         if not view.get("reachable"):
             notes.append(f"- unreachable: {node}")
             continue
-        ocx = view.get("ocx")
-        if isinstance(ocx, dict) and ocx.get("health") != 200:
-            issues.append(f"- ocx: {node} health {ocx.get('health')}" + (" (external)" if ocx.get("external") else ""))
+        proxy = view.get("proxy")
+        if isinstance(proxy, dict):
+            from hermes_cli.worker import device
+            if not device.proxy_up(proxy):
+                why = f"health {proxy['health']}" if proxy["health"] != 200 else device.proxy_down_why(proxy)
+                issues.append(f"- proxy: {node} {why}")
     issues += hub_view.prepare_issues(record)
     for ask in record.get("questions") or []:
         issues.append(f"- sign-in: {ask['question']}")
@@ -501,7 +502,7 @@ def issue_lines(root: Path, now: float | None = None) -> tuple[list[str], list[s
 
 
 def status(root: Path | None = None, *, issues_only: bool = False, as_json: bool = False, out=print) -> int:
-    root = root or lina_ocx.lina_root()
+    root = root or lina_deps.lina_root()
     issues, notes = issue_lines(root)
     if issues_only:
         for line in issues or ["- none"]:
@@ -533,7 +534,7 @@ def _when(stamp) -> str:
 
 def clear(runner: str, root: Path | None = None, *, node: str | None = None, accept: str | None = None,
           out=print) -> int:
-    root = root or lina_ocx.lina_root()
+    root = root or lina_deps.lina_root()
     followed(root, [runner])
     gone = state.clear(root, runner, node, accept)
     out(f"{runner}: cleared {len(gone)} hold(s)" + (f"; {accept} accepted" if accept else ""))

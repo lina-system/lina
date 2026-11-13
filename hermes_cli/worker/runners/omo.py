@@ -44,9 +44,9 @@ def _last_json(raw: bytes) -> dict | None:
 
 class OmoRunner:
     def __init__(self, name: str, spec: dict, limits: dict | None = None, root: Path | None = None):
-        from hermes_cli import lina_ocx, lina_omo
+        from hermes_cli import lina_deps, lina_omo
         self.name, self.limits = name, limits or {}
-        base = self.root = root or lina_ocx.lina_root()
+        base = self.root = root or lina_deps.lina_root()
         self.bin = Path(spec.get("bin") or lina_omo.shim_path(base))
         self.node = Path(spec.get("node") or lina_omo.node_bin(base))
         current = lina_omo.vendor_dir(base) / "current"
@@ -54,7 +54,7 @@ class OmoRunner:
         self.engine = Path(spec["engine"]) if spec.get("engine") else next(
             (each for each in candidates if each.is_dir()), candidates[0])
         # The omo CLI and the RPC helpers are clients of the device's own daemon over its socket: the model
-        # credentials live with the daemon and OCX, so this client gets none of them.
+        # credentials live with the daemon and magpie, so this client gets none of them.
         self.env = build_subprocess_env(scrub_secrets=True, extra={"OMO_RUNTIME": "node", "GIT_TERMINAL_PROMPT": "0",
                                                                    "GCM_INTERACTIVE": "never"})
 
@@ -91,7 +91,7 @@ class OmoRunner:
         from hermes_cli.worker import proxy, settings
         from hermes_cli.worker.models import through_proxy
         err = task.path(f"stderr.{run}.txt")
-        # omo reaches every model through this node's own proxy (lina#385, lina#585): OCX unless it says magpie.
+        # omo reaches every model through this node's own magpie (lina#385, lina#585).
         provider, model_id = through_proxy(model, proxy.of(settings.section(self.root))) if model else (None, None)
         return self._call([str(self.node), str(HELPERS / "omo_open.mjs"), str(self.engine), str(task.work),
                            task.id, str(prompt_file), provider or "", model_id or "",

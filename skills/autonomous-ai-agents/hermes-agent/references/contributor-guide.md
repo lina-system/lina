@@ -8,7 +8,7 @@ Read the repository root and area-specific `AGENTS.md` before editing. LINA-spec
 | Chat parser | `hermes_cli/_parser.py` |
 | Turn phases | `agent/turn_*.py`, `run_agent.py` facade |
 | Tools | `tools/registry.py`, `model_tools.py`, `toolsets.py` |
-| OCX routing | `plugins/model-providers/ocx/` |
+| magpie routing | `plugins/model-providers/magpie/` |
 | Shared files | `hermes_cli/desk.py`, `docs/desk.md` |
 | Messaging and scheduling | `gateway/`, `cron/` |
 

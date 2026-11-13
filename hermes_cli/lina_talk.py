@@ -68,7 +68,7 @@ def check_message(message) -> str:
 def resolve(item_id: str) -> Target:
     """The item and the agent it answers to (``work.board.agent_of``), in one bound read of the record."""
     from hermes_cli.lina_board import _WORK_LOCK
-    from hermes_cli.lina_ocx import lina_root
+    from hermes_cli.lina_deps import lina_root
     from hermes_cli.work import env, ledger
     from hermes_cli.work.board import agent_of
     from hermes_cli.work.evaluate import item_name
@@ -91,7 +91,7 @@ def resolve(item_id: str) -> Target:
 
 def resolve_agent(agent: str) -> Target:
     """The owner's window on *agent*: one of the record's agents (``work.agents``), else 404."""
-    from hermes_cli.lina_ocx import lina_root
+    from hermes_cli.lina_deps import lina_root
     from hermes_cli.work import env
     current = env.load(lina_root())
     if agent not in current.agents:

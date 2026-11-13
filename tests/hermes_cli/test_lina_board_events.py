@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 import hermes_yaml
-from hermes_cli import lina_ocx
+from hermes_cli import lina_deps
 from tests.hermes_cli._work_env import NOW, WorkEnv
 
 pytestmark = pytest.mark.platforms("posix")
@@ -49,7 +49,7 @@ def _valid(schema_name: str, data):
 @pytest.fixture
 def work(tmp_path, monkeypatch):
     env = WorkEnv(tmp_path, monkeypatch)
-    monkeypatch.setattr(lina_ocx, "lina_root", lambda: env.root)
+    monkeypatch.setattr(lina_deps, "lina_root", lambda: env.root)
     env.goal_and_todos(todos=2)
     return env
 
