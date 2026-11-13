@@ -491,6 +491,23 @@ def _check_checkpoint_store(should_fix: bool, f: Finding) -> None:
         check_warn(notice)
 
 
+@doctor_check("Memory store model endpoints", "(could not check: {e})")
+def _check_store_models(should_fix: bool, f: Finding) -> None:
+    """A running store's Honcho has the model keys its settings need and reaches every *_BASE_URL (lina#650)."""
+    from hermes_cli.store import Store, store_dir
+    store = Store(store_dir(), out=lambda line: None)
+    if not store.env_file.exists() or "honcho-api" not in store.running_services():
+        return
+    _section("Memory Store")
+    problems = store.model_problems()
+    for line in problems:
+        check_warn(line)
+    if problems:
+        return f.manual_issues.append("Point Honcho at model endpoints its container can reach and set the keys it "
+                                      "names (docs/store.md, Reaching models from Honcho)")
+    check_ok("Honcho has its model keys and reaches every *_BASE_URL in honcho.env")
+
+
 def _plugin_provenance_rows(plugins_dir) -> list:
     """Report local provenance using the update checker's admission rules."""
     from hermes_cli.plugins_provenance import ProvenanceClass, plugins_provenance

@@ -77,3 +77,4 @@ def upgrade(store: Store) -> None:
         raise StoreError(f"{exc}. The backup from before the upgrade is {generation.name}: "
                          f"`lina store restore {generation.name}` puts the store back") from exc
     store.out(f"Upgrade done. The backup from before it is {generation.name}.")
+    store.report_models()
