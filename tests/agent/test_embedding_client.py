@@ -7,6 +7,7 @@ import math
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import httpx
 import pytest
 
 from agent.embedding_client import (
@@ -126,6 +127,38 @@ def test_a_stored_full_width_vector_becomes_its_renormalised_1024_prefix(width):
 def test_a_vector_from_another_model_is_refused():
     with pytest.raises(EmbeddingModelMismatch, match="text-embedding-3-small"):
         truncate_stored(_full_width(1, 1536), stored_model="text-embedding-3-small", model="qwen3-embedding-8b")
+
+
+def magpie_transport(listed: list[str]) -> httpx.MockTransport:
+    """magpie as it answers a bare model id: 404 "knows no model", and ``/v1/models`` listing *listed*."""
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path == "/v1/models":
+            return httpx.Response(200, json={"data": [{"id": name, "object": "model"} for name in listed]})
+        model = json.loads(request.content)["model"]
+        return httpx.Response(404, json={"error": {"code": None, "message": f'magpie knows no model "{model}"; '
+                                                                     "did you mean hub/claude/claude-opus-5-5?"}})
+    return httpx.MockTransport(handle)
+
+
+def test_magpie_refusing_the_bare_model_names_the_setting_the_endpoint_and_its_catalog_name():
+    settings = EmbeddingSettings(base_url="http://127.0.0.1:3425/v1", model="qwen3-embedding-8b")
+    listed = ["hub/claude/claude-opus-5-5", "hub/openai/text-embedding-3-small", "hub/nous/qwen/qwen3-embedding-8b"]
+    with EmbeddingClient(settings, transport=magpie_transport(listed)) as client:
+        with pytest.raises(EmbeddingError) as refused:
+            client.embed(["hello"])
+    line = str(refused.value)
+    assert "\n" not in line
+    assert "embedding.model 'qwen3-embedding-8b'" in line
+    assert "GET http://127.0.0.1:3425/v1/models" in line
+    assert "'hub/nous/qwen/qwen3-embedding-8b'" in line
+
+
+def test_magpie_listing_no_embedding_model_says_so_instead_of_naming_a_chat_model():
+    settings = EmbeddingSettings(base_url="http://127.0.0.1:3425/v1", model="qwen3-embedding-8b")
+    with EmbeddingClient(settings, transport=magpie_transport(["hub/claude/claude-opus-5-5"])) as client:
+        with pytest.raises(EmbeddingError, match="lists no embedding model") as refused:
+            client.embed(["hello"])
+    assert "claude" not in str(refused.value)
 
 
 def test_a_vector_narrower_than_the_target_or_all_zero_is_refused():
