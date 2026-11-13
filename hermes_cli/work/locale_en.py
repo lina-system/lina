@@ -615,6 +615,10 @@ MESSAGES = {
         "The owner can only take to-dos (work add 할 일 --by {owner} --from <requesting agent>)",
     "주인이 내림":
         "Dropped by owner",
+    "주인이 마쳤다고 표시한다":
+        "The owner marks it done",
+    "주인이 직접 적은 일을 잊지 않게":
+        "so the owner's own to-do is not forgotten",
     "주인이 할 것":
         "For the owner",
     "주인이 할 것: {what}":
