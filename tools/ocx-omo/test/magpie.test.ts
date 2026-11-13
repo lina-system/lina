@@ -180,6 +180,20 @@ describe("cli through magpie", () => {
     }
   });
 
+  test("refuses a persisted OCX-era policy with a message naming the file", () => {
+    const customHome = mkdtempSync(join(tmpdir(), "ocx-omo-oldpolicy-"));
+    try {
+      const policyDir = join(customHome, ".omo", "ocx-omo");
+      mkdirSync(policyDir, { recursive: true });
+      writeFileSync(join(policyDir, "policy.json"), JSON.stringify({ provider: "opencodex", namespaces: ["", "claude"], exclude: [], extras: {} }));
+      const refused = run("plan", "--home", customHome);
+      assert.notEqual(refused.status, 0);
+      assert.match(refused.stderr, /policy\.json: no "providers" list/);
+    } finally {
+      rmSync(customHome, { recursive: true, force: true });
+    }
+  });
+
   for (const flag of ["--proxy", "--names"]) {
     test(`refuses removed option ${flag} as unknown with exit 2`, () => {
       const refused = run("plan", flag, "unused");

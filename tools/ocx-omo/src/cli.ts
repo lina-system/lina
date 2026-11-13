@@ -68,6 +68,12 @@ function load(values: ReturnType<typeof parse>["values"]): Context {
   const policy = existsSync(policyPath)
     ? (parseJsonc(readFileSync(policyPath, "utf8"), policyPath) as Policy)
     : (JSON.parse(readFileSync(DEFAULT_POLICY, "utf8")) as Policy);
+  if (!Array.isArray(policy.providers)) {
+    throw new OcxOmoError(
+      `${existsSync(policyPath) ? policyPath : DEFAULT_POLICY}: no \"providers\" list (the OCX-era \"namespaces\" policy is not read any more); ` +
+      "replace it with {\"providers\": [...], \"extras\": {...}} as in the bundled policy.default.json",
+    );
+  }
   const remoteId = values["remote-id"] ?? "hub";
   if (remoteId.includes("/")) throw new OcxOmoError(`--remote-id: a name without '/' (or "" for local), not ${remoteId}`);
   const upstream = loadUpstream(values["omo-task"]);
