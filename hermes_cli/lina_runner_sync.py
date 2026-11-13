@@ -20,7 +20,7 @@ Every run leaves ``runner-sync/YYYYMMDD.json`` and ``runner-sync/last.json``. It
 a follow and an applied route are in the record only, and the one short English notice through
 ``worker.notice.command`` carries one line per thing a person should know -- a held tool, a failed probe, a lost
 sign-in, a major version that waits, a source that went back or a hub that cannot take the move. ``sync status --issues`` prints the lines the hub's
-daily check reads.
+daily check reads, with the last person-device check's lines (``runner-sync/person.json``, lina#490).
 """
 
 from __future__ import annotations
@@ -42,6 +42,7 @@ from typing import Callable
 
 from hermes_cli import lina_deps, lina_magpie_nodes, lina_runners
 from hermes_cli import lina_runner_sync_hub as hub_view
+from hermes_cli import lina_runner_sync_person as person_view
 from hermes_cli import lina_runner_sync_sources as sources
 from hermes_cli import lina_runner_sync_state as state
 from hermes_cli import lina_runner_sync_tend as tending
@@ -502,6 +503,8 @@ def issue_lines(root: Path, now: float | None = None) -> tuple[list[str], list[s
     issues += hub_view.prepare_issues(record)
     magpie_issues, magpie_notes = lina_magpie_nodes.lines(record)
     issues, notes = issues + magpie_issues, notes + magpie_notes
+    person_issues, person_notes = person_view.lines(root)
+    issues, notes = issues + person_issues, notes + person_notes
     for ask in record.get("questions") or []:
         issues.append(f"- sign-in: {ask['question']}")
     if state.last(root).get("error"):

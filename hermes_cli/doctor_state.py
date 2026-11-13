@@ -631,6 +631,28 @@ def _check_memory_provider(should_fix: bool, f: Finding) -> None:
         check_warn(f"{label} check failed", str(_e))
 
 
+@doctor_check("Memory vectors", "(could not count: {e})")
+def _check_memory_vectors(should_fix: bool, f: Finding) -> None:
+    """Honcho conclusions per workspace that still wait for a vector of the configured model, as `lina migrate
+    memory` leaves them: search over them is partial until `lina store reembed --source memory` (lina#644)."""
+    from hermes_cli.store import read_env, store_dir
+    if not read_env(store_dir() / "store.env").get("LINA_STORE_PASSWORD"):
+        return  # no LINA store on this machine
+    from plugins.memory import import_provider_module
+    pending_vectors = import_provider_module("honcho", "pending_vectors")
+    model = pending_vectors.configured_model()
+    counts = pending_vectors.pending_counts(model)
+    _section("Memory Vectors")
+    if not counts:
+        check_ok("Honcho conclusions", f"(all embedded with {model})")
+        return
+    for workspace, count in counts.items():
+        check_warn(f"Honcho workspace {workspace}: {count} conclusion(s) without a {model} vector",
+                   "(search is partial)")
+    f.manual_issues.append("Memory search is partial until the pending vectors are written — run: "
+                           "lina store reembed --source memory")
+
+
 @doctor_check("")  # best-effort: an unreadable config is the config check's finding
 def _check_plugins_disabled_by_update(should_fix: bool, f: Finding) -> None:
     """Plugins an update turned off (pm.plugin_eviction): every later update retries them."""

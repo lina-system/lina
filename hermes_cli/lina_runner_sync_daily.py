@@ -14,6 +14,9 @@ The same tick is the hub's daily health check of the sync (lina#491): it runs ``
 and writes the lines into ``<LINA root>/status/runner-sync.json``, one of the hub's own health checks (lina#233). A
 day with issues is a failing check naming them; a day without is a passing ``no issues`` row. The file is rewritten
 when the lines change and once a day, so it goes stale (``HEALTH_STALE_S``) only when the serve loop stops.
+
+When ``devices.workers`` has a person device, the day's first start also starts the read-only person-device check
+(``lina_runner_sync_person``, lina#490) as its own owned process; the retry does not.
 """
 
 from __future__ import annotations
@@ -32,6 +35,7 @@ _AT = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
 RETRY_AFTER_S = 1800
 HEALTH_STALE_S = 2 * 86400
 _child: subprocess.Popen | None = None
+_person: subprocess.Popen | None = None
 _log = logging.getLogger(__name__)
 
 
@@ -59,7 +63,7 @@ def retry_due(last: dict, now: float) -> list[str] | None:
     return [str(name) for name in last.get("busy") or []] or None
 
 
-def _spawn(root: Path, only: list[str] | None = None) -> subprocess.Popen:
+def _owned(root: Path, args: list[str], purpose: str) -> subprocess.Popen:
     from hermes_cli.process_identity import spawn_owned
     from hermes_cli.worker import settings
     from tools.environments.local import build_subprocess_env
@@ -68,13 +72,35 @@ def _spawn(root: Path, only: list[str] | None = None) -> subprocess.Popen:
     env = build_subprocess_env(scrub_secrets=False, inherit_profile_home=False,
                                extra={"PYTHONPATH": settings.child_pythonpath()})
     with log.open("a", encoding="utf-8") as fh:
-        return spawn_owned([sys.executable, "-P", "-m", "hermes_cli.main", "runners", "sync",
-                            *(["--only", ",".join(only)] if only else [])], purpose="runner-sync",
+        return spawn_owned([sys.executable, "-P", "-m", *args], purpose=purpose,
                            env=env, stdin=subprocess.DEVNULL, stdout=fh, stderr=subprocess.STDOUT)
 
 
+def _spawn(root: Path, only: list[str] | None = None) -> subprocess.Popen:
+    return _owned(root, ["hermes_cli.main", "runners", "sync", *(["--only", ",".join(only)] if only else [])],
+                  "runner-sync")
+
+
+def _spawn_person(root: Path) -> subprocess.Popen:
+    return _owned(root, ["hermes_cli.lina_runner_sync_person"], "runner-sync-person")
+
+
+def _start_person(root: Path, spawn: Callable[[Path], subprocess.Popen]) -> None:
+    from hermes_cli.worker import settings
+    global _person
+    if _person is not None and _person.poll() is None:
+        return
+    if not any(dev.role == "person" for dev in settings.devices(root)):
+        return
+    try:
+        _person = spawn(root)
+    except Exception:  # health: allow BLE001 -- nothing may leave the serve tick; the traceback is logged
+        _log.exception("the person-device check could not start")
+
+
 def maybe_start(worker_root: Path, *, now: float | None = None,
-                spawn: Callable[[Path, list[str] | None], subprocess.Popen] | None = None) -> bool:
+                spawn: Callable[[Path, list[str] | None], subprocess.Popen] | None = None,
+                person_spawn: Callable[[Path], subprocess.Popen] | None = None) -> bool:
     """Start today's sync when it is due, or today's one retry; True when one was started."""
     from hermes_cli.worker import settings
     global _child
@@ -100,6 +126,8 @@ def maybe_start(worker_root: Path, *, now: float | None = None,
         _log.exception("the daily runner sync could not start")
         _failed_start(root, now, exc)
         return False
+    if only is None:
+        _start_person(root, person_spawn or _spawn_person)
     return True
 
 

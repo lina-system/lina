@@ -232,8 +232,8 @@ Merged into P12.
 
 - **Habit.** A model path moves one consumer at a time, under real concurrency, with a way back.
 - **Worked.** Testing concurrency before the move. The new proxy starts one process per subscription request, and its memory cap allowed six at once. With the cap raised, 60 concurrent conversations all succeeded. Restarting the agents' gateway with a seven-minute check and automatic rollback: every chat channel answered and 50 proxied calls had no error. In the same long-input test, the second request read 99 percent from cache, against none through the old proxy.
-- **Hurt.** At the old cap, eight concurrent requests waited 52 seconds. The model alias table is shared with the build hosts. Changing it on the hub first broke their coding sessions, and it was reverted. The proxy's own connection command wrote a placeholder where the key belongs, so the hub refused the coding tools with 401 until the key was set by hand. In one catalog shape the same command replaced the key reference with its literal name.
-- **LINA form.** One node at a time, aliases kept in the old names through a name table, and a bid check by proxy kind: `docs/worker-proxy-switch.md`, `hermes_cli/worker/proxy.py`, `hermes_cli/worker/proxy_names.json`, #586.
+- **Hurt.** At the old cap, eight concurrent requests waited 52 seconds. The model alias table is shared with the build hosts. Changing it on the hub first broke their coding sessions, and it was reverted. The proxy's own connection command wrote a placeholder where the key belongs, so the hub refused the coding tools with 401 and the move to coding tools was put on hold. In one catalog shape the same command replaced the key reference with its literal name.
+- **LINA form.** One node at a time, each node on its own magpie, one model name (`<provider>/<id>`) with no name table, and a bid that reads the node's own magpie answer (`/v1/models` 200 with at least one model): `docs/worker-proxy-switch.md`, `hermes_cli/worker/proxy.py`, #585, #586, #590.
 
 ### P34. A deploy checked on disk instead of in the running process
 

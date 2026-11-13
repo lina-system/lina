@@ -23,7 +23,7 @@ from agent.skill_commands import extract_user_instruction_from_skill_message
 from agent.turn_author import a2a_key
 from .attribution import HONCHO_APP_URL, attribution_url
 from .client import HonchoClientConfig, resolve_config_path
-from .client import _host_block, _HostLookup
+from .client import _host_block, _HostLookup, _is_local_base_url
 from .client import join_plugin_threads, spawn_context_thread
 from .dialectic import DialecticMixin
 from .session_peers import assistant_peer_id_for, sanitize_peer_id
@@ -127,6 +127,7 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         self._card_in_prompt = card_in_prompt
         self._manager = None   # HonchoSessionManager
         self._config = None    # HonchoClientConfig
+        self._pending_vectors = None  # PendingNote of this workspace, once a search or recall asks
         self._session_key = ""
         self._query_rewriter = query_rewriter
         self._prefetch_result = ""
@@ -609,7 +610,8 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         if self._recall_sync:
             from .recall_sync import prefetch_sync
             notice = self._pop_auth_notice() or self._pop_peer_notice()
-            payload = "\n\n".join(part for part in (notice, prefetch_sync(self, query)) if part)
+            parts = (notice, self._partial_search_note(), prefetch_sync(self, query))
+            payload = "\n\n".join(part for part in parts if part)
             return self._log_injection("injected" if payload else "recall-sync-empty", payload)
 
         # on_turn_start() normally does the turn-1 waits; this covers a caller that skipped it.
@@ -632,7 +634,7 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
             return self._log_injection("trivial-prompt", self._truncate_to_budget(ready) if ready else "")
 
         # One-time notice, relayed by the model, that auth is dead and memory is paused.
-        parts = [self._pop_auth_notice()]
+        parts = [self._pop_auth_notice(), self._partial_search_note()]
         # First-turn mode suppresses only the base layer; dialectic is independent.
         if not (self._card_in_prompt or self._injection_frequency == "first-turn" and self._turn_count > 1):
             parts.append(self._fetch_base_context_layer(query, first_turn_base_deadline))
@@ -651,7 +653,7 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         if self._cron_skipped:
             return ""
         from .recall_sync import recall_query_sync
-        payload = recall_query_sync(self, query)
+        payload = "\n\n".join(part for part in (self._partial_search_note(), recall_query_sync(self, query)) if part)
         return self._log_injection("explicit-recall" if payload else "explicit-recall-empty", payload)
 
     def _previous_user_message(self) -> str:
@@ -1131,7 +1133,21 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
             return tool_error("Missing required parameter: query")
         max_tokens = min(int(args.get("max_tokens", 800)), 2000)
         result = self._manager.search_context(self._session_key, query, max_tokens=max_tokens, peer=args.get("peer", "user"))
-        return json.dumps({"result": result or "No relevant context found."})
+        payload = {"result": result or "No relevant context found."}
+        if note := self._partial_search_note():
+            payload["partial"] = note
+        return json.dumps(payload)
+
+    def _partial_search_note(self) -> str:
+        """The note that search is partial while this workspace's conclusions wait for their vectors (lina#644);
+        "" otherwise, and for a Honcho outside this machine's LINA store."""
+        workspace = getattr(self._config, "workspace_id", "")
+        if not (workspace and _is_local_base_url(getattr(self._config, "base_url", None))):
+            return ""
+        if self._pending_vectors is None:
+            from .pending_vectors import PendingNote
+            self._pending_vectors = PendingNote(workspace)
+        return self._pending_vectors.note()
 
     def _tool_reasoning(self, args: dict) -> str:
         from .session import HonchoAuthError
