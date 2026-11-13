@@ -219,3 +219,6 @@ def _worker_model_path_answers(request, monkeypatch):
         return
     monkeypatch.setattr(device, "http_status", lambda url, timeout=0: 200, raising=False)
     monkeypatch.setattr(device, "models_listed", lambda url, timeout=0, key=None: (200, 1), raising=False)
+    from hermes_cli import lina_magpie_nodes  # hello and the daily sync read the magpie version and model names
+    monkeypatch.setattr(lina_magpie_nodes, "version", lambda: None)
+    monkeypatch.setattr(lina_magpie_nodes, "names", lambda proxy: None)

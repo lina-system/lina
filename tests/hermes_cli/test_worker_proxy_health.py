@@ -91,12 +91,14 @@ def node(tmp_path, monkeypatch):
 
 def test_a_magpie_node_is_up_on_200_with_models(node, endpoint, monkeypatch):
     monkeypatch.setattr("hermes_cli.worker.proxy_service.magpie_state", lambda unit: f"running ({unit})")
+    monkeypatch.setattr("hermes_cli.lina_magpie_nodes.version", lambda: "0.1.3903")
     url = f"{endpoint.base}/v1/models"
     call = node(f"{{health: '{url}'}}")
     assert call("probe", "", "claude")["model_path"] == "ok"
     assert call("hello")["capabilities"]["proxy"] == {
         "url": url, "health": 200, "models": 2, "remote_id": "hub",
-        "service": {"name": "magpie", "state": "running (magpie)"}}
+        "service": {"name": "magpie", "state": "running (magpie)"}, "version": "0.1.3903",
+        "names": ["p/m0", "p/m1"]}
 
 
 @pytest.mark.parametrize("status", [404, 503])
