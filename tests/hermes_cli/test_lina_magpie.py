@@ -207,7 +207,7 @@ def test_the_board_quota_reads_magpie_s_kept_quotas_in_the_quota_row_shape(root,
     assert list(services) == ["OpenAI", "Claude", "Grok"]
     claude = services["Claude"]["accounts"][0]
     assert [(w["key"], w["percent"], w["left"]) for w in claude["windows"]] == [
-        ("weekly", 40.0, 60.0), ("fiveHour", 12.0, 88.0), ("custom:7 days · Fable", 5.0, 95.0)]
+        ("weekly", 40.0, 60.0), ("custom:7 days · Fable", 5.0, 95.0)]  # no five-hour window (lina#654)
     assert claude["mainWindow"] == "weekly" and services["Claude"]["percent"] == 40.0
     grok = services["Grok"]["accounts"][0]
     assert grok["windows"] == [] and grok["unavailable"] is True and services["Grok"]["percent"] is None

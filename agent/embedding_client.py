@@ -7,9 +7,14 @@ settings are ``embedding:`` in config.yaml and the key is a secret in ``.env`` (
 
     embedding:
       base_url: <OpenAI-compatible endpoint, ending in /v1>
-      model: qwen3-embedding-8b
+      model: qwen3-embedding-8b   # through magpie: its catalog name, e.g. hub/nous/qwen/qwen3-embedding-8b
       dimensions: 1024
       api_key_env: LINA_EMBEDDING_API_KEY
+
+The model string is part of every stored vector's key, so a renamed model is a new set of vectors. magpie names
+a model ``<remote>/<provider>/<id>`` as ``GET {base_url}/models`` lists it and refuses the bare id; the first
+request turns that refusal into one line naming ``embedding.model``, the endpoint and the closest embedding model
+the endpoint lists (``_unknown_model``).
 
 The vectors are Matryoshka prefixes: the first ``dimensions`` values of the model's vector, L2-normalised
 again. A server that ignores the ``dimensions`` request field and answers at full width is cut the same way,
@@ -18,6 +23,7 @@ and so is a full-width vector stored earlier by the same model (``truncate_store
 
 from __future__ import annotations
 
+import difflib
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -142,6 +148,8 @@ class EmbeddingClient:
             response = self._http.post("/embeddings", json=body)
         except httpx.HTTPError as exc:
             raise EmbeddingError(f"embedding request to {self.settings.base_url} failed: {exc}") from exc
+        if response.status_code == 404 and "knows no model" in response.text:
+            raise EmbeddingError(self._unknown_model())
         if response.status_code != 200:
             raise EmbeddingError(f"embedding endpoint answered {response.status_code}: {response.text[:300]}")
         try:
@@ -156,3 +164,21 @@ class EmbeddingClient:
             return [matryoshka(vector, self.settings.dimensions) for vector in raw]
         except (ValueError, TypeError) as exc:
             raise EmbeddingError(f"embedding endpoint returned an unusable vector: {exc}") from exc
+
+    def _unknown_model(self) -> str:
+        """The one line for magpie's "knows no model": the setting, the endpoint and the closest embedding model
+        its ``/models`` lists (the same id with a catalog prefix first, else the most similar name)."""
+        import httpx
+        model, base_url = self.settings.model, self.settings.base_url
+        head = f"embedding.model {model!r} is not a model {base_url} knows"
+        try:
+            listed = [str(item["id"]) for item in self._http.get("/models").json()["data"]]
+        except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
+            return f"{head}; its model list (GET {base_url}/models) could not be read: {exc}"
+        embedding = [name for name in listed if "embed" in name.lower()]
+        same_id = [name for name in embedding if name.rsplit("/", 1)[-1] == model.rsplit("/", 1)[-1]]
+        closest = same_id or difflib.get_close_matches(model, embedding, n=1, cutoff=0.0)
+        if not closest:
+            return f"{head}; GET {base_url}/models lists no embedding model"
+        return (f"{head}; the closest embedding model GET {base_url}/models lists is {closest[0]!r}: "
+                f"set embedding.model to it (the name keys every stored vector)")

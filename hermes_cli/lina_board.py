@@ -193,9 +193,9 @@ def worker_read(_board_root: Path, now: float) -> list[dict]:
 
 
 def devices_read(_board_root: Path, now: float, errors: list[dict]) -> dict:
-    """``{machines, person}``: the nodes by role with readiness, load and runners, and the person devices
-    (``lina_board_devices``); a metrics reader that fails adds an error and leaves its fields empty. The devices
-    and their ``devices.metrics.beszel`` path come from the worker's own config, the same root as
+    """``{machines, person, monitored}``: the nodes by role with readiness, load and runners, the person devices and
+    the machines only Beszel watches (``lina_board_devices``); a metrics reader that fails adds an error and leaves
+    its fields empty. The devices and their ``devices.metrics.beszel`` path come from the worker's own config, the same root as
     :func:`worker_read` (lina#269); the board root the callers pass holds none of it."""
     from hermes_cli.lina_board_devices import view
     from hermes_cli.worker.board import beszel_path, beszel_read
@@ -281,8 +281,9 @@ def _bound_locale(root: Path):
 
 
 def _verdict_agent(card: dict) -> str | None:
-    """The agent a run waits on for its verdict (``waitingOn: agent:<name>``, lina#295): its to-do, not the owner's."""
-    waiting_on = card.get("waitingOn") or ""
+    """The agent a run waits on for its verdict (``waitingOn: agent:<name>``, lina#295): its to-do, not the owner's.
+    A stopped run's ``waitingOn`` (lina#629) is no verdict and counts for no agent."""
+    waiting_on = (card.get("waitingOn") or "") if card.get("state") == "waiting" else ""
     return waiting_on.removeprefix("agent:") if waiting_on.startswith("agent:") else None
 
 
@@ -318,7 +319,7 @@ def devices(now: float | None = None) -> dict:
     found = _source("devices", errors, lambda: devices_read(root, now, errors)) or {}
     return {"version": API_VERSION, "at": min(now, found.get("at") or now), "errors": errors,
             "machines": found.get("machines") or [],
-            "person": found.get("person") or []}
+            "person": found.get("person") or [], "monitored": found.get("monitored") or []}
 
 
 def quota(now: float | None = None) -> dict:

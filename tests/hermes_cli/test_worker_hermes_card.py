@@ -391,7 +391,7 @@ def test_hermes_card_runs_show_in_the_board_run_list_with_card_and_board(queued)
     hub.store.save(lina_card)  # a run on LINA's own board: #112 serves it as a work card
     shown = {row["id"]: row for row in cards(hub.worker_root, time.time())}
     assert set(shown) == {run}
-    assert (shown[run]["card"], shown[run]["board"]) == (CARD, BOARD)
+    assert (shown[run]["card"], shown[run]["board"]) == (f"hermes:{CARD}", BOARD)  # the id /work/cards serves (lina#630)
 
 
 def _unblocks(calls: list[dict]) -> list[tuple[list[str], bool]]:

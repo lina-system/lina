@@ -1,5 +1,9 @@
 # Worker protocol
 
+Nodes and their workers are LINA's own (`lina worker`). GOAT, the earlier fleet tool, is reference only: LINA
+reads its designs (#224) and never runs, calls or depends on it. The owner's personal laptops are never nodes
+([work settings](lina-work-settings.md#keys)).
+
 Every hub contact created by `transport.for_device` asks `_device hello` before
 its first verb, including local devices. The descriptor is cached only in that
 transport object, never on disk or across ticks. It contains `protocol.min` and
