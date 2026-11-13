@@ -25,7 +25,8 @@ from hermes_cli.lina_omo import omo_pin
 from hermes_cli.lina_runners import pins
 from hermes_cli.lina_work_settings_gate import GATE
 from hermes_cli.worker.transport import Reply
-from tests.hermes_cli.test_lina_board_api import _valid
+from tests.hermes_cli._work_env import NOW as STAMPED
+from tests.hermes_cli.test_lina_board_api import _beszel, _valid
 
 pytestmark = pytest.mark.platforms("posix")
 
@@ -322,6 +323,23 @@ def test_person_devices_show_status_and_tool_versions_from_one_read_only_ssh_cal
     down = _devices(client)["person"][0]
     assert down["reachable"] is False and down["tools"] == laptop["tools"], "a failed read keeps the last versions"
     assert len(ssh.calls) == 2
+
+
+def test_a_person_device_beszel_watches_shows_its_readings_and_one_it_does_not_says_why(root, nodes, ssh, client,
+                                                                                         tmp_path):
+    """lina#662: a person device is matched to its Beszel system like a node (here by its ssh alias), and is not
+    listed again under ``monitored``."""
+    assert _devices(client)["person"][0]["metricsWhy"] == "no_source"
+    db = _beszel(tmp_path / "beszel.db", ("laptop-ssh", "up", {"cpu": 12.0, "mp": 60.0, "dp": 50.0}))
+    config = root.path / "config.yaml"
+    config.write_text(config.read_text().replace("devices:\n", f"devices:\n  metrics: {{beszel: {db}}}\n"))
+
+    view = _devices(client)
+
+    laptop = view["person"][0]
+    assert (laptop["cpu"], laptop["memory"], laptop["disk"], laptop["metricsAt"], laptop["metricsWhy"]) == (
+        12.0, 60.0, 50.0, STAMPED - 30, None)
+    assert view["monitored"] == []
 
 
 def test_the_devices_etag_changes_when_a_background_read_lands(root, nodes, ssh, client):

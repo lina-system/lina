@@ -924,7 +924,7 @@ components:
     Machine:
       type: object
       required: [name, role, reachable, state, why, cpu, memory, disk, temp, load, cores, running, cap, freeGb,
-                 metricsAt, runners, proxy]
+                 metricsAt, metricsWhy, runners, proxy]
       properties:
         name:
           type: string
@@ -977,6 +977,55 @@ components:
         metricsAt:
           type: number
           nullable: true
+          description: When Beszel last read cpu, memory, disk and temp; served also when ssh does not reach the node.
+        metricsWhy:
+          $ref: "#/components/schemas/MetricsWhy"
+    MetricsWhy:
+      type: string
+      nullable: true
+      enum: [no_source, unknown, down, null]
+      description: >
+        Why cpu, memory, disk and temp are null (lina#662); null when Beszel's readings are served. no_source: no
+        Beszel database named (devices.metrics.beszel) or at its default path, or it could not be read (errors says
+        so); unknown: Beszel has no system for the machine; down: Beszel reports it down.
+    MonitoredMachine:
+      type: object
+      additionalProperties: false
+      required: [name, role, state, why, cpu, memory, disk, temp, metricsAt, metricsWhy]
+      description: >
+        A machine Beszel watches that no devices.workers entry goes by (lina#662): never probed, never given work;
+        its state is Beszel's alone. A system paused in Beszel is retired and not listed.
+      properties:
+        name:
+          type: string
+          description: Its Beszel system name.
+        role:
+          type: string
+          enum: [monitored]
+        state:
+          type: string
+          enum: [ok, warn, down]
+        why:
+          type: string
+          nullable: true
+          enum: [down, cpu, memory, disk, temp, pending, quiet, null]
+        cpu:
+          type: number
+          nullable: true
+        memory:
+          type: number
+          nullable: true
+        disk:
+          type: number
+          nullable: true
+        temp:
+          type: number
+          nullable: true
+        metricsAt:
+          type: number
+          nullable: true
+        metricsWhy:
+          $ref: "#/components/schemas/MetricsWhy"
     NodeProxy:
       type: object
       nullable: true
@@ -1063,10 +1112,11 @@ components:
     PersonDevice:
       type: object
       additionalProperties: false
-      required: [name, role, reachable, checkedAt, tools]
+      required: [name, role, reachable, checkedAt, tools, cpu, memory, disk, temp, metricsAt, metricsWhy]
       description: >
         An owner's own device (role person): never a node, never probed, never given work. Read only, at most every
-        15 minutes in the background: one ssh call prints each tool's --version; nothing on it is changed.
+        15 minutes in the background: one ssh call prints each tool's --version; nothing on it is changed. cpu,
+        memory, disk and temp are Beszel's when it watches the device (lina#662), matched like a node's.
       properties:
         name:
           type: string
@@ -1095,6 +1145,23 @@ components:
               installed:
                 type: string
                 nullable: true
+        cpu:
+          type: number
+          nullable: true
+        memory:
+          type: number
+          nullable: true
+        disk:
+          type: number
+          nullable: true
+        temp:
+          type: number
+          nullable: true
+        metricsAt:
+          type: number
+          nullable: true
+        metricsWhy:
+          $ref: "#/components/schemas/MetricsWhy"
     DeviceAction:
       type: object
       additionalProperties: false
@@ -1119,7 +1186,7 @@ components:
       properties:
         key:
           type: string
-          description: weekly, fiveHour, monthly, or custom:<label>.
+          description: weekly, monthly, or custom:<label>; never a five-hour window (lina#654).
         percent:
           type: number
           description: The used share, as magpie reports it.
@@ -1177,6 +1244,10 @@ components:
         percent:
           type: number
           nullable: true
+          description: >
+            The mean of the main window's percent over the accounts that are not paused: weekly, else monthly;
+            Antigravity by its Gemini 7-day window, Cursor by its month's Total (lina#662). Null when no account has
+            one.
         ratePerHour:
           type: number
           nullable: true
@@ -1393,7 +1464,7 @@ components:
           $ref: "#/components/schemas/DueGroups"
     DevicesView:
       type: object
-      required: [version, at, errors, machines, person]
+      required: [version, at, errors, machines, person, monitored]
       properties:
         version:
           type: integer
@@ -1410,6 +1481,11 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/PersonDevice"
+        monitored:
+          type: array
+          description: Machines only Beszel watches; down, then warn, then ok, each by name.
+          items:
+            $ref: "#/components/schemas/MonitoredMachine"
     QuotaView:
       type: object
       required: [version, at, errors, quota, missing]

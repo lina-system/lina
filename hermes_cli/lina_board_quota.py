@@ -23,11 +23,15 @@ QUOTA_KEEP = 14 * 86400
 QUOTA_SPAN = 3 * 3600
 SERVICES = (("OpenAI", ("openai", "codex", "chatgpt")), ("Claude", ("claude", "anthropic")), ("Grok", ("grok", "xai")),
             ("Gemini", ("gemini",)), ("Antigravity", ("antigravity",)), ("Cursor", ("cursor",)))
-WINDOWS = (("weekly", "weeklyPercent", "weeklyResetAt"), ("fiveHour", "fiveHourPercent", "fiveHourResetAt"),
-           ("monthly", "monthlyPercent", "monthlyResetAt"))
-# The window a service is read by: weekly, else monthly; Antigravity by its Gemini weekly window (it has no
-# weeklyPercent).
-MAIN_WINDOW = {"Antigravity": "custom:Gem (Weekly)"}
+# The owner's decision of 11-12 (lina#654): no five-hour window is collected, logged, served or warned on, neither
+# magpie's own (``5 hours``, an account's ``fiveHourPercent``) nor a model's or family's (``Gemini · 5 hours``).
+WINDOWS = (("weekly", "weeklyPercent", "weeklyResetAt"), ("monthly", "monthlyPercent", "monthlyResetAt"))
+FIVE_HOURS = "5 hours"
+# The window a service's total is read by (lina#662): weekly, else monthly. A service magpie gives neither is read by
+# the window named here, the one the old board read: Antigravity by its Gemini 7-day window, Cursor by its month's
+# ``Total`` (magpie's name for Cursor's monthly allowance). A service with none of these has no total (null); a
+# five-hour window is never one.
+MAIN_WINDOW = {"Antigravity": "custom:Gemini · 7 days", "Cursor": "custom:Total"}
 # Providers named exactly, so ``google-antigravity`` stays Antigravity: ``google`` is a Gemini API key.
 EXACT_SERVICE = {"google": "Gemini"}
 
@@ -37,13 +41,19 @@ def _number(value) -> float | None:
 
 
 def windows(acct: dict) -> list[tuple[str, float, object]]:
-    """(key, percent, resetAt) of each quota window of an account: weekly, five-hour, monthly, then per model."""
+    """(key, percent, resetAt) of each quota window of an account: weekly, monthly, then per model; no five-hour
+    one."""
     quota = acct.get("quota") if isinstance(acct.get("quota"), dict) else {}
     out = [(key, _number(quota.get(value)), quota.get(reset)) for key, value, reset in WINDOWS
            if _number(quota.get(value)) is not None]
     out += [("custom:" + str(row.get("label")), _number(row.get("percent")), row.get("resetAt"))
-            for row in quota.get("customWindows") or [] if isinstance(row, dict) and _number(row.get("percent")) is not None]
+            for row in quota.get("customWindows") or [] if isinstance(row, dict) and _number(row.get("percent")) is not None
+            and not _five_hours(row.get("label"))]
     return out
+
+
+def _five_hours(label) -> bool:
+    return any(part.strip().lower() == FIVE_HOURS for part in str(label or "").split("·"))
 
 
 def reset_time(value) -> float | None:
@@ -110,13 +120,12 @@ def _account(acct: dict, history: dict, n: int, name: str, now: float) -> dict:
     main = next((row for row in rows if row["key"] == pick), None) if pick else (
         next((row for row in rows if row["key"] == "weekly"), None)
         or next((row for row in rows if row["key"] == "monthly"), None))
-    five = next((row for row in rows if row["key"] == "fiveHour"), None)
     state = "reauth" if acct.get("needsReauth") else "paused" if acct.get("paused") else "ok"
     return {"id": key, "number": n, "plan": acct.get("plan") or "", "paused": bool(acct.get("paused")),
             "active": bool(acct.get("active")), "state": state,
             "unavailable": bool((acct.get("quota") or {}).get("quotaUnavailable")), "windows": rows,
             "mainWindow": main["key"] if main else None,
-            "warn": any(row["warn"] for row in (main, five) if row), "_main": main}
+            "warn": bool(main and main["warn"]), "_main": main}
 
 
 def quota_view(accounts: list[dict], history: list[dict], now: float) -> list[dict]:
