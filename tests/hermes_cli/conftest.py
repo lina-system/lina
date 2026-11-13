@@ -112,6 +112,16 @@ def _no_detached_commit_graph_writer(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_live_magpie_service_probe(monkeypatch):
+    """``hello`` reads the node's magpie service state with ``systemctl --user show`` / ``launchctl print``: in a test,
+    that asks the host's real service manager, and the subprocess wait loop calls ``time.sleep``, which hub tests
+    replace. Answering "did not answer" keeps every test off it; ``test_worker_proxy_service`` sets its own ``_run``."""
+    from hermes_cli.worker import proxy_service
+
+    monkeypatch.setattr(proxy_service, "_run", lambda argv: None)
+
+
+@pytest.fixture(autouse=True)
 def _discharge_host_update_obligation():
     """Start and end every ``hermes_cli`` test with NO host update-restart obligation.
 
