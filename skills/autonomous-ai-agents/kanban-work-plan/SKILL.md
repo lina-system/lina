@@ -159,7 +159,7 @@ writes (`gate artifact`).
 
 Waiting costs no turns. A goal-mode card whose judge says WAIT is parked in `scheduled`, with the
 event it waits for recorded on its `scheduled` event (`wait_for`): another card done, a review
-card's result, a PR's required checks finished, or a time. Each dispatcher tick checks that event
+card's result, a PR's checks finished, or a time. Each dispatcher tick checks that event
 and unblocks the card once when it happens. A worker records the same by hand with
 `hermes kanban schedule <id> --wait-for card:<id>|review:<id>|pr:<url>|merged:<url>|until:<time>`
 (or the `kanban_schedule` tool's `wait_for`; a schedule with nothing that wakes it is refused, see

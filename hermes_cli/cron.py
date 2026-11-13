@@ -1013,6 +1013,23 @@ def cron_cancel(args) -> int:
     return 0
 
 
+def cron_run_dry(job_ref: str) -> int:
+    """Print how a tick would resolve the job, executing nothing; non-zero when a run would fail."""
+    from cron.dry_run import dry_run
+    from cron.jobs import AmbiguousJobReference, resolve_job_ref
+    try:
+        job = resolve_job_ref(job_ref)
+    except AmbiguousJobReference as exc:
+        print(color(f"Failed to dry-run job: {exc}", Colors.RED))
+        return 1
+    if not job:
+        print(color(f"Job not found: {job_ref}", Colors.RED))
+        return 1
+    report = dry_run(job)
+    print(json.dumps(report, ensure_ascii=False, indent=2, default=str))
+    return 0 if report["ok"] else 1
+
+
 def _cron_ops(args) -> int:
     from hermes_cli.cron_ops import cmd_ops
     return cmd_ops(args)
@@ -1031,7 +1048,7 @@ _CRON_SUBCOMMANDS = {
     "edit": lambda a: cron_edit(a),
     "pause": lambda a: _job_action("pause", a.job_id, "Paused"),
     "resume": lambda a: cron_resume(a),
-    "run": lambda a: _job_action("run", a.job_id, "Triggered"),
+    "run": lambda a: cron_run_dry(a.job_id) if getattr(a, "dry_run", False) else _job_action("run", a.job_id, "Triggered"),
     "cancel": lambda a: cron_cancel(a),
     "remove": lambda a: _job_action("remove", a.job_id, "Removed"),
     "ops": lambda a: _cron_ops(a),

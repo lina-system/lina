@@ -31,8 +31,8 @@ Each pattern has four fields: Habit, Worked, Hurt and LINA form. LINA form names
 ### P4. Idle-only restarts
 
 - **Habit.** The shared process restarts only when no agent is mid-work, and a restart is verified before it is reported.
-- **Worked.** Exit code 75 for a planned restart. An idle proof in which unknown counts as busy. A durable "restart owed" record before the first irreversible step.
-- **Hurt.** Busy was counted in separate ledgers per kind of work, and each omission shipped as a bug. Idle defined as chat silence ignored work in flight.
+- **Worked.** Exit code 75 for a planned restart. An idle proof in which unknown counts as busy. A durable "restart owed" record before the first irreversible step. Confirming a restart by a new process id after the request, not by a marker for one reason. That check showed two pending restarts merged into one.
+- **Hurt.** Busy was counted in separate ledgers per kind of work, and each omission shipped as a bug. Idle defined as chat silence ignored work in flight. Restart requests shared one service name, so a second request replaced the first, and the first one's watcher reported "no restart" a day later. In one test, waiting for idle took 53 and 20 minutes because chat kept breaking the quiet window.
 - **LINA form.** `gateway/restart.py` (exit 75), `gateway/drain_control.py` and `gateway/run_idle_gates.py`, which fail toward busy. Idle decided from every effect in flight: not built.
 
 ### P5. Capped fact memory
@@ -66,15 +66,15 @@ Each pattern has four fields: Habit, Worked, Hurt and LINA form. LINA form names
 ### P9. Events over polling
 
 - **Habit.** A completion event wakes the party that owns the work.
-- **Worked.** Deterministic ids with the generation in them. A cursor moved after hand-off. A reconcile pass behind the events. Before judging a "finished" notice, checking the run's state and its commit against the reported result.
-- **Hurt.** Wakes were at most once, so a crashed worker was never retried. A "finished" notice arrived just after a new round started and carried the previous round's result.
-- **LINA form.** Process completion notices (`tools/process_registry_notifications.py`) and board watchers (`gateway/kanban_watchers.py`). Item state recomputed on write: #36. A finish notice that carries its round and a result fingerprint: not built.
+- **Worked.** Deterministic ids with the generation in them. A cursor moved after hand-off. A reconcile pass behind the events. Before judging a "finished" notice, checking the run's state and its commit against the reported result. A pause accepted only when its reason names what ends it, such as a run id. A paused card spends no model turn and resumes in the same session on the run's end notice. In the first day after the move, 14 runs ended and every card got its end comment. A card closes only when every run it started has a verdict.
+- **Hurt.** Wakes were at most once, so a crashed worker was never retried. A "finished" notice arrived just after a new round started and carried the previous round's result. Goal cards could not pause, so waits ran as shell loops. While the old tool stayed configured, one card retried its wake for more than four hours. A run's end notice woke the card before the drive parked it, which cost an extra session each time.
+- **LINA form.** Process completion notices (`tools/process_registry_notifications.py`) and board watchers (`gateway/kanban_watchers.py`). Item state recomputed on write: #36. A finish notice that carries its round and a result fingerprint: not built. Parks and wakes run by the hub (`hermes_cli/worker/goal_drive.py`, #461). Closing refused while a run has no verdict (`hermes_cli/kanban_db_verdicts.py`, #295).
 
 ### P10. Delegated coding
 
 - **Habit.** Coding goes to external coding tools, the development lead checks the result, and merges follow rules the repository enforces.
-- **Worked.** Verification by the coordinator, never the worker's own report. A merge bound to the head that was read. Plain delegation over a heavy harness. Merging the worker branch as it is. Merging only on green. A change that turns a check on also makes it pass.
-- **Hurt.** The review rule lived in merge scripts. One script lacked it, and two pull requests merged with open P1 findings. A worker branch re-applied as patches lost its subtree merge: the import landed with no files, every check stayed green, and the issue closed. Merges went on while the base branch was red.
+- **Worked.** Verification by the coordinator, never the worker's own report. A merge bound to the head that was read. Plain delegation over a heavy harness. Merging the worker branch as it is. Merging only on green. A change that turns a check on also makes it pass. Waiting for merges and checks handed to small background units that wake the card.
+- **Hurt.** The review rule lived in merge scripts. One script lacked it, and two pull requests merged with open P1 findings. A worker branch re-applied as patches lost its subtree merge: the import landed with no files, every check stayed green, and the issue closed. Merges went on while the base branch was red. A coding worker asked to wait for a merge was closed as stalled with nothing to show.
 - **LINA form.** Runners behind `lina worker`: #35. Required checks: `docs/ci.md`. Review and linked issue as required checks: #61. One merge path: #63. Comparing the pull request diff with the worker branch diff: not built.
 
 ### P11. Confirmation for sending, paying, publishing, deleting
@@ -101,16 +101,16 @@ Each pattern has four fields: Habit, Worked, Hurt and LINA form. LINA form names
 ### P14. Short reports that separate verified from guessed
 
 - **Habit.** Reports are short, say what was checked, and never mix fact and guess in one sentence.
-- **Worked.** Honest status words: "tried" is not "done", and unknown is a legal answer.
-- **Hurt.** All of it was prose, and nothing checked it.
+- **Worked.** Honest status words: "tried" is not "done", and unknown is a legal answer. Re-measuring each serious finding of a read-only audit with one command before it entered the report: six of the workers' main conclusions changed.
+- **Hurt.** All of it was prose, and nothing checked it. Logs named green held a failing exit code.
 - **LINA form.** `agent/verification_evidence.py` records what a coding turn proved. A checked outcome line: not built.
 
 ### P15. Work across several machines
 
 - **Habit.** Work runs on several devices as one.
-- **Worked.** A map from tool name to remote command, with unmapped names refused. No remote machine gates startup.
-- **Hurt.** Reachability was the only precondition.
-- **LINA form.** LINA Helper holds the Mac permissions (`helper/macos/`, #45). Registered devices with grants: not built.
+- **Worked.** A map from tool name to remote command, with unmapped names refused. No remote machine gates startup. Heavy runs (full test suites, builds, repeated runs) handed to build hosts through the worker queue, which counts them against per-host caps set from measured daemon and runner memory.
+- **Hurt.** Reachability was the only precondition. Agent sessions ran tests, builds and SSH loops straight on the shared host, 175 runs and 663 SSH calls in one day, while the build hosts' queues stood empty. The shared host, which also serves every agent session and the backups, once reached a load of 115. One unthrottled scan of storage snapshots pushed the storage host's load to 260, dropped remote shells and ended in an out-of-memory kill.
+- **LINA form.** LINA Helper holds the Mac permissions (`helper/macos/`, #45). Registered devices with grants: not built. Bids pass a node that is short of memory or keeps failing quickly (`hermes_cli/worker/bidding.py`, #456).
 
 ### P16. Shared file rules
 
@@ -199,8 +199,8 @@ Each pattern has four fields: Habit, Worked, Hurt and LINA form. LINA form names
 ### P28. Changing text at the front of the cached prompt
 
 - **Habit.** Keep what changes between runs out of the cached prefix.
-- **Worked.** Moving per-run skill pointers from the end of the system message to the first line of the turn message. First-request cache reads went back to 99 to 100 percent. Reading cache reads and writes per request from the provider's usage counts.
-- **Hurt.** 42 of 45 relaunches with a changed set missed the cache, about a quarter of that day's cache-write cost. It was found from cost, a day later.
+- **Worked.** Moving per-run skill pointers from the end of the system message to the first line of the turn message. First-request cache reads went back to 99 to 100 percent. Reading cache reads and writes per request from the provider's usage counts. Measuring that the cache lived an hour, so 412 of 421 calls after 5 to 60 minute gaps still hit: the rewrites came from prefix changes, not from gaps.
+- **Hurt.** 42 of 45 relaunches with a changed set missed the cache, about a quarter of that day's cache-write cost. It was found from cost, a day later. Editing the shared persona rebuilt every live chat session's prompt on its next turn, 300,000 to 650,000 tokens each. A change of account behind the proxy emptied the cache, and every conversation wrote it once more.
 - **LINA form.** `agent/prompt_caching.py` and `agent/prompt_cache_boundary.py`. A fixed context order with a prefix test: #21. Measured against the baseline: #25. An alarm on a drop in first-request cache reads: not built.
 
 ### P29. A display mask used where the exact value is needed
@@ -210,9 +210,9 @@ Merged into P12.
 ### P30. A shared tool that took one agent's home as everyone's
 
 - **Habit.** A shared tool sees every agent, whichever agent runs it.
-- **Worked.** The tool reads the shared root from its own setting and ignores the per-agent value. A configured agent whose store is missing fails the run by name.
-- **Hurt.** Run from one agent's shell, the collector took that agent's home as the root, found none of the other seven, and exited successfully.
-- **LINA form.** `get_hermes_home()` in `hermes_constants.py` and `_get_profiles_root()` in `hermes_cli/profiles.py`. LINA's own home: #30. Failing by name on a missing agent: not built.
+- **Worked.** The tool reads the shared root from its own setting and ignores the per-agent value. A configured agent whose store is missing fails the run by name. A temporary home is given to one command only (`env` or a subshell), never exported. LINA keeps a calling agent's home as the owner of the run, not as its root.
+- **Hurt.** Run from one agent's shell, the collector took that agent's home as the root, found none of the other seven, and exited successfully. An exported test home stayed in a terminal, and later hand-offs went out under another agent's name. The same mistake came back a week later and an acceptance did not go through. A test run on the shared host with no home of its own installed its runtime into the live agent home, and the live agent re-synced its dependencies on its next start. On macOS an end-to-end test escaped its isolation and left 22 jobs in the account's service manager.
+- **LINA form.** `get_hermes_home()` in `hermes_constants.py` and `_get_profiles_root()` in `hermes_cli/profiles.py`. LINA's own home: #30. Failing by name on a missing agent: not built. The caller's home kept as `LINA_CALLER_HERMES_HOME` (`docs/switch-callers.md`, #434). End-to-end children kept out of the account's service manager: #372.
 
 ### P31. A provider outage that stopped scheduled duties
 
@@ -221,12 +221,35 @@ Merged into P12.
 - **Hurt.** Every account of the main provider returned rate limits for about seven hours. Every wake of the management session failed, including the morning report and the release of a hold on the build hosts. The failures repeated silently.
 - **LINA form.** `fallback_providers`, empty by default (`hermes_cli/config_defaults.py`, `agent/agent_init_fallback.py`). Model calls go through magpie (#7, #32). Cron holds a job while a provider window is closed (`cron/quota_hold.py`) and runs script jobs with no agent (`cron/jobs.py`). Person reports on a model-free path: not built.
 
+### P32. A finished run whose session stayed open
+
+- **Habit.** A run counts as finished when its work is done, whether or not its session says so.
+- **Worked.** Ending a run whose session record has not moved for a grace period: done when its report is in, stalled when it is not. The grace came from measurement. Across 14,947 assistant turns on three build hosts, the longest gap after a tool result was 304 seconds, so the grace is 600. Before that fix, a worker that had written its results was closed five minutes after it went quiet.
+- **Hurt.** The coding engine kept sessions "running, streaming" for hours after the commit and the report, and the settle step read that as work. One run sat open for six hours after its report, and its next round did the same. A run whose engine had finished but left a helper process alive ended only at the 12-hour hard timeout.
+- **LINA form.** `hermes_cli/worker/runners/omo_settle.py` (`frozen_done`) with `stall_grace_s` in `hermes_cli/worker/device.py`: #404.
+
+### P33. Switching the model proxy under load
+
+- **Habit.** A model path moves one consumer at a time, under real concurrency, with a way back.
+- **Worked.** Testing concurrency before the move. The new proxy starts one process per subscription request, and its memory cap allowed six at once. With the cap raised, 60 concurrent conversations all succeeded. Restarting the agents' gateway with a seven-minute check and automatic rollback: every chat channel answered and 50 proxied calls had no error. In the same long-input test, the second request read 99 percent from cache, against none through the old proxy.
+- **Hurt.** At the old cap, eight concurrent requests waited 52 seconds. The model alias table is shared with the build hosts. Changing it on the hub first broke their coding sessions, and it was reverted. The proxy's own connection command wrote a placeholder where the key belongs, so the hub refused the coding tools with 401 and the move to coding tools was put on hold. In one catalog shape the same command replaced the key reference with its literal name.
+- **LINA form.** One node at a time, each node on its own magpie, one model name (`<provider>/<id>`) with no name table, and a bid that reads the node's own magpie answer (`/v1/models` 200 with at least one model): `docs/worker-proxy-switch.md`, `hermes_cli/worker/proxy.py`, #585, #586, #590.
+
+### P34. A deploy checked on disk instead of in the running process
+
+- **Habit.** A change is live when the running process uses it.
+- **Worked.** Restarting the services and rewriting the launch shims after each pin, then reading the running process's environment or mapped files for the pinned version. Pinning idle nodes first, and busy nodes once their runs ended.
+- **Hurt.** Services and shims pinned the code path by version, so moving the "current" link alone left the old code running. A launch flag reached a service only through a restart, and a missed restart left it out. A long-running session kept the plugin code it started with after the checkout changed.
+- **LINA form.** The services restart in `hermes_cli/lina_services.py`. A check that compares the running version with the pinned one: not built.
+
 ## Open
 
 - Agents rewrite skills, memory and conversation memory hundreds of times a day with no reviewable history. A daily card of what was learned, with ok, fix and drop, is being built.
 - A hold or drain carries its own expiry and releases itself when the session that set it dies. Deployed; no real expiry has happened yet.
 - Advance preparation helps only if it is ready before the person starts. When the person does it first, the prepared item is withdrawn with one line. Earlier preparation has not run yet.
 - Agent-written fields shown to the person get contracts (purpose, length, shape, banned patterns, examples) checked at write time. Not run yet.
+- A send cut off by a timeout has an unknown result, not a failed one. It is not sent again, and the turn ends after the send returns. Fixed in the gateway (#208); no check yet that duplicate replies stopped.
+- Checks that must run on the shared host run one at a time below a set load, and status polling is left to landing scripts. Written as a rule; its effect on load has not been measured.
 
 ## Dropped
 

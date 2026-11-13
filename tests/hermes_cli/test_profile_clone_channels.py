@@ -79,7 +79,8 @@ def test_clone_strips_every_channel_credential_but_keeps_model_and_tool_keys(hom
     env_text = (profile_dir / ".env").read_text(encoding="utf-8")
     assert "OPENAI_API_KEY=sk-model-key" in env_text and "FIRECRAWL_API_KEY=fc-tool-key" in env_text
     assert "TELEGRAM" not in env_text and "DISCORD" not in env_text
-    assert "WHATSAPP_ENABLED" not in env_text and "API_SERVER_KEY" not in env_text
+    # The source's API server key never travels; the clone gets its own (lina#643).
+    assert "WHATSAPP_ENABLED" not in env_text and "default-api-server-key" not in env_text
     cfg = yaml.safe_load((profile_dir / "config.yaml").read_text(encoding="utf-8"))
     assert cfg["model"] == _SOURCE_CONFIG["model"] and cfg["memory"] == _SOURCE_CONFIG["memory"]
     assert (profile_dir / "SOUL.md").read_text(encoding="utf-8") == "Be helpful."
@@ -157,7 +158,8 @@ def test_clone_all_never_writes_through_a_symlinked_source_env(home, tmp_path):
 
     profile_dir = create_profile("full", clone_all=True, no_alias=True)
 
-    assert shared.read_text(encoding="utf-8") == _SOURCE_ENV
+    # Only the web server's key for the new agent is added to the root .env (lina#643).
+    assert shared.read_text(encoding="utf-8").startswith(_SOURCE_ENV)
     assert not (profile_dir / ".env").is_symlink()
     assert "TELEGRAM_BOT_TOKEN" not in (profile_dir / ".env").read_text(encoding="utf-8")
 
@@ -222,7 +224,7 @@ def test_ownership_inventory_strips_policy_relay_and_aliases_but_keeps_tool_cred
 
     keys = {line.split("=", 1)[0] for line in (profile_dir / ".env").read_text(encoding="utf-8").splitlines()
             if "=" in line and not line.startswith("#")}
-    assert keys == {"OPENAI_API_KEY", "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_PHONE_NUMBER"}
+    assert keys == {"OPENAI_API_KEY", "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_PHONE_NUMBER", "API_SERVER_KEY"}
 
 
 @pytest.mark.parametrize(("config", "stripped"), [
@@ -242,7 +244,7 @@ def test_left_core_platform_keeps_channel_ownership_while_its_plugin_is_absent(h
 
     keys = {line.split("=", 1)[0] for line in (profile_dir / ".env").read_text(encoding="utf-8").splitlines()
             if "=" in line and not line.startswith("#")}
-    assert keys == ({"OPENAI_API_KEY"} if stripped else {"OPENAI_API_KEY", "HASS_TOKEN", "HASS_URL"})
+    assert keys == ({"OPENAI_API_KEY"} if stripped else {"OPENAI_API_KEY", "HASS_TOKEN", "HASS_URL"}) | {"API_SERVER_KEY"}
     assert "ha-short-token" not in (profile_dir / "config.yaml").read_text(encoding="utf-8")
 
 
@@ -273,7 +275,7 @@ def test_plugin_platform_shared_env_prefixes_follow_the_ownership_rule(home, ena
 
     keys = {line.split("=", 1)[0] for line in (profile_dir / ".env").read_text(encoding="utf-8").splitlines()
             if "=" in line and not line.startswith("#")}
-    assert keys == ({"OPENAI_API_KEY"} if stripped else {"OPENAI_API_KEY", "SHP_TOKEN", "SHP_URL"})
+    assert keys == ({"OPENAI_API_KEY"} if stripped else {"OPENAI_API_KEY", "SHP_TOKEN", "SHP_URL"}) | {"API_SERVER_KEY"}
 
 
 def test_clone_all_drops_directory_shaped_channel_state(home):

@@ -198,7 +198,7 @@ KANBAN_BLOCK_SCHEMA = _schema(
         "wait_for": _prop("string", (
             "The event that answers this block, so the card returns to ready by itself when it "
             "happens: 'card:<task id>' (that card is done), 'review:<task id>' (that review card "
-            "has its result), 'pr:<PR URL or owner/repo#n>' (its required checks finished) or "
+            "has its result), 'pr:<PR URL or owner/repo#n>' (its checks finished) or "
             "'until:<epoch seconds or ISO-8601 time>'. Implies kind 'needs_input'. Omit when "
             "only a person can answer."
         )),
@@ -225,7 +225,7 @@ KANBAN_SCHEDULE_SCHEMA = _schema(
         "wait_for": _prop("string", (
             "What wakes the card: 'until:<epoch seconds or ISO-8601 time>' (the dispatcher, at that "
             "time), 'card:<task id>' (that card is done), 'review:<task id>' (that review card has "
-            "its result), 'pr:<PR URL or owner/repo#n>' (its required checks finished), "
+            "its result), 'pr:<PR URL or owner/repo#n>' (its checks finished), "
             "'merged:<PR URL or owner/repo#n>' (it is merged), 'run:<worker run id>[,<run id>...]' "
             "(the worker hub, after the last run ends) or 'unit:<name>' (that unit unblocks it; "
             "nothing else does)."

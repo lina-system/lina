@@ -41,6 +41,7 @@ def build_migrate_parser(subparsers) -> None:
     migrate_relay.set_defaults(func=_cmd_migrate_relay)
     migrate_parser.set_defaults(func=cmd_migrate)
     _build_memory_parser(migrate_subparsers)
+    _build_cron_parser(migrate_subparsers)
 
 
 def _build_memory_parser(subparsers) -> None:
@@ -59,6 +60,23 @@ def _build_memory_parser(subparsers) -> None:
     parser.add_argument("--spool", help="Copied collector input, events.jsonl or its directory")
     parser.add_argument("--work-db", help="Old work-ledger work.db to copy and filter")
     parser.set_defaults(func=_cmd_migrate_memory)
+
+
+def _build_cron_parser(subparsers) -> None:
+    parser = subparsers.add_parser(
+        "cron", help="Copy a legacy profile's cron jobs, all paused and delivering locally, into a new agent")
+    parser.add_argument("--from", dest="from_", required=True, help="Legacy Hermes home (never written)")
+    parser.add_argument("--source-profile", dest="profile", required=True,
+                        help="Source profile; use default for the root profile")
+    parser.add_argument("--as", dest="agent", required=True, help="Migrated agent receiving the paused jobs")
+    parser.add_argument("--home", help="Destination LINA root (defaults to the running home; a different root is refused)")
+    parser.add_argument("--work-dir", required=True, help="Retained jobs.json copy and cron-migration-report.json")
+    parser.set_defaults(func=_cmd_migrate_cron)
+
+
+def _cmd_migrate_cron(args) -> None:
+    from hermes_cli.migrate_cron import run
+    raise SystemExit(run(args))
 
 
 def _cmd_migrate_memory(args) -> None:

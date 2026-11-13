@@ -327,6 +327,22 @@ the copied subset, while missing imported identities or changed durable content 
 After checking one profile, `--all-source-profiles --as copied` processes profiles sequentially as
 `copied-default`, `copied-alpha`, and so on, retaining each profile's report under the work directory.
 
+### Copying legacy cron jobs
+
+```sh
+lina migrate cron --from /path/to/old-home --source-profile alpha --as alpha-copy --work-dir /path/to/migration-copy
+```
+
+Run it after `migrate memory`, into the same agent. It reads the old profile's `cron/jobs.json` once into
+`--work-dir/cron-snapshot/` (sha256 receipt, symlinks refused; the original is never written) and imports
+the copy into the agent's job store. Every job keeps its old id and lands paused (`paused_reason: migrated
+copy`) whatever its old state. `deliver` becomes `local`; the old `deliver`, `failure_deliver`, `origin` and
+`interpreter` are not carried and are kept as text in the job's `notes`, so a copied chat id is never live.
+A rerun finds the ids already present and changes nothing, including edits made to the copy since. The JSON
+report (also `--work-dir/cron-migration-report.json`) lists per job its kind, schedule, old `deliver`,
+whether its script and workdir resolve in the new home, and what was left out. Scripts are not copied:
+check each job with `lina -p alpha-copy cron run <id> --dry-run` before resuming it.
+
 ### Migration identity and reference inventory
 
 This inventory follows `services/honcho/src/models.py`, its typed payload consumers, and all 33 Alembic

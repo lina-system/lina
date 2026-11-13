@@ -156,10 +156,12 @@ a park that resolves to nothing, naming the accepted forms; nothing changes on t
 |---|---|---|
 | A time | `wait_for=until:<epoch or ISO-8601>`, or `SCHEDULED_UNTIL=<time>` in the reason | The kanban dispatcher's tick, at that time. The time is recorded as data on the `scheduled` event (`wait_for`), not only in the reason, so the session arms no timer of its own and a dispatcher restart in between loses nothing: each tick reads the wait from the board. |
 | Another card reaching a state | `wait_for=card:<id>` (done) or `review:<id>` (its result) | The dispatcher's tick, once that card is completed. |
-| A pull request | `wait_for=pr:<PR>` (its required checks finished) or `merged:<PR>` (it is merged) | The dispatcher's tick, reading GitHub with the card's assignee's login. |
+| A pull request | `wait_for=pr:<PR>` (its checks finished, one PR per park) or `merged:<PR>` (it is merged) | The dispatcher's tick, reading GitHub with the card's assignee's login. |
 | A worker run | `wait_for=run:<run id>[,<run id>...]`, or the run id anywhere in the reason (`lina worker wait` prints such a reason) | The worker hub, after the last named run ends (`unblock --judge-wake`). |
 | A unit the caller declares | `wait_for=unit:<name>` | Only that unit, which unblocks the card itself; nothing else reads it. |
 | The goal drive's own park | A reason with `WAIT_EVENT=<event> GOAL_ACTION=<action id>` | The hub's goal drive (see [Parking](#parking)). |
+
+A `pr:` wait is met when the PR is merged or closed, or when its checks have finished: required checks that are pending keep it waiting, and so does any run still going on the head. Required checks that never post on the head do not hold it once nothing runs and the park is five minutes old (`PR_EVIDENCE_GRACE_S`); a repository with no required checks is judged by the runs on the head the same way. A `pr:` wait still unmet six hours after the park (`PR_WAIT_STALL_S`) writes a `wait_stalled` event and goes to a person, like a wait that cannot be read.
 
 A park whose waker is gone does not wait silently:
 
