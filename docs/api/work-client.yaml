@@ -195,6 +195,15 @@ components:
         (갈림길 and 질문 decision, 검토 review, 돈·바깥 and 끝 조건 feedback); any other sentence decision
         when it ends with a question mark, else feedback. Null when the card has no block event
         and no block kind.
+    Ask:
+      type: string
+      nullable: true
+      maxLength: 60
+      description: >
+        The owner's one line on a card stopped on them (`waitingOn: owner`, lina#690): the first sentence of the latest
+        block event's reason (an owner-inbox line's summary), without card ids (`t_…`, `hermes:t_…`), run ids (`OT-…`)
+        and URLs, cut to 60 characters with an ellipsis. Null on every other card, and when nothing Korean is left (an
+        English-only reason).
     WaitingOn:
       type: string
       nullable: true
@@ -276,9 +285,10 @@ components:
           type: string
           nullable: true
           description: >
-            The title of the work record's goal whose goal or to-do links this card (`kanban:<card>`, lina#666); null
-            when no record item links it, when the record cannot be read (then `errors` names `work` on the list),
-            and on a goal's `workCards`, where the goal row is the goal.
+            The title of the work record's goal whose goal or to-do links this card (`kanban:<card>`, lina#666); a
+            Hermes board card (`hermes:<id>`) by its raw id, linked without a board or on the Hermes source's board
+            (lina#690). Null when no record item links it, when the record cannot be read (then `errors` names `work`
+            on the list), and on a LINA board goal's `workCards`, where the goal row is the goal.
         agent:
           $ref: "#/components/schemas/Agent"
         reviewer:
@@ -291,6 +301,8 @@ components:
           $ref: "#/components/schemas/WaitingOn"
         retry:
           $ref: "#/components/schemas/Retry"
+        ask:
+          $ref: "#/components/schemas/Ask"
         elapsedSeconds:
           type: integer
           minimum: 0
@@ -444,9 +456,10 @@ components:
           type: string
           nullable: true
           description: >
-            The title of the work record's goal whose goal or to-do links this card (`kanban:<card>`, lina#666); null
-            when no record item links it, when the record cannot be read (then `errors` names `work` on the list),
-            and on a goal's `workCards`, where the goal row is the goal.
+            The title of the work record's goal whose goal or to-do links this card (`kanban:<card>`, lina#666); a
+            Hermes board card (`hermes:<id>`) by its raw id, linked without a board or on the Hermes source's board
+            (lina#690). Null when no record item links it, when the record cannot be read (then `errors` names `work`
+            on the list), and on a LINA board goal's `workCards`, where the goal row is the goal.
         agent:
           $ref: "#/components/schemas/Agent"
         reviewer:
@@ -459,6 +472,8 @@ components:
           $ref: "#/components/schemas/WaitingOn"
         retry:
           $ref: "#/components/schemas/Retry"
+        ask:
+          $ref: "#/components/schemas/Ask"
         elapsedSeconds:
           type: integer
           minimum: 0
