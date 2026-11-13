@@ -493,10 +493,19 @@ LINA's side reads `embedding:` in `config.yaml`; the key is a secret in `.env` (
 ```yaml
 embedding:
   base_url: <OpenAI-compatible endpoint ending in /v1>
-  model: qwen3-embedding-8b
+  model: qwen3-embedding-8b   # through magpie: hub/nous/qwen/qwen3-embedding-8b, as GET <base_url>/models lists it
   dimensions: 1024
   # api_key_env: LINA_EMBEDDING_API_KEY   batch_size: 64   timeout: 60   max_chars: 8000
 ```
+
+The default `qwen3-embedding-8b` is the bare model id an OpenAI-compatible provider takes. A node whose models come
+through magpie (`base_url: http://127.0.0.1:3425/v1`) names a model in magpie's catalog form
+`<remote>/<provider>/<id>` (`hub/nous/qwen/qwen3-embedding-8b`) and refuses the bare id; read the name from the
+`id` field of `GET <base_url>/models` and set it as `embedding.model` (and as `EMBEDDING_MODEL_CONFIG__MODEL` in
+`honcho.env`) before the first `lina store reembed`. The string is part of each row's key in `vec.embeddings`
+and `vec.reembed_progress`, so changing it later means re-embedding everything under the new string. When magpie
+answers that it knows no model, `reembed` and every other embedding call stop with one line that names
+`embedding.model`, the endpoint and the closest embedding model it lists.
 
 `agent/embedding_client.py` is the one client (`POST {base_url}/embeddings`, `dimensions` sent, a full-width
 answer cut and renormalised). `truncate_stored` there cuts a vector stored at full width (4096 or 1536) by the

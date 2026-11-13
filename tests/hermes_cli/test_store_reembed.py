@@ -10,10 +10,12 @@ import hashlib
 import psycopg
 import pytest
 
+from agent.embedding_client import EmbeddingClient, EmbeddingError, EmbeddingSettings
 from hermes_cli.memory_eval_search import Question, new_vector
 from hermes_cli.store_migrations import MIGRATIONS_DIR
 from hermes_cli.store_reembed import ReembedError, expand_sources, reembed
 from hermes_state_store import MessageStore
+from tests.agent.test_embedding_client import magpie_transport
 
 
 class _Client:
@@ -182,6 +184,17 @@ def test_a_store_without_honcho_tables_reports_it_and_embeds_nothing(_memory_sto
 def test_a_client_at_another_width_than_the_table_is_refused(_memory_store):
     with pytest.raises(ReembedError, match="1024-wide"):
         reembed(_connect(_memory_store), _Client(dimensions=768), ["agent"], batch_size=5)
+
+
+def test_reembed_on_magpie_with_the_bare_model_stops_with_its_catalog_name_and_writes_nothing(
+        _memory_store, memory_store_sql):
+    _message(memory_store_sql, "m1", "agent", "user", "hello")
+    settings = EmbeddingSettings(base_url="http://127.0.0.1:3425/v1", model="qwen3-embedding-8b")
+    with EmbeddingClient(settings, transport=magpie_transport(["hub/nous/qwen/qwen3-embedding-8b"])) as client:
+        with pytest.raises(EmbeddingError, match="embedding.model 'qwen3-embedding-8b'.*'hub/nous/qwen/qwen3-embedding-8b'"):
+            reembed(_connect(_memory_store), client, ["agent"], batch_size=5)
+    assert memory_store_sql("SELECT count(*) FROM vec.embeddings")[0][0] == 0
+    assert memory_store_sql("SELECT count(*) FROM vec.reembed_progress")[0][0] == 0
 
 
 def test_unknown_sources_are_refused():

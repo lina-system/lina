@@ -260,6 +260,31 @@ def test_plan_installs_and_writes_nothing(hub):
     assert any("would follow" in line for line in lines)
 
 
+@pytest.mark.parametrize(("hub_is", "hub_state", "nodes"), [
+    ("busy", "hub busy", {}),
+    ("without a LINA copy", "hub prepare needed", {"build-a": {"state": "same"}}),
+    ("free", "would move", {"build-a": {"state": "would follow", "from": "1.0.70", "to": "1.0.71"}}),
+], ids=["busy", "no-hub-copy", "normal"])
+def test_plan_shows_what_the_run_would_do_on_the_hub_and_writes_nothing(hub, hub_is, hub_state, nodes):
+    import shutil
+    root = hub["root"]
+    hub["http"].publish("1.0.71", release("1.0.71"))
+    node = FakeNode("build-a")
+    hub["nodes"].append(node)
+    if hub_is == "busy":
+        _hold_a_hub_slot(root)
+    elif hub_is == "without a LINA copy":
+        shutil.rmtree(lina_runners.vendor_dir(root, "grok"))
+    before = files(root)
+
+    code, lines = run(hub, plan=True, as_json=True)
+
+    grok = json.loads(lines[0])["runners"]["grok"]
+    assert code == 0 and grok["hub"]["state"] == hub_state and grok.get("nodes", {}) == nodes
+    assert files(root) == before
+    assert hub["http"].downloads == [] and node.sent == [] and hub["notices"] == []
+
+
 def test_a_quiet_day_sends_no_notice(hub):
     hub["http"].publish("1.0.70", release("1.0.70"))
     hub["nodes"].append(FakeNode("build-a"))
