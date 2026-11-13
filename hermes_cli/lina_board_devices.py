@@ -15,6 +15,9 @@ service. One ssh call in the person's login shell prints the first line of ``--v
 pins and of omo, at most every 15 minutes in the background, started by a read; a failed read marks the device
 unreachable and keeps the last versions. The read changes nothing on the device.
 
+Machines Beszel watches that no entry of ``devices.workers`` goes by (lina#662) are served under ``monitored``, with
+Beszel's state and readings alone: nothing is asked of them and they get no work.
+
 Each node carries ``proxy``, the magpie its hello reports (lina#589, from #586's ``capabilities.proxy``; null for a node
 that reports none): its link to the hub (``link``, the node's ``remote_id``; ``local`` when its own magpie holds the
 models), the model count of its local ``/v1/models`` and its local service state. The runners that sign in through
@@ -257,7 +260,7 @@ def nodes(base: Path, metrics: dict | None, now: float) -> tuple[list[dict], flo
     """The work and files devices: work first, then files; in each, down, then warnings, then the rest; and the time
     their ``hello`` and ``probe`` were read (None without nodes)."""
     from hermes_cli.worker import runners
-    from hermes_cli.worker.board import machine
+    from hermes_cli.worker.board import machine, metric_of
     worker_root = settings.root(base)
     worker = settings.section(base)
     runner = runners.default_name(worker)
@@ -269,7 +272,7 @@ def nodes(base: Path, metrics: dict | None, now: float) -> tuple[list[dict], flo
     contacts = read.result()
     rows = []
     for dev, (probe, descriptor, reachable) in zip(devs, contacts):
-        row = machine(dev, probe, (metrics or {}).get(dev.name) or (metrics or {}).get(dev.host), now, min_free)
+        row = machine(dev, probe, metric_of(metrics, dev), now, min_free, metrics is not None)
         cells = _cells(dev, base, probe, descriptor, reachable, runner)
         _mark_signing(base, dev.name, cells, reachable)
         proxy = proxy_view(descriptor) if reachable and not probe.get("protocol_error") else None
@@ -364,8 +367,10 @@ def people(base: Path) -> list[dict]:
 
 
 def view(base: Path, metrics: dict | None, now: float) -> dict:
+    from hermes_cli.worker.board import monitored
     machines, at = nodes(base, metrics, now)
-    return {"machines": machines, "person": people(base), "at": at}
+    return {"machines": machines, "person": people(base), "monitored": monitored(metrics, settings.devices(base), now),
+            "at": at}
 
 
 class Refused(Exception):

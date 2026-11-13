@@ -293,22 +293,67 @@ def test_quota_rate_and_warning_follow_the_read_history(work, fakes, client):
     assert (work.root / "board" / "quota.jsonl").is_file()
 
 
+def _beszel(db: Path, *systems: tuple[str, str, dict]) -> Path:
+    """A Beszel database holding *systems* ``(name, status, info)``, each updated 30 seconds before the clock."""
+    stamp = datetime.datetime.fromtimestamp(NOW - 30, datetime.UTC).strftime("%Y-%m-%d %H:%M:%S.000Z")
+    with sqlite3.connect(db) as conn:
+        conn.execute("CREATE TABLE systems (id TEXT, name TEXT, status TEXT, updated TEXT, info TEXT)")
+        conn.execute("CREATE TABLE system_stats (system TEXT, stats TEXT, type TEXT, created TEXT)")
+        conn.executemany("INSERT INTO systems VALUES (?, ?, ?, ?, ?)",
+                         [(f"s{n}", name, status, stamp, json.dumps(info)) for n, (name, status, info) in enumerate(systems)])
+    return db
+
+
+def _readings(rows: list[dict]) -> dict:
+    return {m["name"]: (m["cpu"], m["memory"], m["disk"], m["metricsAt"], m["metricsWhy"]) for m in rows}
+
+
 def test_devices_show_readiness_without_metrics_and_usage_with_beszel(work, fakes, client, tmp_path):
     plain = _valid("DevicesView", client.get("/api/lina/devices").json())["machines"]
     assert [(m["name"], m["state"], m["cpu"], m["load"]) for m in plain] == [("build-a", "down", None, None),
                                                                             ("here", "ok", None, 0.5)]
-    db = tmp_path / "beszel.db"
-    with sqlite3.connect(db) as conn:
-        conn.execute("CREATE TABLE systems (id TEXT, name TEXT, status TEXT, updated TEXT, info TEXT)")
-        conn.execute("CREATE TABLE system_stats (system TEXT, stats TEXT, type TEXT, created TEXT)")
-        stamp = datetime.datetime.fromtimestamp(NOW - 30, datetime.UTC).strftime("%Y-%m-%d %H:%M:%S.000Z")
-        conn.execute("INSERT INTO systems VALUES ('s1', 'here', 'up', ?, ?)",
-                     (stamp, json.dumps({"cpu": 12.5, "mp": 95.0, "dp": 40.0, "dt": 50})))
+    assert {m["metricsWhy"] for m in plain} == {"no_source"}  # no Beszel named or found: no number is made up
+    db = _beszel(tmp_path / "beszel.db", ("here", "up", {"cpu": 12.5, "mp": 95.0, "dp": 40.0, "dt": 50}))
     work.config(extra=DEVICES + f"  metrics: {{beszel: {db}}}\n")
     here = next(m for m in _valid("DevicesView", client.get("/api/lina/devices").json())["machines"]
                 if m["name"] == "here")
     assert (here["state"], here["why"], here["cpu"], here["memory"], here["metricsAt"]) == ("warn", "memory", 12.5,
                                                                                            95.0, NOW - 30)
+
+
+def test_beszel_readings_are_served_for_each_machine_it_knows_and_null_with_a_reason_otherwise(work, fakes, client,
+                                                                                              tmp_path):
+    """lina#662: every machine the monitoring source covers has CPU, memory, disk and their reading time, also one
+    ssh cannot reach; a machine it does not know, or reports down, has none and says why. Machines it covers that no
+    device entry names are served under ``monitored``; a system paused in Beszel is retired and left out."""
+    db = _beszel(tmp_path / "beszel.db", ("build-a", "up", {"cpu": 23.0, "mp": 46.0, "dp": 19.0, "dt": 40}),
+                 ("lina-nas", "up", {"cpu": 5.0, "mp": 30.0, "dp": 70.0}), ("studio-mac", "down", {"cpu": 1.0}),
+                 ("old-box", "paused", {"cpu": 1.0}))
+    work.config(extra=DEVICES + f"  metrics: {{beszel: {db}}}\n")
+
+    view = _valid("DevicesView", client.get("/api/lina/devices").json())
+
+    assert _readings(view["machines"]) == {"build-a": (23.0, 46.0, 19.0, NOW - 30, None),
+                                           "here": (None, None, None, None, "unknown")}
+    assert [(m["name"], m["role"], m["state"]) for m in view["monitored"]] == [
+        ("studio-mac", "monitored", "down"), ("lina-nas", "monitored", "ok")]
+    assert _readings(view["monitored"]) == {"studio-mac": (None, None, None, NOW - 30, "down"),
+                                            "lina-nas": (5.0, 30.0, 70.0, NOW - 30, None)}
+
+
+def test_beszel_s_default_database_is_read_when_the_config_names_none(work, fakes, client, tmp_path, monkeypatch):
+    """The hub's Beszel keeps its data at Beszel's own default path, which the old board reads; the core reads it
+    too when ``devices.metrics.beszel`` is unset. The hub itself (``host: local``) is the system named for this
+    machine's host name."""
+    from hermes_cli.worker import board
+    db = _beszel(tmp_path / "data.db", ("lina-hub", "up", {"cpu": 23.0, "mp": 46.0, "dp": 19.0}))
+    monkeypatch.setattr(board, "BESZEL_DEFAULT", db)
+    monkeypatch.setattr("socket.gethostname", lambda: "lina-hub.tail0.ts.net")
+
+    view = _valid("DevicesView", client.get("/api/lina/devices").json())
+
+    assert _readings(view["machines"])["here"] == (23.0, 46.0, 19.0, NOW - 30, None)
+    assert view["monitored"] == [] and view["errors"] == []
 
 
 def test_no_five_hour_window_is_collected_served_or_warned_on(work, fakes, client):
