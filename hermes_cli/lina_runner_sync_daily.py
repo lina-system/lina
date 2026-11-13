@@ -9,6 +9,11 @@ restarted service from running it twice on one day.
 A run that found the hub busy for some runners leaves ``retry`` and those runners (``busy``) in ``last.json``
 (``lina_runner_sync_hub``). ``RETRY_AFTER_S`` after it finished, on the same day, the tick starts one more run with
 ``--only`` those runners and marks it ``retried``; that run never asks for another, so a day has at most two.
+
+The same tick is the hub's daily health check of the sync (lina#491): it runs ``lina runners sync status --issues``
+and writes the lines into ``<LINA root>/status/runner-sync.json``, one of the hub's own health checks (lina#233). A
+day with issues is a failing check naming them; a day without is a passing ``no issues`` row. The file is rewritten
+when the lines change and once a day, so it goes stale (``HEALTH_STALE_S``) only when the serve loop stops.
 """
 
 from __future__ import annotations
@@ -25,6 +30,7 @@ from hermes_cli import lina_runner_sync_state as state
 
 _AT = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
 RETRY_AFTER_S = 1800
+HEALTH_STALE_S = 2 * 86400
 _child: subprocess.Popen | None = None
 _log = logging.getLogger(__name__)
 
@@ -72,14 +78,15 @@ def maybe_start(worker_root: Path, *, now: float | None = None,
     """Start today's sync when it is due, or today's one retry; True when one was started."""
     from hermes_cli.worker import settings
     global _child
-    if _child is not None and _child.poll() is None:
-        return False
-    _child = None
     root = worker_root.parent
     at = at_of(settings.section(root))
     now = time.time() if now is None else now
     if at is None:
         return False
+    check_health(root, now)
+    if _child is not None and _child.poll() is None:
+        return False
+    _child = None
     only = None
     if not due(root, at, now):
         only = retry_due(state.last(root), now)
@@ -94,6 +101,29 @@ def maybe_start(worker_root: Path, *, now: float | None = None,
         _failed_start(root, now, exc)
         return False
     return True
+
+
+def health_path(root: Path) -> Path:
+    return root / "status" / "runner-sync.json"
+
+
+def check_health(root: Path, now: float) -> None:
+    """Write ``sync status --issues`` as the ``runner-sync`` status check when its lines changed or the day did."""
+    from hermes_cli.lina_runner_sync import status
+    lines: list[str] = []
+    try:
+        status(root, issues_only=True, out=lines.append)
+    except Exception:  # health: allow BLE001 -- nothing may leave the serve tick; the traceback is logged
+        _log.exception("the runner sync's health check could not read its issues")
+        return
+    issues = [line.removeprefix("- ") for line in lines if line != "- none"]
+    check = {"name": "runner-sync", "ok": not issues, "line": "; ".join(issues) or "no issues"}
+    path = health_path(root)
+    old = state.read_json(path, {})
+    at = old.get("at")
+    if {key: old.get(key) for key in check} == check and isinstance(at, (int, float)) and state.day(at) == state.day(now):
+        return
+    state.write_json(path, {**check, "at": now, "stale_after": HEALTH_STALE_S})
 
 
 def _failed_start(root: Path, now: float, exc: BaseException) -> None:
