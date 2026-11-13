@@ -200,7 +200,7 @@ A node with a run holding a slot, an unreachable node, a node without the
 
 Each run writes `runner-sync/YYYYMMDD.json` (sources, the hub's trial, each
 node's result, holds) and `runner-sync/last.json` (`started`, `finished`,
-`rc`), and sends one short English notice through `worker.notice.command` to
+`rc` of the latest run, whoever started it), and sends one short English notice through `worker.notice.command` to
 `worker.runner_sync.notify` (default `default`) with one line per thing a
 person should know: a hold (a major version that waits included), a failed
 probe, a sign-in lost since the last run, a source that went back, or a hub
@@ -215,15 +215,29 @@ Unreachable nodes and lags under 24 hours are notes.
 
 `worker.runner_sync: {at: "04:00"}` (off by default) lets `lina worker serve` on
 the hub start the sync as its own owned process once the local time is past
-`at`; the start written into `last.json` and the sync's lock keep a restarted
-service from running it twice on one day. A start that fails is written into
-`last.json` (`rc: 1`, `error`) and `runner-sync/sync.log`, is not retried that
-day, and shows as `- daily: could not start: ...` in `sync status --issues`.
+`at`. The daily run keeps its own state in `runner-sync/daily.json`, which only
+the serve tick and the run it started write: a person's `lina runners sync`
+(all runners or `--only` some) before `at` does not replace the day's full run,
+and one after it does not start a second one. The start written into
+`daily.json` keeps a restarted service from running it twice on one day. While
+another sync holds the lock, the tick starts nothing and tries again on the
+next tick (every 30 seconds); a daily run that still lost the lock takes its
+start back so the next tick starts it. A start that fails is written into
+`daily.json` (`rc: 1`, `error`) and `runner-sync/sync.log`, is not retried that
+day, and shows as `- daily: could not start: ...` in `sync status --issues`; a
+daily run that raised shows as `- daily: the run failed: ...`. `sync status`
+shows the daily run beside the last run. A `last.json` from before `daily.json`
+existed counts as the daily run only when it is marked `by: serve`; it is
+copied into `daily.json` once and left as it is (its `error`, a start that
+raised, stays `could not start: ...`). The day's person-device check starts
+with the day's first start and is kept in `daily.json` (`person_started`): a
+sync started again after losing the lock does not read the person's devices
+or send their notice a second time that day.
 
 When the day's run found the hub busy for some runners, it writes `retry: true`
-and those runners (`busy`) into `last.json`. 30 minutes after that run finished,
-on the same day, the tick starts one more run with `--only` those runners
-(`retried: true` in `last.json`). If the hub is busy again, that day is over: a
+and those runners (`busy`) into `daily.json`. 30 minutes after that run
+finished, on the same day, the tick starts one more run with `--only` those
+runners (`retried: true` in `daily.json`), whatever a person ran in between. If the hub is busy again, that day is over: a
 day has at most two runs, and a new day starts without the retry. The second
 run's results are laid over the day's record, so the first run's other runners
 stay in `runner-sync/YYYYMMDD.json` and in the issues.

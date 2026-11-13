@@ -4,9 +4,9 @@
   when there is none. Sign-in questions name it, so ``lina devices sign-in <name> <runner>`` finds the device.
 * ``hub prepare needed`` (no LINA copy of the runner on the hub) is an event, so it reaches the notice, and an issue
   line; it is not a hold, a later ``lina runners install`` lets the next day's run move it.
-* ``hub busy``: the run's runners that the hub was too busy for are written into ``last.json`` (``retry``, ``busy``),
-  and the serve tick starts one more run for them (``lina_runner_sync_daily``). That run covers only those runners,
-  so the day's record keeps what the first run found for the others.
+* ``hub busy``: the daily run's runners that the hub was too busy for are written into ``daily.json`` (``retry``,
+  ``busy``), and the serve tick starts one more run for them (``lina_runner_sync_daily``). That run covers only those
+  runners, so the day's record keeps what the first run found for the others.
 """
 
 from __future__ import annotations
@@ -39,17 +39,9 @@ def prepare_issues(record: dict) -> list[str]:
             for name in _in_state(record, PREPARE)]
 
 
-def carried(last: dict, now: float) -> dict:
-    """What a run's start keeps from ``last.json``: that today's retry was already started."""
-    started = last.get("started")
-    same_day = isinstance(started, (int, float)) and state.day(started) == state.day(now)
-    return {"retried": True} if same_day and last.get("retried") else {}
-
-
-def retry_mark(record: dict, last: dict) -> dict:
-    """``retry`` and the busy runners after a first run of the day that found the hub busy; nothing after the retry."""
-    busy = _in_state(record, BUSY)
-    return {"retry": True, "busy": busy} if busy and not last.get("retried") else {}
+def busy(record: dict) -> list[str]:
+    """The run's runners the hub was too busy for."""
+    return _in_state(record, BUSY)
 
 
 def day_record(path: Path, record: dict) -> dict:
