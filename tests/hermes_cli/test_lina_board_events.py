@@ -447,6 +447,22 @@ def test_a_live_stream_resyncs_when_kanban_rows_after_its_position_are_pruned(wo
         assert ("kanban", "created", later) in _events(after)
 
 
+def test_an_idle_stream_sends_an_empty_batch_every_keepalive_and_stays_open(work, client, pool, monkeypatch):
+    """lina#692: a stream with nothing to say was silent until the next change, and an idle limit on the way (a
+    front proxy, the app's own read timeout) closed it, so the app reconnected with a new ticket every few seconds."""
+    from hermes_cli import lina_board_events as events
+    monkeypatch.setattr(events, "KEEPALIVE_SECONDS", 0.5, raising=False)
+    with client.websocket_connect(_url()) as ws:
+        cursor = _next(ws, pool)["cursor"]
+        for _ in range(3):  # three keepalive spans with no change: silent before, an empty batch each now
+            assert _next(ws, pool) == {"cursor": cursor, "events": []}
+        work.ok("comment", "T1", "아직 열려 있지?")
+        message = _next(ws, pool)
+        while not message["events"]:  # a keepalive may land between the write and its batch
+            message = _next(ws, pool)
+        assert _events(message) == [("work", "comment", "T1")]
+
+
 def test_the_stream_is_behind_the_dashboard_socket_credential(work, client, pool):
     with pytest.raises(WebSocketDisconnect), client.websocket_connect("/api/lina/events?token=wrong") as ws:
         ws.receive_json()
