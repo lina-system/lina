@@ -24,6 +24,12 @@ models), the model count of its local ``/v1/models`` and its local service state
 magpie show ``signIn: magpie`` and are not signed in on the node: their accounts are on the hub's magpie
 (``proxy.signIn: hub``).
 
+``power`` (lina#483) is the hub's power equipment, read only from the watch service's state file that
+``devices.metrics.power`` names (the anker-watch ``state.json`` hermes-ops#302 read): one entry per station, the active
+alert keys in the watch's own wording and one line for the hub's wall adapter, battery and uplink. A record older than
+10 minutes (a stopped watch), a cloud read failure or a station value older than 15 minutes is ``stale`` with its age;
+a missing or unreadable file is ``missing`` / ``broken`` with no numbers, never zeros. Nothing is sent to the devices.
+
 ``restart`` and ``sign_in`` are the owner's actions (the route checks the owner-device gate first). Both write one
 line to ``<LINA root>/board/device-actions.jsonl``; a sign-in, which can take long, writes a second line when it
 ends. No sign-in address, code or token is ever put in a reply, the log file or the process log.
@@ -374,6 +380,87 @@ def view(base: Path, metrics: dict | None, now: float) -> dict:
     machines, at = nodes(base, metrics, now)
     return {"machines": machines, "person": people(base, metrics), "monitored": monitored(metrics, settings.devices(base), now),
             "at": at}
+
+
+# The watch service's own limits (hermes-ops#302): no record for 10 minutes means the watch stopped; a station value
+# older than 15 minutes is not trusted.
+POWER_STOPPED_S = 600
+POWER_OLD_S = 900
+POWER_UPLINKS = ("wired", "hotspot")
+
+
+def power_path(base: Path | None = None) -> Path | None:
+    devices = settings._config(base).get("devices")
+    metrics = devices.get("metrics") if isinstance(devices, dict) else None
+    path = metrics.get("power") if isinstance(metrics, dict) else None
+    return Path(str(path)).expanduser() if path else None
+
+
+def _number(value) -> float | None:
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def _flag(value) -> bool | None:
+    return value if isinstance(value, bool) else None
+
+
+def _part(raw: dict, key: str) -> dict:
+    return raw[key] if isinstance(raw.get(key), dict) else {}
+
+
+def _charge(raw: dict) -> str | None:
+    """The watch's battery_status (0 idle, 1 discharging, 2 charging) with ``powered``: on outside power and not
+    charging is ``full``."""
+    status = raw.get("battery_status")
+    if status == 2:
+        return "charging"
+    if raw.get("powered") is True:
+        return "full"
+    return {1: "on_battery", 0: "idle"}.get(status) if isinstance(status, int) else None
+
+
+def _station(key: str, raw: dict, behind: float | None, late: bool) -> dict:
+    """One station: its value's age now is its age at the watch's last record plus the time since that record."""
+    message_age = _number(raw.get("last_message_age"))
+    age = None if message_age is None or behind is None else message_age + behind
+    battery = _number(raw.get("soc")) is not None
+    charge = _charge(raw) if battery else None
+    hours = _number(raw.get("remaining_h"))
+    value = lambda name: _number(raw.get(name)) if battery else None
+    return {"key": key, "name": str(raw.get("name") or key), "connected": _flag(raw.get("wifi_online")),
+            "battery": battery, "batteryPercent": value("soc"), "inputW": value("input_w"),
+            "outputW": value("output_w"), "charge": charge,
+            "remainingS": hours * 3600 if charge == "on_battery" and hours is not None and 0 < hours < 1000 else None,
+            "temperature": value("temp"), "age": age, "stale": late or age is None or age > POWER_OLD_S}
+
+
+def _power_hub(hub: dict, stopped: bool) -> dict:
+    wan = _part(hub, "wan").get("state")
+    return {"wallAdapter": _flag(hub.get("ac")), "batteryPercent": _number(hub.get("bat")),
+            "uplink": wan if wan in POWER_UPLINKS else None, "stale": stopped}
+
+
+def power_read(path: Path, now: float) -> dict:
+    """The ``power`` section from the watch's state file, opened for reading once."""
+    empty = {"at": None, "age": None, "why": None, "alerts": [], "stations": [], "hub": None}
+    try:
+        raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {**empty, "state": "missing"}
+    except (OSError, ValueError):
+        return {**empty, "state": "broken"}
+    if not isinstance(raw, dict):
+        return {**empty, "state": "broken"}
+    at = _number(raw.get("time"))
+    behind = max(0.0, now - at) if at is not None else None
+    stopped = behind is None or behind > POWER_STOPPED_S
+    why = "stopped" if stopped else "cloud" if _part(raw, "cloud").get("ok") is False else None
+    stations = [_station(str(key), device, behind, why is not None)
+                for key, device in sorted(_part(raw, "devices").items()) if isinstance(device, dict)]
+    hub = _power_hub(raw["hub"], stopped) if isinstance(raw.get("hub"), dict) else None
+    alerts = [key for key in raw.get("alerts_active") or [] if isinstance(key, str)]
+    return {"state": "stale" if why else "ok", "at": at, "age": behind, "why": why, "alerts": alerts,
+            "stations": stations, "hub": hub}
 
 
 class Refused(Exception):

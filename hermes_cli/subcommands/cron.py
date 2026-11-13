@@ -194,6 +194,7 @@ def build_cron_parser(subparsers, *, cmd_cron: Callable) -> None:
 
     cron_run = cron_subparsers.add_parser("run", help="Run a job on the next scheduler tick")
     cron_run.add_argument("job_id", help="Job ID to trigger")
+    _flag(cron_run, "--dry-run", help="Resolve the job as a tick would and print it; run, call and send nothing")
     add_accept_hooks_flag(cron_run)
 
     cron_cancel = cron_subparsers.add_parser(

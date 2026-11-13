@@ -8,7 +8,7 @@ payload as ``wait_for``:
 
 * ``{"kind": "card", "task_id": ...}``     -- another card is completed (``done``, or archived after it)
 * ``{"kind": "review", "task_id": ...}``   -- a review card it asked for has its result (completed the same way)
-* ``{"kind": "pr", "repo": ..., "number": ...}`` -- the PR's required checks have all finished
+* ``{"kind": "pr", "repo": ..., "number": ...}`` -- the PR's checks have finished (:func:`read_pr_checks`)
 * ``{"kind": "merged", "repo": ..., "number": ...}`` -- the PR is merged (closed unmerged: to a person)
 * ``{"kind": "until", "at": <epoch>}``     -- a recorded time passes
 
@@ -26,6 +26,8 @@ deleted, and a wait that could not be read ``WAIT_READ_FAILURE_LIMIT`` ticks in 
 wait whose evidence keeps failing, for example a gh login that cannot read the repository).
 Each failed read is a ``wait_read_failed`` event carrying the failure and the running count;
 the first good read after failures writes ``wait_read_ok``, so only consecutive failures count.
+A PR wait still unmet ``PR_WAIT_STALL_S`` after its park writes one ``wait_stalled`` event and goes to
+a person the same way (lina#667), so a wait never stands silently.
 
 The same tick runs ``kanban_db_verdicts.verdict_tick``: a card woken to judge a run goes back to
 waiting once it is judged, and a run or a pause nobody acts on is raised once (lina#295).
@@ -53,6 +55,11 @@ _UNFINISHED_CHECKS = {"pending", "missing", "stale"}
 # at the default kanban.dispatch_interval_seconds (60), long enough to ride out a GitHub blip.
 WAIT_READ_FAILURE_LIMIT = 30
 _READ_EVENT_KINDS = ("wait_read_failed", "wait_read_ok")
+# A PR wait still unmet this long after its park goes to a person: past the longest CI job GitHub runs.
+PR_WAIT_STALL_S = 6 * 3600
+# Required checks that never post on the head, or no check runs at all, mean nothing is coming once the
+# park is this old and no run is going; younger, the checks may just not have registered yet.
+PR_EVIDENCE_GRACE_S = 300
 
 
 class WaitReadFailed(Exception):
@@ -83,6 +90,8 @@ def parse_wait_for(spec: str) -> dict[str, Any]:
     if kind in ("card", "review"):
         return {"kind": kind, "task_id": value}
     if kind in ("pr", "merged"):
+        if len(re.findall(r"[^\s,]+", value)) > 1:
+            raise ValueError(f"a {kind} wait takes one PR; park on one PR, or on each in turn")
         match = _PR_URL.fullmatch(value) or _PR_SHORT.fullmatch(value)
         if not match:
             raise ValueError(f"{kind} wait must be a GitHub PR URL or owner/repo#number")
@@ -274,9 +283,31 @@ def dispatcher_wake(conn: sqlite3.Connection, task_id: str, park_event_id: int, 
         return woken
 
 
+def _checks_settled(receipt: dict[str, Any], parked_for: float) -> bool:
+    """Whether the checks a PR will get on its head have finished, from a receipt that ran to the end
+    (or stopped at "no required checks", which carries the head's runs).
+
+    Required checks that are pending or stale keep waiting. A required check that never posted
+    (``missing``), or a repository with no required checks, is judged by the runs on the head: any run
+    still going keeps waiting; with none going, the wait is met once the park is ``PR_EVIDENCE_GRACE_S``
+    old (younger, the checks may just not have registered). Finished runs on a repository with no
+    required checks are proof enough that its checks ran.
+    """
+    checks = receipt.get("checks") or []
+    if any(c.get("classification") in ("pending", "stale") for c in checks):
+        return False
+    if receipt.get("required") and not any(c.get("classification") == "missing" for c in checks):
+        return True
+    runs = receipt.get("head_runs") or []
+    if any(run.get("status") != "completed" for run in runs):
+        return False
+    return (not receipt.get("required") and bool(runs)) or parked_for >= PR_EVIDENCE_GRACE_S
+
+
 def read_pr_checks(wait_for: dict[str, Any], assignee: Optional[str]) -> bool:
-    """True once every required check on the PR's head has a conclusion (pass, fail, or an
-    infrastructure conclusion such as cancelled), read from complete evidence only.
+    """True once the PR's checks have finished (:func:`_checks_settled`), read from complete evidence
+    only. A merged or closed PR is met at once. ``wait_for["parked_for"]`` (seconds since the park, set
+    by the tick) ages the evidence grace; without it the grace has not passed.
 
     ``collect_acceptance`` sets ``detail`` on every path that stops before the closing head/base
     re-read. A head that moved (``stale``) keeps waiting and is re-read next tick. An unreadable PR,
@@ -289,14 +320,13 @@ def read_pr_checks(wait_for: dict[str, Any], assignee: Optional[str]) -> bool:
 
     url = f"https://github.com/{wait_for['repo']}/pull/{int(wait_for['number'])}"
     receipt = collect_acceptance(url, None, assignee)
-    if "detail" in receipt:
-        if receipt.get("required") == []:
-            return True
+    if receipt.get("pr_state") in ("MERGED", "CLOSED"):
+        return True
+    if "detail" in receipt and receipt.get("required") != []:
         if receipt.get("classification") == "stale":
             return False
         raise WaitReadFailed(f"{receipt.get('classification')}: {receipt['detail']}")
-    checks = receipt.get("checks") or []
-    return bool(checks) and all(c.get("classification") not in _UNFINISHED_CHECKS for c in checks)
+    return _checks_settled(receipt, float(wait_for.get("parked_for") or 0))
 
 
 def read_pr_merged(wait_for: dict[str, Any], assignee: Optional[str]) -> bool:
@@ -415,6 +445,30 @@ def _record_read(conn: sqlite3.Connection, task_id: str, park_event_id: int, wai
             f"failure: {failure}. It no longer waits by itself: fix the cause, then unblock the card."))
 
 
+def _parked_for(conn: sqlite3.Connection, park_event_id: int, now: int) -> int:
+    """Seconds since the event that parked the card."""
+    row = conn.execute("SELECT created_at FROM task_events WHERE id = ?", (park_event_id,)).fetchone()
+    return max(0, now - int(row["created_at"]))
+
+
+def _hold_stalled_pr_wait(conn: sqlite3.Connection, task_id: str, park_event_id: int,
+                          wait_for: dict[str, Any], parked_for: int) -> None:
+    """Hand a PR wait that is still unmet ``PR_WAIT_STALL_S`` after its park to a person, once
+    (``wait_stalled`` event), the way a wait that cannot be read goes (lina#667)."""
+    from hermes_cli import kanban_db as kb
+
+    if parked_for < PR_WAIT_STALL_S:
+        return
+    with kb.write_txn(conn):
+        if not _still_parked_by(conn, task_id, park_event_id):
+            return
+        kb._append_event(conn, task_id, "wait_stalled", {"wait": describe_wait(wait_for), "parked_for": parked_for})
+    hold_for_person(conn, task_id, park_event_id, (
+        f"The wait ({describe_wait(wait_for)}) was still unmet {parked_for // 3600} hours after the park: "
+        "a check keeps running or queued, or the head keeps moving. It no longer waits by itself: open the "
+        "pull request's checks, fix the cause, then unblock the card."))
+
+
 def _card_done(conn: sqlite3.Connection, task_id: str) -> bool:
     """Done, or archived after it was completed: ``completed_at`` is set only by ``complete_task``
     (a reopen clears it), so an archive of an unfinished card is not completion."""
@@ -466,9 +520,10 @@ def wake_waiting_tasks(conn: sqlite3.Connection, *, now: Optional[int] = None,
                 f"The card this one waited for ({wait_for.get('task_id')}) was {ended} without "
                 "finishing, so the wait can never be met. Decide what it waits on now, then unblock it."))
             continue
+        parked_for = _parked_for(conn, park_event_id, now) if wait_for["kind"] == "pr" else 0
         try:
-            met = wait_met(conn, wait_for, assignee=row["assignee"], now=now, pr_checks_fn=pr_checks_fn,
-                           pr_merged_fn=pr_merged_fn or read_pr_merged)
+            met = wait_met(conn, {**wait_for, "parked_for": parked_for}, assignee=row["assignee"], now=now,
+                           pr_checks_fn=pr_checks_fn, pr_merged_fn=pr_merged_fn or read_pr_merged)
         except WaitGone as exc:
             hold_for_person(conn, row["id"], park_event_id, (
                 f"The wait ({describe_wait(wait_for)}) can never be met: {exc}. "
@@ -484,14 +539,16 @@ def wake_waiting_tasks(conn: sqlite3.Connection, *, now: Optional[int] = None,
         _record_read(conn, row["id"], park_event_id, wait_for, None)
         if met and dispatcher_wake(conn, row["id"], park_event_id, wait_for):
             woken.append(row["id"])
+        elif not met and wait_for["kind"] == "pr":
+            _hold_stalled_pr_wait(conn, row["id"], park_event_id, wait_for, parked_for)
     from hermes_cli.kanban_db_verdicts import verdict_tick
     verdict_tick(conn, now=now)  # lina#295: judged cards back to waiting; raise what nobody judged
     return woken
 
 
 __all__ = [
-    "DISPATCHER_ACTOR", "WAIT_KINDS", "WAIT_READ_FAILURE_LIMIT", "WaitGone", "WaitReadFailed", "describe_wait",
-    "dispatcher_wake", "hold_for_person", "needs_input_wait", "park_payload", "parse_wait_for",
-    "pr_checks_finished", "read_pr_checks", "read_pr_merged", "recorded_wait", "scheduled_resume_status",
-    "wait_for_from_directive", "wait_met", "wake_waiting_tasks", "woken_for_pr_work",
+    "DISPATCHER_ACTOR", "PR_EVIDENCE_GRACE_S", "PR_WAIT_STALL_S", "WAIT_KINDS", "WAIT_READ_FAILURE_LIMIT", "WaitGone",
+    "WaitReadFailed", "describe_wait", "dispatcher_wake", "hold_for_person", "needs_input_wait", "park_payload",
+    "parse_wait_for", "pr_checks_finished", "read_pr_checks", "read_pr_merged", "recorded_wait",
+    "scheduled_resume_status", "wait_for_from_directive", "wait_met", "wake_waiting_tasks", "woken_for_pr_work",
 ]

@@ -398,6 +398,90 @@ def test_every_service_has_a_total_from_its_main_window_never_a_five_hour_one(wo
         "Antigravity": (47.7, "custom:Gemini · 7 days"), "Cursor": (0.0, "custom:Total")}
 
 
+# The watch service's state file as hermes-ops#302 read it (values made up): a station with a battery on it, one on
+# outside power and one without a battery.
+POWER = {
+    "time": NOW - 30,
+    "devices": {
+        "A1722": {"name": "C300 AC", "wifi_online": True, "last_message_age": 3, "soc": 87, "input_w": 0,
+                  "output_w": 64, "powered": False, "battery_status": 1, "remaining_h": 2.5, "temp": 33},
+        "A1726": {"name": "C300 DC", "wifi_online": True, "last_message_age": 240, "soc": 100, "input_w": 12,
+                  "output_w": 4, "powered": True, "battery_status": 0, "remaining_h": None, "temp": 30},
+        "A1903": {"name": "150W", "wifi_online": False, "last_message_age": 500, "soc": None, "input_w": None,
+                  "output_w": None, "powered": None, "battery_status": None, "remaining_h": None, "temp": None}},
+    "hub": {"ac": False, "usb_in": True, "bat": 95, "wan": {"state": "hotspot", "age": 0}},
+    "cloud": {"ok": True, "mqtt": True},
+    "alerts_active": ["power", "temp:A1722"], "control": "none"}
+
+
+def _power(work, client, path: Path, state=None) -> dict:
+    if state is not None:
+        path.write_text(json.dumps(state), encoding="utf-8")
+    work.config(extra=DEVICES + f"  metrics: {{power: {path}}}\n")
+    view = _valid("DevicesView", client.get("/api/lina/devices").json())
+    assert view["errors"] == []
+    return view["power"]
+
+
+def test_devices_serve_power_stations_alerts_and_the_hub_line_from_the_state_file(work, fakes, client, tmp_path):
+    power = _power(work, client, tmp_path / "state.json", POWER)
+    assert (power["state"], power["at"], power["age"], power["why"]) == ("ok", NOW - 30, 30, None)
+    assert power["alerts"] == ["power", "temp:A1722"]
+    assert power["hub"] == {"wallAdapter": False, "batteryPercent": 95, "uplink": "hotspot", "stale": False}
+    ac, dc, small = power["stations"]
+    assert ac == {"key": "A1722", "name": "C300 AC", "connected": True, "battery": True, "batteryPercent": 87,
+                  "inputW": 0, "outputW": 64, "charge": "on_battery", "remainingS": 9000, "temperature": 33,
+                  "age": 33, "stale": False}
+    assert (dc["charge"], dc["remainingS"], dc["age"], dc["stale"]) == ("full", None, 270, False)
+    assert {k: v for k, v in small.items() if v is not None} == {"key": "A1903", "name": "150W", "connected": False,
+                                                                 "battery": False, "age": 530, "stale": False}
+
+
+@pytest.mark.parametrize("change, why, stale", [
+    ({"time": NOW - 1200}, "stopped", {"A1722", "A1726", "A1903"}),
+    ({"time": None}, "stopped", {"A1722", "A1726", "A1903"}),
+    ({"cloud": {"ok": False, "mqtt": False}}, "cloud", {"A1722", "A1726", "A1903"}),
+    ({"devices": {**POWER["devices"], "A1726": {**POWER["devices"]["A1726"], "last_message_age": 880}}}, None,
+     {"A1726"}),
+])
+def test_power_too_old_to_trust_is_stale_with_its_age_never_zero(work, fakes, client, tmp_path, change, why, stale):
+    power = _power(work, client, tmp_path / "state.json", {**POWER, **change})
+    assert (power["state"], power["why"]) == ("stale" if why else "ok", why)
+    assert {s["key"] for s in power["stations"] if s["stale"]} == stale
+    ac = power["stations"][0]
+    assert (ac["batteryPercent"], ac["outputW"]) == (87, 64)
+    assert power["hub"]["stale"] is (why == "stopped")
+    if change.get("time"):
+        assert (power["age"], ac["age"]) == (1200, 1203)
+
+
+@pytest.mark.parametrize("content, state", [(None, "missing"), ("{not json", "broken"), ("[1, 2]", "broken")])
+def test_a_missing_or_unreadable_power_file_has_no_numbers(work, fakes, client, tmp_path, content, state):
+    path = tmp_path / "state.json"
+    if content is not None:
+        path.write_text(content, encoding="utf-8")
+    assert _power(work, client, path) == {"state": state, "at": None, "age": None, "why": None, "alerts": [],
+                                         "stations": [], "hub": None}
+
+
+def test_devices_without_a_power_path_have_no_power_section(fakes, client):
+    view = _valid("DevicesView", client.get("/api/lina/devices").json())
+    assert "power" not in view and view["errors"] == []
+
+
+def test_power_is_read_only_and_no_route_sends_a_command_to_the_devices(work, fakes, client, tmp_path):
+    from hermes_cli import web_server
+    path = tmp_path / "state.json"
+    path.write_text(json.dumps(POWER), encoding="utf-8")
+    before = (path.read_bytes(), path.stat().st_mtime_ns, sorted(p.name for p in tmp_path.iterdir()))
+    assert _power(work, client, path)["stations"]
+    assert (path.read_bytes(), path.stat().st_mtime_ns, sorted(p.name for p in tmp_path.iterdir())) == before
+    writes = {(route.path, method) for route in web_server.app.routes
+              for method in getattr(route, "methods", None) or () if method not in ("GET", "HEAD")
+              and ("power" in route.path.lower() or route.path.startswith("/api/lina/devices"))}
+    assert writes == {("/api/lina/devices/{name}/restart", "POST"), ("/api/lina/devices/{name}/sign-in", "POST")}
+
+
 def test_every_route_is_behind_the_dashboard_auth_gate(fakes, client):
     from hermes_cli import web_server
     anonymous = TestClient(web_server.app)

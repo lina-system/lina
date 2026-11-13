@@ -49,12 +49,15 @@ def merge_job_definition(local: dict[str, Any], authored: dict[str, Any]) -> dic
     return merged
 
 
-def import_job_definitions(shipped: dict[str, dict[str, Any]], *, paused_reason: str) -> None:
+def import_job_definitions(
+    shipped: dict[str, dict[str, Any]], *, paused_reason: str, notes: dict[str, str] | None = None,
+) -> None:
     """Merge *shipped* (job id -> authored record) into the active store under its lock.
 
-    Unknown ids arrive with the marker set ``create_job(paused=True)`` writes; known ids keep
-    their scheduler state. Nothing is written when a record cannot be merged: the ValueError
-    is re-raised naming the job."""
+    Unknown ids arrive with the marker set ``create_job(paused=True)`` writes, plus their entry in
+    *notes* (an operator-facing ``notes`` field, never part of the prompt); known ids keep their
+    scheduler state. Nothing is written when a record cannot be merged: the ValueError is re-raised
+    naming the job."""
     now = _hermes_now().isoformat()
     seed = {
         "enabled": False,
@@ -70,7 +73,10 @@ def import_job_definitions(shipped: dict[str, dict[str, Any]], *, paused_reason:
         for local in load_jobs():
             incoming = pending.pop(local.get("id"), None)
             merged.append(local if incoming is None else _merge_or_name(local, incoming))
-        merged.extend(_merge_or_name({"id": job_id, **seed}, incoming) for job_id, incoming in pending.items())
+        merged.extend(
+            _merge_or_name({"id": job_id, **seed, **({"notes": notes[job_id]} if job_id in (notes or {}) else {})},
+                           incoming)
+            for job_id, incoming in pending.items())
         save_jobs(merged)
 
 

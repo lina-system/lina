@@ -1,10 +1,11 @@
 """Work API for the app: goals, work cards, their worker runs and the owner inbox (lina#112).
 
 Mounted by ``plugin_api.py`` under ``/api/plugins/kanban/work`` (behind the dashboard auth gate).
-A work card is a goal-mode card, or any card whose body has a ``## To-dos`` section (lina#290); a
-goal card above it, when there is one, is its link-child. Reads open the board read-only; the one
-write (answer) reuses ``add_comment`` and ``unblock_task``. ``work_state`` is the only place the
-five app states are computed. The schema the app's client generator reads is
+A work card is a goal-mode card, any card whose body has a ``## To-dos`` section (lina#290), or any
+blocked or triage card (lina#664); a goal card above it, when there is one, is its link-child. A listed
+card carries the title of the work record's goal that links it (``goalTitle``, lina#666). Reads open the
+board read-only; the one write (answer) reuses ``add_comment`` and ``unblock_task``. ``work_state`` is
+the only place the five app states are computed. The schema the app's client generator reads is
 ``docs/api/work-client.yaml``.
 """
 
@@ -142,9 +143,9 @@ def _agent_fields(facts: CardFacts) -> dict[str, Any]:
 
 
 def _work_cards(conn: sqlite3.Connection) -> list[sqlite3.Row]:
-    """Every card the app lists as work (lina#290): a goal-mode card, or any non-archived card whose
-    body has a ``## To-dos`` section — with or without a goal card above it. The checked-line writer
-    selects the same cards (``hermes_cli.lina_board_plain._board_cards``)."""
+    """Every card the app lists as work (lina#290, lina#664): a goal-mode card, any non-archived card
+    whose body has a ``## To-dos`` section, or a blocked or triage card — with or without a goal card above
+    it. The checked-line writer selects the same cards (``hermes_cli.lina_board_plain._board_cards``)."""
     from hermes_cli.lina_board_plain import is_work_card
     rows = conn.execute("SELECT id, goal_mode, body, status FROM tasks "
                         "ORDER BY created_at, rowid").fetchall()
@@ -393,12 +394,12 @@ def card_times(facts: CardFacts) -> dict[str, Optional[int]]:
             "lastHeartbeatAt": max(beats, default=None)}
 
 
-def card_summary(facts: CardFacts, now: int) -> dict[str, Any]:
+def card_summary(facts: CardFacts, now: int, goal_title: Optional[str] = None) -> dict[str, Any]:
     from hermes_cli.lina_board_plain import board_key, lookup  # checked model-written lines (lina#151), cache only
     state, reason = work_state(facts, now)
     todos = parse_todos(facts.task.body, _latest_gate_results(facts.events))
     return {
-        "id": facts.task.id, "title": facts.task.title, **_agent_fields(facts),
+        "id": facts.task.id, "title": facts.task.title, "goalTitle": goal_title, **_agent_fields(facts),
         "state": state, "reason": reason, **stop_fields(facts, state),
         "elapsedSeconds": _elapsed_seconds(facts.task, now), "todoProgress": {"done": sum(t["done"] for t in todos), "total": len(todos)},
         "now": now_line(facts), **card_times(facts),
@@ -414,10 +415,10 @@ def _run_dict(facts: CardFacts, run: kanban_db.Run, now: int) -> dict[str, Any]:
     }
 
 
-def card_detail(facts: CardFacts, now: int) -> dict[str, Any]:
+def card_detail(facts: CardFacts, now: int, goal_title: Optional[str] = None) -> dict[str, Any]:
     gates = _latest_gate_results(facts.events)
     return {
-        **card_summary(facts, now),
+        **card_summary(facts, now, goal_title),
         "todos": parse_todos(facts.task.body, gates),
         "workerRuns": worker_runs(facts.comments),
         "runsAwaitingVerdict": runs_awaiting_verdict(facts),
@@ -518,19 +519,58 @@ def list_cards(agent: Optional[str] = Query(None), state: Optional[str] = Query(
                            lambda src: hermes_rows.cards(src, now, agent, state))
 
 
+def _record_goal_titles(board: Optional[str]) -> dict[str, str]:
+    """``{card_id: goal title}`` of one board's cards from the work record (lina#666): an item that links
+    ``kanban:<card>`` (a link without a board is the default board's) gives the card its goal's title, a goal its own
+    and a to-do its parent goal's; the first such item in record order wins (one goal is one to-do, lina#655). Dropped
+    items give none. Read the way ``/api/lina/work/items`` reads the record (``lina_board_items._read``)."""
+    from hermes_cli.lina_board import _WORK_LOCK, _root
+    from hermes_cli.work import env, ledger
+    from hermes_cli.work.evaluate import item_name
+    from hermes_cli.work.links import kanban_parts
+    wanted = board or kanban_db.DEFAULT_BOARD
+    titles: dict[str, str] = {}
+    with _WORK_LOCK:
+        env.bind(env.load(_root()))
+        try:
+            recs, order = ledger.read_all()
+            for i in order:
+                r = recs[i]
+                goal = r if r.get("kind") == "목표" else recs.get(r.get("parent") or "")
+                if r.get("state") == "dropped" or not goal or goal.get("kind") != "목표":
+                    continue
+                for link in r.get("links") or []:
+                    link_board, card = kanban_parts(str(link))
+                    if card and (link_board or kanban_db.DEFAULT_BOARD) == wanted:
+                        titles.setdefault(card.lower(), item_name(goal))
+        finally:
+            ledger.close()
+            env.reset()
+    return titles
+
+
+def _goal_titles(board: Optional[str], errors: list[dict]) -> dict[str, str]:
+    """:func:`_record_goal_titles`, or ``{}`` with a ``work`` entry in *errors* when the record cannot be read: the
+    cards are served with ``goalTitle`` null."""
+    from hermes_cli.lina_board import _source
+    return _source("work", errors, lambda: _record_goal_titles(board)) or {}
+
+
 def _own_cards(board: Optional[str], now: int, agent: Optional[str], state: Optional[str]) -> dict[str, list]:
     with _read_conn(board) as conn:
         if conn is None:
             return {"cards": []}
+        errors: list[dict] = []
+        titles = _goal_titles(board, errors)
         cards = []
         for task in filter(None, (kanban_db.get_task(conn, i) for i in _work_card_ids(conn))):
             facts = _facts(conn, task, board)
             if agent is not None and _implementer(facts) != agent:
                 continue
-            summary = card_summary(facts, now)
+            summary = card_summary(facts, now, titles.get(task.id.lower()))
             if state is None or summary["state"] == state:
                 cards.append(summary)
-        return {"cards": cards}
+        return {"cards": cards, **({"errors": errors} if errors else {})}
 
 
 @router.get("/cards/{card_id}")
@@ -539,7 +579,9 @@ def get_card(card_id: str, board: Optional[str] = Query(None)):
         return hermes_rows.one(card_id, lambda src, i: hermes_rows.card(src, i, int(time.time())))
     board = _board_slug(board)
     with _read_conn(board) as conn:
-        return card_detail(_facts(conn, _require_card(conn, card_id), board), int(time.time()))
+        task = _require_card(conn, card_id)
+        title = _goal_titles(board, []).get(task.id.lower())
+        return card_detail(_facts(conn, task, board), int(time.time()), title)
 
 
 def question_rows(facts: CardFacts) -> list[dict[str, Any]]:
