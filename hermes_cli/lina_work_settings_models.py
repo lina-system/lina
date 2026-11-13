@@ -38,7 +38,8 @@ from hermes_cli.lina_board_quota import WINDOWS, reset_time
 
 LAST_GOOD_S = 600
 USABLE = ("ok", "unknown")
-EXTRA_WINDOWS = (("short", "shortPercent", "shortResetAt"),)
+# The five-hour window is off the quota view (lina#654), but a full one still stops the model.
+EXTRA_WINDOWS = (("short", "shortPercent", "shortResetAt"), ("fiveHour", "fiveHourPercent", "fiveHourResetAt"))
 WARN = {"off": "{who} 모델이 꺼져 있습니다", "out_of_quota": "{who} 모델의 쿼터가 다 찼습니다",
         "no_account": "{who} 모델을 쓸 계정이 없습니다"}
 SNAPSHOT = "models-last-good.json"

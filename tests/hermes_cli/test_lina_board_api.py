@@ -311,6 +311,48 @@ def test_devices_show_readiness_without_metrics_and_usage_with_beszel(work, fake
                                                                                            95.0, NOW - 30)
 
 
+def test_no_five_hour_window_is_collected_served_or_warned_on(work, fakes, client):
+    """lina#654: an account near the end of its five-hour window and low on its weekly one raises no warning, and
+    neither the read log nor the reply holds a five-hour window, magpie's own (``5 hours``) or a family's."""
+    reset = NOW + 3600
+    for step, five in enumerate((60, 75, 90, 99)):
+        work.clock[0] = NOW + step * 600
+        fakes.accounts = [_account(weeklyPercent=10, weeklyResetAt=NOW + 5 * 86400, fiveHourPercent=five,
+                                   fiveHourResetAt=reset,
+                                   customWindows=[{"label": "Gemini · 5 hours", "percent": five, "resetAt": reset}])]
+        quota = _valid("QuotaView", client.get("/api/lina/quota").json())["quota"]
+
+    account = quota[0]["accounts"][0]
+    assert [w["key"] for w in account["windows"]] == ["weekly"]
+    assert account["warn"] is False and quota[0]["percent"] == 10.0
+    logged = [json.loads(line) for line in (work.root / "board" / "quota.jsonl").read_text().splitlines()]
+    assert {row["window"] for row in logged} == {"weekly"}
+
+
+def test_every_service_has_a_total_from_its_main_window_never_a_five_hour_one(work, fakes, client):
+    """lina#662: the totals the old board shows on 11-13 from magpie's cards: Antigravity by its Gemini 7-day
+    window, Cursor by its month's Total; OpenAI, Claude and Grok by their weekly window."""
+    from hermes_cli import lina_magpie
+    cards = [
+        {"provider": "codex", "name": "a", "windows": [{"name": "5 hours", "used": 70}, {"name": "7 days", "used": 4}]},
+        {"provider": "claude", "name": "b", "windows": [{"name": "7 days", "used": 49.4},
+                                                      {"name": "7 days · Fable", "used": 5}]},
+        {"provider": "grok", "name": "c", "windows": [{"name": "7 days", "used": 0}]},
+        {"provider": "antigravity", "name": "d", "windows": [
+            {"name": "Gemini · 5 hours", "used": 90}, {"name": "Gemini · 7 days", "used": 47.7},
+            {"name": "Claude & GPT · 7 days", "used": 12}]},
+        {"provider": "cursor", "name": "e", "windows": [{"name": "Total", "used": 0}, {"name": "Cursor Models", "used": 0},
+                                                      {"name": "Other Models", "used": 3}]},
+    ]
+    fakes.accounts = [lina_magpie.account(card) for card in cards]
+
+    quota = _valid("QuotaView", client.get("/api/lina/quota").json())["quota"]
+
+    assert {s["service"]: (s["percent"], s["accounts"][0]["mainWindow"]) for s in quota} == {
+        "OpenAI": (4.0, "weekly"), "Claude": (49.4, "weekly"), "Grok": (0.0, "weekly"),
+        "Antigravity": (47.7, "custom:Gemini · 7 days"), "Cursor": (0.0, "custom:Total")}
+
+
 def test_every_route_is_behind_the_dashboard_auth_gate(fakes, client):
     from hermes_cli import web_server
     anonymous = TestClient(web_server.app)

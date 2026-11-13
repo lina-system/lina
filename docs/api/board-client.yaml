@@ -1119,7 +1119,7 @@ components:
       properties:
         key:
           type: string
-          description: weekly, fiveHour, monthly, or custom:<label>.
+          description: weekly, monthly, or custom:<label>; never a five-hour window (lina#654).
         percent:
           type: number
           description: The used share, as magpie reports it.
@@ -1177,6 +1177,10 @@ components:
         percent:
           type: number
           nullable: true
+          description: >
+            The mean of the main window's percent over the accounts that are not paused: weekly, else monthly;
+            Antigravity by its Gemini 7-day window, Cursor by its month's Total (lina#662). Null when no account has
+            one.
         ratePerHour:
           type: number
           nullable: true
