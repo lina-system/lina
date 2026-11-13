@@ -1112,10 +1112,11 @@ components:
     PersonDevice:
       type: object
       additionalProperties: false
-      required: [name, role, reachable, checkedAt, tools]
+      required: [name, role, reachable, checkedAt, tools, cpu, memory, disk, temp, metricsAt, metricsWhy]
       description: >
         An owner's own device (role person): never a node, never probed, never given work. Read only, at most every
-        15 minutes in the background: one ssh call prints each tool's --version; nothing on it is changed.
+        15 minutes in the background: one ssh call prints each tool's --version; nothing on it is changed. cpu,
+        memory, disk and temp are Beszel's when it watches the device (lina#662), matched like a node's.
       properties:
         name:
           type: string
@@ -1144,6 +1145,23 @@ components:
               installed:
                 type: string
                 nullable: true
+        cpu:
+          type: number
+          nullable: true
+        memory:
+          type: number
+          nullable: true
+        disk:
+          type: number
+          nullable: true
+        temp:
+          type: number
+          nullable: true
+        metricsAt:
+          type: number
+          nullable: true
+        metricsWhy:
+          $ref: "#/components/schemas/MetricsWhy"
     DeviceAction:
       type: object
       additionalProperties: false
