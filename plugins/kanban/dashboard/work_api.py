@@ -36,6 +36,8 @@ _PLANNED_STATUSES = {"triage", "todo", "scheduled", "ready"}
 LIVE_WINDOW_SECONDS = kanban_db.DEFAULT_CLAIM_TTL_SECONDS
 NOW_LINE_CHARS = 120
 _BLOCK_EVENT_KINDS = ("blocked", "block_loop_detected")
+# The transitions that park a blocked card; ``gave_up`` is the failure breaker's block, which ends any earlier wait.
+_PARK_EVENT_KINDS = (*_BLOCK_EVENT_KINDS, "gave_up")
 _TODO_HEADING = re.compile(r"^##\s+To-?dos\s*$", re.IGNORECASE)
 _TODO_LINE = re.compile(r"^\s*[-*]\s+(?:\[(?P<box>[ xX])\]\s+)?(?P<text>\S.*?)\s*$")
 _ISSUE_REF = re.compile(r"\b[\w.-]+/[\w.-]+#\d+\b")
@@ -211,7 +213,9 @@ def _block_stop(task: kanban_db.Task, events: list[kanban_db.Event]) -> tuple[Op
     ``block_kind``), never from the title. A recorded wait is woken by the dispatcher; a typed kind reads by
     :data:`_KIND_STOPS`; an untyped block's text is the goal loop's ``gate`` / ``budget``, an owner-inbox line, or a
     plain sentence for the owner. A card with no block event and no kind is all None."""
-    event = next((e for e in reversed(events) if e.kind in _BLOCK_EVENT_KINDS), None)
+    event = next((e for e in reversed(events) if e.kind in _PARK_EVENT_KINDS), None)
+    if event is not None and event.kind == "gave_up":
+        return "failed", "owner", "none"
     payload = (event.payload or {}) if event else {}
     kind = payload.get("kind") or task.block_kind
     wait = payload.get("wait_for")

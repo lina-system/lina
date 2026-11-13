@@ -627,9 +627,13 @@ def test_a_stopped_hermes_card_says_why_it_stopped_and_who_acts_from_its_latest_
         "card-8": [{"kind": "needs_input", "reason": "pick one", "recurrences": 1, "source_status": "running"},
                    {"kind": None, "reason": "The access key ran out.", "recurrences": 1, "source_status": "running"}],
         "card-9": [],
+        "card-11": [{"kind": "needs_input", "reason": "waits for the import card", "source_status": "running",
+                     "wait_for": {"kind": "card", "task_id": "card-1"}}],
     }
     for raw, payloads in shapes.items():
         _stopped_card(data, raw, *payloads)
+    # The failure breaker blocked card-11 after its wait was met: nothing wakes it, a person has to act.
+    data["show"]["card-11"]["events"].append({"kind": "gave_up", "payload": {"failures": 3}, "created_at": NOW - 50, "run_id": None})
     _stopped_card(data, "card-10", status="scheduled")
     hermes.canned(data)
     hermes.on()
@@ -647,6 +651,7 @@ def test_a_stopped_hermes_card_says_why_it_stopped_and_who_acts_from_its_latest_
         "card-7": ("stopped", "blocked_by_item", None, "scheduled"),
         "card-8": ("stopped", "feedback", "owner", "none"),
         "card-9": ("stopped", None, None, None),
+        "card-11": ("stopped", "failed", "owner", "none"),
         "card-10": ("planned", "scheduled", None, "scheduled"),
     }
     detail = _get(client, f"{WORK}/cards/hermes:card-2", "work-client.yaml", "WorkCardDetail")
