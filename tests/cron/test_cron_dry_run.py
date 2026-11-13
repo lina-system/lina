@@ -96,6 +96,27 @@ def test_an_unknown_skill_and_an_unknown_bot_chat_profile_fail(home, nothing_run
     assert nothing_runs == []
 
 
+def test_a_skill_with_an_uninstalled_dependency_is_reported_never_installed(home, nothing_runs, monkeypatch, capsys):
+    import pm
+    import pm.client
+    import pm.install
+
+    ensured: list[str] = []
+    for module in (pm, pm.client, pm.install):
+        monkeypatch.setattr(module, "ensure", lambda name, **kw: ensured.append(name), raising=False)
+    skill = home / "skills" / "needs-tool-639"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text(
+        "---\nname: needs-tool-639\ndescription: test\ndeps: [lina-639-absent-tool]\n---\nUse the tool.\n")
+    job = jobs.create_job(prompt="use it", schedule="every 1h", skills=["needs-tool-639"], deliver="local")
+
+    assert _dry_run(job["id"]) == 0
+
+    assert ensured == [] and nothing_runs == []
+    out = capsys.readouterr().out
+    assert '"found": true' in out and "lina-639-absent-tool" in out
+
+
 def test_a_ledger_from_before_dry_runs_is_widened_without_losing_rows(home):
     db = home / "cron" / "executions.db"
     db.parent.mkdir(parents=True, exist_ok=True)

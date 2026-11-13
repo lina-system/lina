@@ -1,8 +1,9 @@
 """``hermes cron run <id> --dry-run``: resolve a job the way a tick would and execute nothing (lina#639).
 
 No script runs, no model is called and nothing is sent. Delivery targets are classified from the
-job record alone: no code in ``cron/scheduler_delivery*.py`` runs. Skills are looked up without
-their inline-shell preprocessing, and a pre-run script's output is replaced by a placeholder.
+job record alone: no code in ``cron/scheduler_delivery*.py`` runs. Skills are only located and their
+frontmatter read: no preprocessing, no dependency install (``skill_view`` would ``pm.ensure`` them),
+no usage bump. A pre-run script's output is replaced by a placeholder.
 """
 
 from __future__ import annotations
@@ -24,24 +25,83 @@ def _schedule(job: dict[str, Any]) -> dict[str, Any]:
             "next_if_resumed": compute_next_run(schedule, job.get("last_run_at"), timezone=job)}
 
 
-def _skills(job: dict[str, Any], problems: list[str]) -> list[dict[str, Any]]:
+def _find_skill(name: str) -> tuple[Any, str | None]:
+    """``(SKILL.md path, None)`` or ``(None, error)``, by the lookup ``skill_view`` uses and nothing more."""
+    from agent.skill_utils import parse_qualified_name
+    from tools.skills_tool import locate_skill, skill_lookup_path_error, skill_search_dirs
+
+    if error := skill_lookup_path_error(name):
+        return None, error
+    local_category_name = None
+    if ":" in name:
+        from hermes_cli.plugins import discover_plugins, get_plugin_manager
+
+        discover_plugins()
+        path = get_plugin_manager().find_plugin_skill(name)
+        if path is not None and path.exists():
+            return path, None
+        namespace, bare = parse_qualified_name(name)
+        local_category_name = f"{namespace}/{bare}"
+        if error := skill_lookup_path_error(local_category_name):
+            return None, error
+    error, _, skill_md = locate_skill(name, local_category_name, skill_search_dirs()[0])
+    if error is not None:
+        return None, json.loads(error).get("error") or "not found"
+    return skill_md, None
+
+
+def _missing_deps(frontmatter: dict[str, Any], warnings: list[str], name: str) -> list[str]:
+    """Declared ``deps`` not installed now. Checked, never installed: a run installs them when it
+    loads the skill."""
+    from pm.install import _installed_location, _lockfile, current_target
+    from pm.registry import get_package
+
+    declared = frontmatter.get("deps") or []
+    declared = [declared] if isinstance(declared, str) else declared if isinstance(declared, list) else []
+    missing = []
+    for dep in (str(d).strip() for d in declared if str(d).strip()):
+        try:
+            # heal=False: pm.is_installed would restore a store binary's exec bit in place.
+            installed = _installed_location(get_package(dep), _lockfile(), current_target(), heal=False) is not None
+        except Exception as exc:
+            warnings.append(f"skill {name!r} declares dependency {dep!r}, which cannot be checked: {exc}")
+            continue
+        if not installed:
+            missing.append(dep)
+            warnings.append(f"skill {name!r} declares dependency {dep!r}, which is not installed; "
+                            "a run would try to install it")
+    return missing
+
+
+def _skills(job: dict[str, Any], problems: list[str], warnings: list[str]) -> list[dict[str, Any]]:
     from agent.skill_bundles import resolve_bundle_command_key
-    from agent.skill_utils import normalize_skill_lookup_name
+    from agent.skill_utils import normalize_skill_lookup_name, skill_matches_platform
     from cron.scheduler_prompt import _job_skill_names
-    from tools.skills_tool import skill_view
+    from tools.skills_tool import _is_skill_disabled, load_env
+    from tools.skills_tool_plugin import _safe_frontmatter
+    from tools.skills_tool_setup import _get_required_environment_variables, _is_env_var_persisted
 
     rows = []
     for name in _job_skill_names(job):
         if resolve_bundle_command_key(name.lstrip("/")):
             rows.append({"name": name, "found": True, "kind": "bundle"})
             continue
-        payload = json.loads(skill_view(normalize_skill_lookup_name(name), preprocess=False))
-        found = isinstance(payload, dict) and bool(payload.get("success"))
-        rows.append({"name": name, "found": found, "kind": "skill"})
-        if not found:
-            problems.append(f"unknown skill {name!r}: {payload.get('error') or 'not found'}")
-        elif payload.get("setup_needed") or payload.get("readiness_status") == "setup_needed":
-            problems.append(f"skill {name!r} is not ready: required setup incomplete")
+        skill_md, error = _find_skill(normalize_skill_lookup_name(name))
+        rows.append({"name": name, "found": skill_md is not None, "kind": "skill"})
+        if skill_md is None:
+            problems.append(f"unknown skill {name!r}: {error}")
+            continue
+        frontmatter = _safe_frontmatter(skill_md)
+        rows[-1].update(path=str(skill_md), missing_deps=_missing_deps(frontmatter, warnings, name))
+        if not skill_matches_platform(frontmatter):
+            problems.append(f"skill {name!r} is not supported on this platform")
+        if _is_skill_disabled(str(frontmatter.get("name") or skill_md.parent.name)):
+            problems.append(f"skill {name!r} is disabled")
+        required = [e["name"] for e in _get_required_environment_variables(frontmatter) if not e.get("optional")]
+        if required:
+            env = load_env()
+            if unset := [var for var in required if not _is_env_var_persisted(var, env)]:
+                problems.append(f"skill {name!r} is not ready: missing env {', '.join(unset)}")
     return rows
 
 
@@ -160,7 +220,7 @@ def dry_run(job: dict[str, Any]) -> dict[str, Any]:
     report = {
         "id": job["id"], "name": job.get("name"), "state": effective_job_state(job),
         "kind": "script" if job.get("no_agent") else "prompt",
-        "schedule": _schedule(job), "skills": _skills(job, problems),
+        "schedule": _schedule(job), "skills": _skills(job, problems, warnings),
         "workdir": {"configured": job.get("workdir"), "resolved": workdir},
         "scripts": _scripts(job, problems),
         "monitor_url": job.get("monitor_url"),
