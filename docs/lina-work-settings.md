@@ -39,6 +39,10 @@ Device `kind` is `lina` (default) or `file`. Only `kind: file` accepts `omo`, `d
 Omitted file fields use the worker reader's defaults: `omo: omo`, empty `deny`/`volumes`, `root: lina-file-node`,
 `model_check: http://127.0.0.1:3425/v1/models`, `scan_s: 300`. See [file-node configuration](file-node.md#configuration).
 
+The owner's personal laptops are never nodes. They are listed only as `role: person` devices, which carry status
+and versions and take no work, not even a run named with `--host` (`hermes_cli/worker/bidding.py` `role_refusal`);
+validation refuses node fields on them. A personal laptop is never added with `role: work`.
+
 ## At submit
 
 `lina worker submit` picks through this layer (lina#257):
@@ -76,6 +80,33 @@ http/https URL with a host; `scan_s` other than a positive integer (booleans are
 `read-only|workspace-write|full`; a `command` runner without `argv`; credential-like keys
 (`key`, `token`, `secret`, `password`) and a runner's `env`, which stay in `config.yaml` untouched and never reach a
 revision; at most 128 devices, 64 runners and 64 rules.
+
+## Who does the work
+
+The owner's rules for picking a worker; the settings above carry them out.
+
+- **Default worker:** `omo` (`default_runner`), for every kind of goal unless an exception below applies.
+- **Exceptions:**
+  - web research goes to the computer-use agent; research that reads a repository stays with `omo`;
+  - the prose of a report is written by the `agy` runner from the situation and the raw material, and its facts are
+    checked afterwards;
+  - creative work has no worker by default: the creative agent does it and the owner picks;
+  - an issue's runner label wins over the default (a card session passes it, see [At submit](#at-submit)).
+
+  The receiving place and the kind presets pick these exceptions
+  ([work-and-delegation.md](design/work-and-delegation.md) sections 1 and 2, lina#317, lina#520); until they land, a
+  card session passes `--runner` for them.
+- **Personal source text** may go to a worker like any other work. The one limit is the general rule in
+  [work-and-delegation.md](design/work-and-delegation.md#11-personal-source-text): never a public place, and secrets
+  written nowhere.
+- **Main models:** three aliases in `worker.models.aliases`: `opus` at medium thinking, `astra` at high and `fable`
+  at xhigh. These are the defaults at the time of writing; `lina worker settings show` gives the live values.
+- **omo's role routes:** `lina omo routing plan|apply|check` (the `tools/ocx-omo` tool) writes each omo category and
+  agent route as omo's own recommended chain, minus the models the proxy does not carry, plus the policy's
+  `extras`. The filter is the provider list (`providers` in `tools/ocx-omo/policy.default.json`), applied in
+  `resolveMagpie` (`tools/ocx-omo/src/plan.ts:18-27`): a model that none of those providers carries in magpie's
+  catalog is left out and shown as `not routed`. There is no separate exclusion list, so a model family no listed
+  provider serves (Kimi, today) never reaches an omo route.
 
 ## Revisions and rollback
 

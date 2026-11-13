@@ -293,22 +293,109 @@ def test_quota_rate_and_warning_follow_the_read_history(work, fakes, client):
     assert (work.root / "board" / "quota.jsonl").is_file()
 
 
+def _beszel(db: Path, *systems: tuple[str, str, dict]) -> Path:
+    """A Beszel database holding *systems* ``(name, status, info)``, each updated 30 seconds before the clock."""
+    stamp = datetime.datetime.fromtimestamp(NOW - 30, datetime.UTC).strftime("%Y-%m-%d %H:%M:%S.000Z")
+    with sqlite3.connect(db) as conn:
+        conn.execute("CREATE TABLE systems (id TEXT, name TEXT, status TEXT, updated TEXT, info TEXT)")
+        conn.execute("CREATE TABLE system_stats (system TEXT, stats TEXT, type TEXT, created TEXT)")
+        conn.executemany("INSERT INTO systems VALUES (?, ?, ?, ?, ?)",
+                         [(f"s{n}", name, status, stamp, json.dumps(info)) for n, (name, status, info) in enumerate(systems)])
+    return db
+
+
+def _readings(rows: list[dict]) -> dict:
+    return {m["name"]: (m["cpu"], m["memory"], m["disk"], m["metricsAt"], m["metricsWhy"]) for m in rows}
+
+
 def test_devices_show_readiness_without_metrics_and_usage_with_beszel(work, fakes, client, tmp_path):
     plain = _valid("DevicesView", client.get("/api/lina/devices").json())["machines"]
     assert [(m["name"], m["state"], m["cpu"], m["load"]) for m in plain] == [("build-a", "down", None, None),
                                                                             ("here", "ok", None, 0.5)]
-    db = tmp_path / "beszel.db"
-    with sqlite3.connect(db) as conn:
-        conn.execute("CREATE TABLE systems (id TEXT, name TEXT, status TEXT, updated TEXT, info TEXT)")
-        conn.execute("CREATE TABLE system_stats (system TEXT, stats TEXT, type TEXT, created TEXT)")
-        stamp = datetime.datetime.fromtimestamp(NOW - 30, datetime.UTC).strftime("%Y-%m-%d %H:%M:%S.000Z")
-        conn.execute("INSERT INTO systems VALUES ('s1', 'here', 'up', ?, ?)",
-                     (stamp, json.dumps({"cpu": 12.5, "mp": 95.0, "dp": 40.0, "dt": 50})))
+    assert {m["metricsWhy"] for m in plain} == {"no_source"}  # no Beszel named or found: no number is made up
+    db = _beszel(tmp_path / "beszel.db", ("here", "up", {"cpu": 12.5, "mp": 95.0, "dp": 40.0, "dt": 50}))
     work.config(extra=DEVICES + f"  metrics: {{beszel: {db}}}\n")
     here = next(m for m in _valid("DevicesView", client.get("/api/lina/devices").json())["machines"]
                 if m["name"] == "here")
     assert (here["state"], here["why"], here["cpu"], here["memory"], here["metricsAt"]) == ("warn", "memory", 12.5,
                                                                                            95.0, NOW - 30)
+
+
+def test_beszel_readings_are_served_for_each_machine_it_knows_and_null_with_a_reason_otherwise(work, fakes, client,
+                                                                                              tmp_path):
+    """lina#662: every machine the monitoring source covers has CPU, memory, disk and their reading time, also one
+    ssh cannot reach; a machine it does not know, or reports down, has none and says why. Machines it covers that no
+    device entry names are served under ``monitored``; a system paused in Beszel is retired and left out."""
+    db = _beszel(tmp_path / "beszel.db", ("build-a", "up", {"cpu": 23.0, "mp": 46.0, "dp": 19.0, "dt": 40}),
+                 ("lina-nas", "up", {"cpu": 5.0, "mp": 30.0, "dp": 70.0}), ("studio-mac", "down", {"cpu": 1.0}),
+                 ("old-box", "paused", {"cpu": 1.0}))
+    work.config(extra=DEVICES + f"  metrics: {{beszel: {db}}}\n")
+
+    view = _valid("DevicesView", client.get("/api/lina/devices").json())
+
+    assert _readings(view["machines"]) == {"build-a": (23.0, 46.0, 19.0, NOW - 30, None),
+                                           "here": (None, None, None, None, "unknown")}
+    assert [(m["name"], m["role"], m["state"]) for m in view["monitored"]] == [
+        ("studio-mac", "monitored", "down"), ("lina-nas", "monitored", "ok")]
+    assert _readings(view["monitored"]) == {"studio-mac": (None, None, None, NOW - 30, "down"),
+                                            "lina-nas": (5.0, 30.0, 70.0, NOW - 30, None)}
+
+
+def test_beszel_s_default_database_is_read_when_the_config_names_none(work, fakes, client, tmp_path, monkeypatch):
+    """The hub's Beszel keeps its data at Beszel's own default path, which the old board reads; the core reads it
+    too when ``devices.metrics.beszel`` is unset. The hub itself (``host: local``) is the system named for this
+    machine's host name."""
+    from hermes_cli.worker import board
+    db = _beszel(tmp_path / "data.db", ("lina-hub", "up", {"cpu": 23.0, "mp": 46.0, "dp": 19.0}))
+    monkeypatch.setattr(board, "BESZEL_DEFAULT", db)
+    monkeypatch.setattr("socket.gethostname", lambda: "lina-hub.tail0.ts.net")
+
+    view = _valid("DevicesView", client.get("/api/lina/devices").json())
+
+    assert _readings(view["machines"])["here"] == (23.0, 46.0, 19.0, NOW - 30, None)
+    assert view["monitored"] == [] and view["errors"] == []
+
+
+def test_no_five_hour_window_is_collected_served_or_warned_on(work, fakes, client):
+    """lina#654: an account near the end of its five-hour window and low on its weekly one raises no warning, and
+    neither the read log nor the reply holds a five-hour window, magpie's own (``5 hours``) or a family's."""
+    reset = NOW + 3600
+    for step, five in enumerate((60, 75, 90, 99)):
+        work.clock[0] = NOW + step * 600
+        fakes.accounts = [_account(weeklyPercent=10, weeklyResetAt=NOW + 5 * 86400, fiveHourPercent=five,
+                                   fiveHourResetAt=reset,
+                                   customWindows=[{"label": "Gemini · 5 hours", "percent": five, "resetAt": reset}])]
+        quota = _valid("QuotaView", client.get("/api/lina/quota").json())["quota"]
+
+    account = quota[0]["accounts"][0]
+    assert [w["key"] for w in account["windows"]] == ["weekly"]
+    assert account["warn"] is False and quota[0]["percent"] == 10.0
+    logged = [json.loads(line) for line in (work.root / "board" / "quota.jsonl").read_text().splitlines()]
+    assert {row["window"] for row in logged} == {"weekly"}
+
+
+def test_every_service_has_a_total_from_its_main_window_never_a_five_hour_one(work, fakes, client):
+    """lina#662: the totals the old board shows on 11-13 from magpie's cards: Antigravity by its Gemini 7-day
+    window, Cursor by its month's Total; OpenAI, Claude and Grok by their weekly window."""
+    from hermes_cli import lina_magpie
+    cards = [
+        {"provider": "codex", "name": "a", "windows": [{"name": "5 hours", "used": 70}, {"name": "7 days", "used": 4}]},
+        {"provider": "claude", "name": "b", "windows": [{"name": "7 days", "used": 49.4},
+                                                      {"name": "7 days · Fable", "used": 5}]},
+        {"provider": "grok", "name": "c", "windows": [{"name": "7 days", "used": 0}]},
+        {"provider": "antigravity", "name": "d", "windows": [
+            {"name": "Gemini · 5 hours", "used": 90}, {"name": "Gemini · 7 days", "used": 47.7},
+            {"name": "Claude & GPT · 7 days", "used": 12}]},
+        {"provider": "cursor", "name": "e", "windows": [{"name": "Total", "used": 0}, {"name": "Cursor Models", "used": 0},
+                                                      {"name": "Other Models", "used": 3}]},
+    ]
+    fakes.accounts = [lina_magpie.account(card) for card in cards]
+
+    quota = _valid("QuotaView", client.get("/api/lina/quota").json())["quota"]
+
+    assert {s["service"]: (s["percent"], s["accounts"][0]["mainWindow"]) for s in quota} == {
+        "OpenAI": (4.0, "weekly"), "Claude": (49.4, "weekly"), "Grok": (0.0, "weekly"),
+        "Antigravity": (47.7, "custom:Gemini · 7 days"), "Cursor": (0.0, "custom:Total")}
 
 
 def test_every_route_is_behind_the_dashboard_auth_gate(fakes, client):
@@ -332,3 +419,40 @@ def test_run_states_are_the_work_api_s_five_and_both_schemas_agree():
     for name in ("board-client.yaml", "work-client.yaml"):
         spec = hermes_yaml.safe_load((REPO / "docs" / "api" / name).read_text(encoding="utf-8"))
         assert tuple(spec["components"]["schemas"]["WorkState"]["enum"]) == WORK_STATES, name
+
+
+def test_a_stopped_run_says_who_acts_next_and_whether_a_later_run_replaced_it(work, fakes, client):
+    """lina#629: a stopped run waits on the agent that handed it out (the owner without one) unless a later run of
+    the same to-do replaced it or it was cancelled; retry says whether such a later run exists."""
+    fakes.job("run-1", state="failed", todo="T9", created=NOW - 3000, ended=NOW - 2900)
+    fakes.job("run-2", state="failed", todo="T9", created=NOW - 2000, ended=NOW - 1900)
+    fakes.job("run-3", state="stalled", created=NOW - 1800, ended=NOW - 1700)
+    fakes.job("run-4", state="done_empty", agent=None, todo="T8", created=NOW - 1600, ended=NOW - 1500)
+    fakes.job("run-5", state="cancelled", created=NOW - 1400, ended=NOW - 1300)
+    fakes.job("run-6", state="done", ended=NOW - 600)
+
+    board = _valid("BoardSnapshot", client.get("/api/lina/board").json())
+
+    served = {c["id"]: (c["state"], c["reason"], c["waitingOn"], c["retry"]) for c in board["cards"]}
+    assert served == {
+        "run-1": ("stopped", "failed", None, "scheduled"),
+        "run-2": ("stopped", "failed", "agent:alpha", "none"),
+        "run-3": ("stopped", "unresponsive", "agent:alpha", "none"),
+        "run-4": ("stopped", "result_missing", "owner", "none"),
+        "run-5": ("stopped", "cancelled", None, "none"),
+        "run-6": ("waiting", "review", "agent:alpha", None),
+    }
+
+
+def test_sibling_runs_of_one_batch_do_not_replace_each_other(work, fakes, client):
+    """lina#629: the members of a batch share a to-do and a group; a failed member is no retry of its later sibling,
+    so it still waits on its agent, while a run outside the group that came later does replace it."""
+    fakes.job("run-1", state="failed", todo="T9", group="OG1", created=NOW - 3000, ended=NOW - 2900)
+    fakes.job("run-2", state="done", todo="T9", group="OG1", created=NOW - 2990, ended=NOW - 2800)
+    fakes.job("run-3", state="failed", todo="T8", group="OG2", created=NOW - 2000, ended=NOW - 1900)
+    fakes.job("run-4", state="done", todo="T8", created=NOW - 1800, ended=NOW - 1700)
+
+    board = _valid("BoardSnapshot", client.get("/api/lina/board").json())
+
+    served = {c["id"]: (c["waitingOn"], c["retry"]) for c in board["cards"] if c["state"] == "stopped"}
+    assert served == {"run-1": ("agent:alpha", "none"), "run-3": (None, "scheduled")}

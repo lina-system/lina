@@ -85,8 +85,10 @@ model list and the board's quota view read the magpie gateway `worker.proxy` nam
   `claude/claude-opus-5-5`).
 - Usage: `GET /v1/magpie/usage?period=today|7d|30d`; `byMachine` has one row per caller key name, so a node's use
   shows under the key it calls with.
-- Quota: `GET /v1/magpie/quotas?kept=1` (what magpie last read; no vendor is asked); `5 hours`, `7 days` and
-  `30 days` become the five-hour, weekly and monthly windows, any other window a custom one.
+- Quota: `GET /v1/magpie/quotas?kept=1` (what magpie last read; no vendor is asked); `7 days` and `30 days` become
+  the weekly and monthly windows, any other window a custom one. The quota view has no five-hour window: `5 hours`
+  and a family's `... · 5 hours` are not logged, served or warned on (lina#654). A service's total is its weekly
+  window, else its monthly one; Antigravity's is its `Gemini · 7 days` window and Cursor's its `Total` (lina#662).
 
 A count or window magpie does not give is `null` (unknown), never 0. A magpie that does not answer makes the routes
 answer 503, `lina models` print `unknown: ...`, and the board's quota part one error.
