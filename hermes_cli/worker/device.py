@@ -324,60 +324,28 @@ def hub_spec_of(data: bytes) -> dict | None:
 
 
 def needs_model_path(worker: dict, name: str, spec: dict | None) -> bool:
-    """Whether runner *name* (built from *spec*) reaches its model through this node's model proxy (``worker.proxy``,
-    ``ocx`` or ``magpie``), so the proxy has to answer before the node takes work: the omo runner, or a pinned runner
-    that signs in through the proxy (pin sign-in ``ocx``: claude, codex and their ACP adapters, whichever kind the
-    node runs). A command runner carrying its own credentials (grok, agy, cursor-agent) and a pin whose sign-in is
-    unknown (dsh) needs no model path on either kind — the same exemption ``bidding.proxy_down()`` makes for a node
-    that reports no proxy."""
+    """Whether runner *name* (built from *spec*) reaches its model through this node's magpie (``worker.proxy``), so
+    magpie has to answer before the node takes work: the omo runner, or a pinned runner that signs in through magpie
+    (pin sign-in ``magpie``: claude, codex and their ACP adapters). A command runner carrying its own credentials
+    (grok, agy, cursor-agent) and a pin whose sign-in is unknown (dsh) needs no model path — the same exemption
+    ``bidding.proxy_down()`` makes for a node that reports no proxy."""
     from hermes_cli import lina_runners
     if (spec or {}).get("type") == "omo":
         return True
     pairs = lina_runners.offered(worker)
     named = next((pin for offered, _kind, pin in pairs if offered == name and pin is not None), None)
     pin = named or lina_runners.pins().get(name)  # a runner the hub names that this node does not list itself
-    return pin is not None and pin.sign_in == "ocx"
-
-
-MAGPIE_CHECK = "http://127.0.0.1:3425/v1/models"  # a node's local magpie: it has no /healthz (404)
+    return pin is not None and pin.sign_in == proxy.MAGPIE
 
 
 def node_proxy(worker_root: Path) -> proxy.Proxy:
     return proxy.of(settings.section(base_of(worker_root)))
 
 
-def model_check_url(worker_root: Path, kind: proxy.Proxy | None = None) -> str:
-    """The model path this node asks, by its proxy *kind* (the node's own ``worker.proxy`` when not given):
-    ``worker.proxy.health`` when set; else for ``magpie`` its local ``/v1/models`` (``MAGPIE_CHECK``); else for
-    ``ocx`` the ``model_check`` its config gives the local device it lists (the hub is a device of itself), else the
-    same default on this root's own ``ocx.port`` — which is not always 10100. Asked here, never on the hub: a node's
-    127.0.0.1 is the node's own."""
-    kind = kind or node_proxy(worker_root)
-    if kind.health:
-        return kind.health
-    if kind.kind == proxy.MAGPIE:
-        return MAGPIE_CHECK
-    base = base_of(worker_root)
-    local = next((dev for dev in settings.devices(base) if dev.local), None)
-    if local is not None and local.model_check:
-        return local.model_check
-    from hermes_cli import lina_ocx
-    try:
-        port = lina_ocx.configured_port(base)
-    except (lina_ocx.OcxError, KeyError, ValueError, TypeError):
-        port = lina_ocx.DEFAULT_PORT
-    return f"http://127.0.0.1:{port}/healthz"
-
-
-def http_status(url: str, timeout: float = 2.0) -> int:
-    """The HTTP status *url* answers with; 0 when nothing answers (a refused connection, a timeout, a bad URL)."""
-    try:
-        with urllib.request.urlopen(url, timeout=timeout) as response:
-            return int(response.status)
-    except urllib.error.HTTPError as exc:
-        return int(exc.code)
-    except (urllib.error.URLError, OSError, ValueError):
-        return 0
+def model_check_url(worker_root: Path, node: proxy.Proxy | None = None) -> str:
+    """The model path this node asks: ``worker.proxy.health`` when set, else its local magpie's ``/v1/models``
+    (``settings.MODEL_CHECK``). Asked here, never on the hub: a node's 127.0.0.1 is the node's own."""
+    return (node or node_proxy(worker_root)).health or settings.MODEL_CHECK
 
 
 def models_listed(url: str, timeout: float = 2.0, key: str | None = None) -> tuple[int, int]:
@@ -400,43 +368,38 @@ def models_listed(url: str, timeout: float = 2.0, key: str | None = None) -> tup
 
 
 def proxy_check(worker_root: Path) -> dict:
-    """This node's proxy as its check finds it: ``{kind, url, health}`` (health: the HTTP status, None when nothing
-    answers), and for ``magpie`` ``models``, the number of models its local ``/v1/models`` lists. ``ocx`` asks
-    ``/healthz`` for 200 as before; ``magpie`` has no ``/healthz`` (404) and is up on 200 with at least one model.
+    """This node's magpie as its check finds it: ``{url, health, models}`` (health: the HTTP status, None when nothing
+    answers; models: the number its local ``/v1/models`` lists). magpie has no ``/healthz`` (404); it is up on 200
+    with at least one model.
 
     The limit: a local ``/v1/models`` 200 does not prove the node's link to the hub — the node's magpie lists the
     linked hub's models without calling the hub for each one. The real-call probe (``lina_runner_probe``, lina#531)
-    stays the proof that a model call goes through. Nothing here calls the hub. A ``magpie`` node whose gateway
-    answers only with a key sends the one ``worker.proxy.key_env`` names (lina#625); the key is in no field."""
+    stays the proof that a model call goes through. Nothing here calls the hub. A node whose gateway answers only
+    with a key sends the one ``worker.proxy.key_env`` names (lina#625); the key is in no field."""
     from hermes_cli.lina_magpie import gateway_key
 
-    kind = node_proxy(worker_root)
-    url = model_check_url(worker_root, kind)
-    if kind.kind == proxy.MAGPIE:
-        code, models = models_listed(url, key=gateway_key(kind))
-        return {"kind": kind.kind, "url": url, "health": code or None, "models": models}
-    return {"kind": kind.kind, "url": url, "health": http_status(url) or None}
+    node = node_proxy(worker_root)
+    url = model_check_url(worker_root, node)
+    code, models = models_listed(url, key=gateway_key(node))
+    return {"url": url, "health": code or None, "models": models}
 
 
 def proxy_up(check: dict) -> bool:
-    return check["health"] == 200 and (check["kind"] != proxy.MAGPIE or check["models"] > 0)
+    return check["health"] == 200 and check["models"] > 0
 
 
 def proxy_down_why(check: dict) -> str:
-    """The reason a node whose proxy check failed is passed. ``ocx`` keeps the reason it had before lina#586."""
-    if check["kind"] == proxy.OCX:
-        return f"model path does not answer ({check['url']}: HTTP {check['health'] or 'none'})"
+    """The reason a node whose magpie check failed is passed."""
     if check["health"] == 200:
-        return f"model path lists no model ({check['kind']} {check['url']}: HTTP 200, 0 models)"
-    return f"model path does not answer ({check['kind']} {check['url']}: HTTP {check['health'] or 'none'})"
+        return f"model path lists no model (magpie {check['url']}: HTTP 200, 0 models)"
+    return f"model path does not answer (magpie {check['url']}: HTTP {check['health'] or 'none'})"
 
 
 def model_path(worker_root: Path, name: str = "", spec: dict | None = None) -> dict:
     """Whether this node's model path answers for the runner asked (its default runner when none was named):
     ``{"model_path": "ok"}``, else ``"down"`` with the reason a run there would end ``provider_error`` straight away.
-    The path is the node's proxy (``proxy_check``). A runner that reaches models without it is asked for no model
-    path, and the reply then carries no ``model_path`` key at all, so the node bids exactly as it did before this
-    check."""
+    The path is the node's magpie (``proxy_check``). A runner that reaches models without it is asked for no model
+    path, and the reply then carries no ``model_path`` key at all."""
     worker = settings.section(base_of(worker_root))
     name = name or runners.default_name(worker)
     spec = spec if spec is not None else runners.specs(worker).get(name)
@@ -448,20 +411,14 @@ def model_path(worker_root: Path, name: str = "", spec: dict | None = None) -> d
     return {"model_path": "down", "model_path_why": proxy_down_why(check)}
 
 
-def proxy_report(worker_root: Path, ocx: dict) -> dict | None:
-    """``hello``'s ``capabilities.proxy``: ``{kind, health}`` (health: the HTTP status of the node's proxy check, None
-    when nothing answers), ``version`` where known and, for ``magpie``, ``models``, ``remote_id`` (its link to the hub)
-    and ``service`` ``{name, state}`` of its local magpie service (lina#589). An ``ocx`` node reports the OCX
-    its ``capabilities.ocx`` (*ocx*) names, with the same health and version; one that reports no OCX (``external``
-    false and no ``version``) reports no proxy, so it is never passed for one. No key is read."""
-    if node_proxy(worker_root).kind == proxy.OCX:
-        if not (ocx.get("external") is True or ocx.get("version") is not None):
-            return None
-        return {"kind": proxy.OCX, "health": ocx.get("health"), "version": ocx.get("version")}
+def proxy_report(worker_root: Path) -> dict:
+    """``hello``'s ``capabilities.proxy``: ``url`` (the address its check asks), ``health`` (the HTTP status of the
+    node's magpie check, None when nothing answers), ``models``, ``remote_id`` (its link to the hub, ``""`` when its own magpie holds the models) and
+    ``service`` ``{name, state}`` of its local magpie service (lina#589). No key is read."""
     from hermes_cli.worker import proxy_service
     check = proxy_check(worker_root)
-    return {"kind": check["kind"], "health": check["health"], "models": check["models"],
-            "remote_id": node_proxy(worker_root).remote_id, "service": proxy_service.state(worker_root)}
+    return {**check, "remote_id": node_proxy(worker_root).remote_id,
+            "service": proxy_service.state(worker_root)}
 
 
 def probe_failed(base: Path, worker: dict, name: str) -> str | None:

@@ -1,5 +1,5 @@
 # The work settings over the client API (lina#256): devices and caps, runners and their models, model aliases,
-# defaults per mode and fallback, routing rules; their revisions, one-step rollback, the OCX model list and the route
+# defaults per mode and fallback, routing rules; their revisions, one-step rollback, the magpie model list and the route
 # resolver. Served by hermes_cli/web_routers/lina_work_settings.py behind the dashboard auth gate (session token);
 # writes also pass the owner-device gate (hermes_cli/lina_work_settings_gate.py). The change stream's settings events
 # (SettingsChangeEvent) come on /api/lina/events (docs/api/board-client.yaml, ChangeMessage).
@@ -124,7 +124,7 @@ paths:
   /work/settings/models:
     get:
       operationId: getWorkSettingsModels
-      summary: OCX's enabled models with state, quota left and reset, and whether each runner's model is usable now.
+      summary: magpie's models with state, quota left, reset and usable accounts, and whether each runner's model is usable now.
       parameters:
         - $ref: "#/components/parameters/IfNoneMatch"
       responses:
@@ -244,7 +244,7 @@ components:
       properties:
         source:
           type: string
-          example: ocx
+          example: magpie
         message:
           type: string
     By:
@@ -415,7 +415,7 @@ components:
           type: string
           format: uri
           pattern: '^https?://[^/\s?#]+(?:[/?#]|$)'
-          default: http://127.0.0.1:10100/healthz
+          default: http://127.0.0.1:3425/v1/models
         scan_s:
           type: integer
           minimum: 1
@@ -461,7 +461,7 @@ components:
           type: boolean
         model:
           type: string
-          example: opencodex/impl-model:high
+          example: codex/impl-model:high
         fallback_model:
           type: string
         access:
@@ -559,25 +559,12 @@ components:
     Model:
       type: object
       additionalProperties: false
-      required: [provider, id, namespaced, name, efforts, defaultEffort, state, left, resetAt, accounts]
+      required: [provider, id, state, left, resetAt, accounts]
       properties:
         provider:
           type: string
         id:
           type: string
-        namespaced:
-          type: string
-          nullable: true
-        name:
-          type: string
-          nullable: true
-        efforts:
-          type: array
-          items:
-            type: string
-        defaultEffort:
-          type: string
-          nullable: true
         state:
           $ref: "#/components/schemas/ModelState"
         left:
@@ -597,6 +584,10 @@ components:
         model:
           type: string
           nullable: true
+        identity:
+          type: string
+          nullable: true
+          description: "<provider>/<id> of the model value, null when none is named."
         state:
           allOf:
             - $ref: "#/components/schemas/ModelState"
@@ -651,7 +642,7 @@ components:
             type: string
         errors:
           type: array
-          description: "{source: ocx} when OCX could not be read: the models are the last good list (up to 10 min)."
+          description: "{source: magpie} when magpie could not be read: the models are the last good list (up to 10 min)."
           items:
             $ref: "#/components/schemas/SourceError"
     RouteRequest:

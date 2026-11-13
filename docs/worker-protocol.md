@@ -13,16 +13,13 @@ parallel within `lina_runners.HELLO_TIMEOUT_S`; a probe that fails or is late
 gives `why: unknown` with `why_detail`, and hello still answers. The instance
 identity is read apart from these probes (`protocol.identity`).
 
-`capabilities.ocx` = `{external, version, health}` is the node's OCX (its
-`/healthz` status), reported by every LINA node as before. `capabilities.proxy`
-(#586) is the node's model proxy, the kind its own `worker.proxy.kind` names:
-`{kind, health}`, where `health` is the HTTP status of the node's proxy check
-(null when nothing answers). An `ocx` node reports the OCX of `capabilities.ocx`
-with its `health` and `version`, and reports no `proxy` when it has no OCX
-(`external` false and no `version`). A `magpie` node adds `models`, the number
-of models its local `/v1/models` lists; magpie's version is not reported. No
-key is read or sent for either. A file node reports neither. The hub reads
-`proxy` and, when it is absent (an older node), takes `ocx` as an `ocx` proxy.
+`capabilities.proxy` (#586) is the node's local magpie:
+`{url, health, models, remote_id, service}`, where `url` is the address its
+proxy check asks, `health` is the HTTP status of that check (null when nothing
+answers), `models` is the number of models its local `/v1/models` lists,
+`remote_id` is its link to the hub (`""` when its own magpie holds the models),
+and `service` is `{name, state}` of its local magpie service (#589). No key is
+read. A file node reports no `proxy`.
 
 Compatibility depends only on overlapping inclusive protocol ranges. Disjoint
 ranges block every non-hello verb and report both ranges and which side needs an
@@ -44,13 +41,12 @@ running tasks survive worker service restarts.
 For future hub service controls, `NegotiatedTransport.service(action, recorded_id)`
 refreshes hello and refuses a changed instance without acting. The internal
 `_device service <stop|restart> <instance_id>` gate compares again on the device.
-The verb also takes `service <ocx|worker> <action> [instance_id]` (#222):
+The verb also takes `service <proxy|worker> <action> [instance_id]` (#222):
 `worker status|stop|restart` (stop and restart through the same instance gate)
-and `ocx status|restart` through the node's service layer
-(`lina_runners.node_service`), and `proxy status|restart` (#589): the node's own
-model proxy service by its `worker.proxy.kind`, its OCX as `ocx` does or its
-local magpie service (`worker.proxy.service`, default `magpie`), refused with
-`busy: <n>` while a run holds a slot on the node; the older form still means the worker. Its
+and `proxy status|restart` (#589) through the node's service layer
+(`lina_runners.node_service`): the node's own local magpie service
+(`worker.proxy.service`, default `magpie`), refused with `busy: <n>` while a
+run holds a slot on the node; the older form still means the worker. Its
 effect stays `destructive`, the strongest of the actions it carries.
 Identity publication and compare-and-stop share a file lock, so a newly published
 instance cannot be stopped using the previous record. Restart starts the service
@@ -67,53 +63,38 @@ receipts), in `lina worker hosts` and in `lina devices`. None of them changes
 the score order, and none touches a run already on the node: the node watch
 speaks for a lost node.
 
-- `model path does not answer (<url>: HTTP <code>)` on an `ocx` node,
-  `model path does not answer (magpie <url>: HTTP <code>)` and
-  `model path lists no model (magpie <url>: HTTP 200, 0 models)` on a
-  `magpie` node: `probe` asks the node's model path on the node, by the kind
-  of its `worker.proxy` (#586). The address is `worker.proxy.health` when
-  set. Else, for `ocx`, it is the `model_check` its own `config.yaml` gives
-  the device it lists as `host: local`, else the same
-  `http://127.0.0.1:10100/healthz` default a file node asks, on the node's
-  own `ocx.port` (not always 10100); a 200 is up. For `magpie` (it has no
-  `/healthz`, which answers 404) it is `http://127.0.0.1:3425/v1/models`,
-  and up is a 200 whose `data` lists at least one model. A local
-  `/v1/models` 200 does not prove the node's link to the hub: the node's
-  magpie lists the hub's models without a call through that link, and the
-  real-call probe (#531) stays the proof. The probe reports
-  `model_path: ok` / `down` with `model_path_why`. Only a runner that
-  reaches its model through the node's proxy is asked for: the omo runner,
-  or a pinned runner whose sign-in is `ocx`, i.e. through the proxy
-  (claude, codex and their ACP adapters), on either kind
-  (`device.needs_model_path`). A command runner carrying its own credentials
-  (grok, agy, cursor-agent) and a pin whose sign-in is unknown (dsh) needs
-  no model path; its probe and hello then carry no `model_path` field at all
-  and the node bids exactly as before, the same exemption `proxy_down()`
-  makes for a node that reports no proxy. The
-  hello asks for the node's default runner and carries the same two fields in
-  `capabilities`; they stand in only for a probe reply that does not name the
-  runner it asked (an older node). A node whose model path does not answer
-  would end its run `provider_error` at once, so the bid passes it and a
-  `--host` submit there is refused with the same line. A node without the
-  field is bid on as before. Note that `/healthz` can answer 200 while model
-  calls still fail (a node's OCX cut off from its hub answers 503 on
-  `/v1/models`); that gap is not covered here.
-- `<kind> not answering` (`bidding.proxy_down`): the proxy of the node's
-  hello, `capabilities.proxy`, else `capabilities.ocx` as an `ocx` proxy.
-  `ocx not answering`: a node that reports an OCX (`external`
-  true or a `version`) whose `health` is not 200 is passed, for any runner,
-  as before. `magpie not answering`: a `magpie` proxy whose `health` is not
-  200 or that lists no model passes the node for a runner that reaches
-  models through it (its probe carries `model_path`); the model path reason
-  above usually says it first. A node that reports no proxy is never passed
-  for this. `lina worker hosts` and `lina devices` show each node's
-  `proxy <kind> <health>` (`, <n> models` for magpie) or `proxy none`, and
-  the `lina devices --json` row carries `proxy`. The hub reads it
-  from the hello the same contact asks before its probe
-  (`bidding.with_node_facts`), so there is no second round trip. A node with
-  no OCX (`external` false and no `version`) or whose hello has no `ocx` (an
-  older node, a file node) is not passed for this. A named run (`--host`) is
-  not started there either.
+- `model path does not answer (magpie <url>: HTTP <code>)` and
+  `model path lists no model (magpie <url>: HTTP 200, 0 models)`: `probe`
+  asks the node's model path on the node (#586). The address is
+  `worker.proxy.health` when set, else `http://127.0.0.1:3425/v1/models`
+  (`settings.MODEL_CHECK`); magpie has no `/healthz` (it answers 404), and up
+  is a 200 whose `data` lists at least one model. A local `/v1/models` 200
+  does not prove the node's link to the hub: the node's magpie lists the
+  hub's models without a call through that link, and the real-call probe
+  (#531) stays the proof. The probe reports `model_path: ok` / `down` with
+  `model_path_why`. Only a runner that reaches its model through the node's
+  magpie is asked for: the omo runner, or a pinned runner whose sign-in is
+  `magpie` (claude, codex and their ACP adapters; `device.needs_model_path`).
+  A command runner carrying its own credentials (grok, agy, cursor-agent) and
+  a pin whose sign-in is unknown (dsh) needs no model path; its probe and
+  hello then carry no `model_path` field at all and the node bids as usual,
+  the same exemption `proxy_down()` makes for a node that reports no proxy.
+  The hello asks for the node's default runner and carries the same two
+  fields in `capabilities`; they stand in only for a probe reply that does
+  not name the runner it asked (an older node). A node whose model path does
+  not answer would end its run `provider_error` at once, so the bid passes it
+  and a `--host` submit there is refused with the same line. A node without
+  the field is bid on as usual.
+- `magpie not answering` (`bidding.proxy_down`): the `capabilities.proxy` of
+  the node's hello has `health` not 200 or lists no model (`models: 0`), for
+  a runner that reaches models through it (its probe carries `model_path`);
+  the model path reason above usually says it first. A node that reports no
+  proxy (a file node, an older node) is never passed for this. `lina worker
+  hosts` and `lina devices` show each node's `magpie <health>, <n> models` or
+  `proxy none`, and the `lina devices --json` row carries `proxy`. The hub
+  reads it from the hello the same contact asks before its probe
+  (`bidding.with_node_facts`), so there is no second round trip. A named run
+  (`--host`) is not started there either.
 - `memory <n>GB < <floor>GB`: `probe` reports `mem_available_gb` (available
   memory, whole GB rounded down) and a node under `worker.min_free_mem_gb`
   (default 4, read on the hub like `min_free_gb`) is passed, a named run too.

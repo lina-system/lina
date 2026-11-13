@@ -26,7 +26,7 @@ follow-ups in the same session. Run independent writers in separate worktrees.
 ## Prerequisites
 
 - Install Claude Code; check `claude --version`, `claude --help`, and `claude doctor`.
-- Use the configured OCX routing for model access. Check the runner's environment
+- Use the configured magpie routing for model access. Check the runner's environment
   separately from LINA's provider config; never print credentials or substitute
   direct vendor access to mask routing failures.
 - Read repository instructions and confirm the remote, base and archive state.
@@ -91,7 +91,7 @@ interfaces, not commands to invoke today.
 Keep shared instructions in `CLAUDE.md`, `.claude/rules/` and project agents in
 `.claude/agents/`. Project settings live in `.claude/settings.json`; local overrides
 belong in `.claude/settings.local.json`. Do not change global settings for a trial.
-Use installed-version help for model and effort options. Preserve OCX routing and
+Use installed-version help for model and effort options. Preserve magpie routing and
 check real model/provider usage and tool execution, not a self-reported model name.
 
 For larger delegated work, name the subagent roles, concurrency budget and checks

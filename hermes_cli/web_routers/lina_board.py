@@ -2,7 +2,7 @@
 API (schema: ``docs/api/board-client.yaml``).
 
 ``GET /api/lina/board`` is one snapshot; ``/api/lina/work/due``, ``/api/lina/devices`` and ``/api/lina/quota`` are its
-parts for polling them on their own (the device probe and the OCX read are the slow ones). ``/api/lina/work/items``
+parts for polling them on their own (the device probe and the magpie read are the slow ones). ``/api/lina/work/items``
 and ``/api/lina/work/items/{id}`` (lina#166) serve the goals and to-dos with their comments, runs and links;
 ``/api/lina/work/runs/{id}/record`` (lina#201) one worker run's record, round by round; ``/api/lina/status/checks``
 (lina#233) the hub's own health checks from ``<LINA root>/status/*.json`` (``lina_status.py``). ``POST
@@ -69,7 +69,7 @@ async def lina_work_item(item_id: str, if_none_match: Optional[str] = Header(def
 async def lina_work_run_record(run_id: str, if_none_match: Optional[str] = Header(default=None)):
     import time
 
-    from hermes_cli.lina_ocx import lina_root
+    from hermes_cli.lina_deps import lina_root
     from hermes_cli.worker import settings
     from hermes_cli.worker.record import RunNotFound, record
     try:

@@ -29,7 +29,7 @@ _ISSUE_SPRINT_VALUE = re.compile(r"^\s*(?:(M\d+)\s+)?S(\d+)\b", re.IGNORECASE)
 
 
 def lina_root(base: Path | None = None) -> Path:
-    from hermes_cli.lina_ocx import lina_root as root
+    from hermes_cli.lina_deps import lina_root as root
     return base or root()
 
 

@@ -159,13 +159,13 @@ def test_certified_fast_lane_ignores_legacy_cap_and_preserves_reasoning():
     from agent.auxiliary_client import call_llm
 
     config = {
-        "provider": "ocx",
+        "provider": "magpie",
         "model": "qwen3:8b",
         "reasoning_effort": "none",
         "max_output_tokens": 1400,
     }
     client = MagicMock()
-    client.base_url = "http://127.0.0.1:10100/v1"
+    client.base_url = "http://127.0.0.1:3425/v1"
     response = object()
     client.chat.completions.create.return_value = response
 
@@ -181,7 +181,7 @@ def test_certified_fast_lane_ignores_legacy_cap_and_preserves_reasoning():
 
     request = client.chat.completions.create.call_args.kwargs
     assert "max_tokens" not in request
-    # OCX owns the disable field; task reasoning must not leak into extra_body.
+    # MAGPIE owns the disable field; task reasoning must not leak into extra_body.
     assert request["reasoning_effort"] == "none"
     assert "think" not in request.get("extra_body", {})
     assert "reasoning" not in request.get("extra_body", {})
@@ -334,13 +334,13 @@ def test_fallback_reasoning_requires_independent_route_certification():
     def _request_for(entry):
         config = {
             "fallback_chain": [entry],
-            "provider": "ocx",
+            "provider": "magpie",
             "model": "qwen3:8b",
             "reasoning_effort": "none",
             "max_output_tokens": 1400,
         }
         client = MagicMock()
-        client.base_url = "http://127.0.0.1:10100/v1"
+        client.base_url = "http://127.0.0.1:3425/v1"
         client.chat.completions.create.return_value = response
         with (
             patch("agent.auxiliary_client._get_auxiliary_task_config", return_value=config),
@@ -349,7 +349,7 @@ def test_fallback_reasoning_requires_independent_route_certification():
             assert _call_fallback_candidate_sync(
                 client,
                 "qwen3:14b",
-                "fallback_chain[0](ocx)",
+                "fallback_chain[0](magpie)",
                 task="compression",
                 messages=[{"role": "user", "content": "summary request"}],
                 temperature=None,
@@ -361,10 +361,10 @@ def test_fallback_reasoning_requires_independent_route_certification():
             ) is response
         return client.chat.completions.create.call_args.kwargs
 
-    uncertified = _request_for({"provider": "ocx", "model": "qwen3:14b"})
+    uncertified = _request_for({"provider": "magpie", "model": "qwen3:14b"})
     certified = _request_for(
         {
-            "provider": "ocx",
+            "provider": "magpie",
             "model": "qwen3:14b",
             "reasoning_effort": "none",
             "max_output_tokens": 900,
@@ -376,7 +376,7 @@ def test_fallback_reasoning_requires_independent_route_certification():
     assert "reasoning" not in uncertified.get("extra_body", {})
     assert "think" not in uncertified.get("extra_body", {})
     assert "max_tokens" not in certified
-    # Only the independently certified fallback gets OCX's explicit disable field.
+    # Only the independently certified fallback gets MAGPIE's explicit disable field.
     assert certified["reasoning_effort"] == "none"
     assert "think" not in certified.get("extra_body", {})
     assert "reasoning" not in certified.get("extra_body", {})

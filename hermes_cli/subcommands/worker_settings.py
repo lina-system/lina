@@ -163,9 +163,9 @@ def _models(args) -> int:
     if args.json:
         print(json.dumps(data, ensure_ascii=False))
         return 0
-    rows = [(m["provider"], m["id"], ",".join(m["efforts"]) or "-", m["state"],
-             "-" if m["left"] is None else f"{m['left']}%", _when(m["resetAt"])) for m in data["models"]]
-    for line in _table(("PROVIDER", "MODEL", "EFFORTS", "STATE", "LEFT", "RESET"), rows):
+    rows = [(m["provider"], m["id"], m["state"], "-" if m["left"] is None else f"{m['left']}%", _when(m["resetAt"]))
+            for m in data["models"]]
+    for line in _table(("PROVIDER", "MODEL", "STATE", "LEFT", "RESET"), rows):
         print(line)
     for line in data["warnings"]:
         print(line)
@@ -179,12 +179,12 @@ _ACTIONS = {"show": _show, "set": _set, "edit": _edit, "validate": _validate, "h
 
 
 def _cmd(args) -> None:
-    from hermes_cli.lina_ocx import OcxError
+    from hermes_cli.lina_deps import DepsError
     from hermes_cli.lina_work_settings import SettingsError
     from hermes_cli.lina_work_settings_store import Stale
     try:
         sys.exit(_ACTIONS[args.settings_action or "show"](args))
-    except (SettingsError, Stale, KeyError, OSError, OcxError) as exc:
+    except (SettingsError, Stale, KeyError, OSError, DepsError) as exc:
         print(f"lina worker settings: {exc}", file=sys.stderr)
         sys.exit(2)
 
@@ -197,9 +197,9 @@ def add_parser(sub) -> None:
     show = ss.add_parser("show", help="The settings now (or --rev rN)")
     show.add_argument("--json", action="store_true")
     show.add_argument("--rev")
-    put = ss.add_parser("set", help="One dotted key, e.g. worker.runners.codex.model opencodex/x:high (null removes)")
+    put = ss.add_parser("set", help="One dotted key, e.g. worker.runners.codex.model codex/x:high (null removes)")
     put.add_argument("path")
-    put.add_argument("value", help="a YAML value: 3, false, opencodex/x:high, {host: local}, null")
+    put.add_argument("value", help="a YAML value: 3, false, codex/x:high, {host: local}, null")
     ss.add_parser("edit", help="Edit the settings in $EDITOR, saved as one revision")
     check = ss.add_parser("validate", help="Check the settings now, or a YAML file (exit 1 when not valid)")
     check.add_argument("file", nargs="?")
@@ -212,6 +212,6 @@ def add_parser(sub) -> None:
     route = ss.add_parser("route", help="Which runner the routing rules pick for an issue")
     route.add_argument("--labels", help="the issue's labels, comma-separated")
     route.add_argument("--size", choices=["S", "M", "L"])
-    models = ss.add_parser("models", help="OCX's enabled models with state, quota left and reset")
+    models = ss.add_parser("models", help="magpie's models with state, quota left and reset")
     models.add_argument("--json", action="store_true")
     parser.set_defaults(func=_cmd, json=False, rev=None)  # no subcommand = show, which reads both

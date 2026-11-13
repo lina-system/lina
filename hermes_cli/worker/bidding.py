@@ -1,8 +1,8 @@
 """Which device takes a task: every candidate in ``devices.workers`` is asked at once and the least full ready one wins.
 
 Ready means: the runner is installed and its daemon up, ``lina worker serve`` runs, the node's model path answers
-(``probe`` asks it on the node, and its hello reports the same), there is disk, the repo path exists, the node's model
-proxy answers when it reports one (``capabilities.proxy`` of its hello, else ``capabilities.ocx``), it has the memory floor
+(``probe`` asks it on the node, and its hello reports the same), there is disk, the repo path exists, the node's magpie
+answers when it reports one (``capabilities.proxy`` of its hello), it has the memory floor
 (``worker.min_free_mem_gb``), it is not cooling off after quick failures (``worker.cooloff_*``; a named run still
 starts), and a slot is free under the device's cap. The score is (running / cap, 0 for a ``fast`` device, load per
 core); lowest wins within the first available integer ``last`` tier (false/absent = 0, true = 1).
@@ -52,7 +52,7 @@ def readiness(dev: Device, probe: dict, *, repo: str | None, min_free_gb: int,
         (probe.get("model_path") == "down", probe.get("model_path_why") or "model path does not answer"),
         (int(probe.get("free_gb") or 0) < min_free_gb, f"disk {probe.get('free_gb')}GB < {min_free_gb}GB"),
         (low_memory(probe), f"memory {probe.get('mem_available_gb')}GB < {mem_floor(probe)}GB"),
-        (proxy_down(probe), f"{proxy_kind(probe)} not answering"),
+        (proxy_down(probe), "magpie not answering"),
         (not manual and bool(probe.get("cooling")), f"cooling off after {probe.get('cooling')} quick failures"),
         (not probe.get("repo", True), "repo path missing"),
         (int(probe.get("named_running" if manual else "bid_running", probe.get("running")) or 0)
@@ -88,49 +88,30 @@ def choose(candidates: list[Device], probes: list[dict], *, repo: str | None, mi
     return (best[0] if best else None), rows
 
 
-def proxy_kind(probe: dict) -> str:
-    """The kind of the model proxy *probe*'s node reports: ``proxy.kind`` of its hello, else ``ocx`` (an older node
-    reports only ``capabilities.ocx``)."""
-    reported = probe.get("proxy")
-    return str(reported.get("kind") or "ocx") if isinstance(reported, dict) else "ocx"
-
-
 def proxy_down(probe: dict) -> bool:
-    """Whether *probe*'s node reports a model proxy that does not answer. ``ocx`` (and an older node that reports only
-    ``capabilities.ocx``): a node that reports an OCX (``external`` or a ``version``) whose ``health`` is not 200, for
-    any runner, as before. Another kind (``magpie``): ``health`` not 200 or no model listed, for a runner that
-    reaches models through it (its probe carries ``model_path``). A node that reports no proxy at all (a file node,
-    one that reaches models another way) is never down for this."""
+    """Whether *probe*'s node reports a magpie that does not answer: ``health`` not 200 or no model listed, for a
+    runner that reaches models through it (its probe carries ``model_path``). A node that reports no proxy at all
+    (a file node) is never down for this."""
     fact = proxy_fact(probe)
     if fact is None:
         return False
-    if fact["kind"] != "ocx":
-        return "model_path" in probe and (fact.get("health") != 200 or fact.get("models") == 0)
-    return probe["ocx"].get("health") != 200 if _reports_ocx(probe.get("ocx")) else False
-
-
-def _reports_ocx(ocx) -> bool:
-    return isinstance(ocx, dict) and (ocx.get("external") is True or ocx.get("version") is not None)
+    return "model_path" in probe and (fact.get("health") != 200 or fact.get("models") == 0)
 
 
 def proxy_fact(probe: dict) -> dict | None:
-    """The model proxy *probe*'s node reports, ``{kind, health, ...}``: ``capabilities.proxy`` of its hello, else the
-    OCX of ``capabilities.ocx`` (an older node), else None (a node with no proxy: a file node, no OCX)."""
+    """The magpie *probe*'s node reports (``capabilities.proxy`` of its hello), None for a node that reports none."""
     reported = probe.get("proxy")
-    if isinstance(reported, dict):
-        return {**reported, "kind": proxy_kind(probe)}
-    ocx = probe.get("ocx")
-    return {"kind": "ocx", "health": ocx.get("health")} if _reports_ocx(ocx) else None
+    return reported if isinstance(reported, dict) else None
 
 
 def proxy_text(probe: dict) -> str:
-    """``proxy <kind> <health>`` (``, <n> models`` for magpie), or ``proxy none``: what ``lina worker hosts`` and
-    ``lina devices`` show of a node's proxy."""
+    """``magpie <health>, <n> models``, or ``proxy none``: what ``lina worker hosts`` and ``lina devices`` show of a
+    node's magpie."""
     fact = proxy_fact(probe)
     if fact is None:
         return "proxy none"
     models = f", {fact['models']} models" if fact.get("models") is not None else ""
-    return f"proxy {fact['kind']} {fact.get('health') or 'none'}{models}"
+    return f"magpie {fact.get('health') or 'none'}{models}"
 
 
 def mem_floor(probe: dict) -> int:
@@ -168,16 +149,13 @@ def cooling(record: dict | None, worker: dict, now: float) -> int | None:
 
 def with_node_facts(found: dict, descriptor: dict | None, node: str, worker_root: Path,
                     now: float | None = None) -> dict:
-    """*found* (a node's probe) with what the hub knows of the node apart from it: ``ocx`` and ``proxy`` from the
+    """*found* (a node's probe) with what the hub knows of the node apart from it: ``proxy`` from the
     hello the same contact asked first, ``cooling`` from the run ends on its node record and the hub's memory floor
     (``mem_floor_gb``). ``lina devices`` merges the same way, so both say the same reasons."""
     from hermes_cli.worker.hub_store import Store
     worker = settings.section(worker_root.parent)
     facts = {"mem_floor_gb": int(settings.setting("min_free_mem_gb", worker=worker))}
     capabilities = (descriptor or {}).get("capabilities") or {}
-    ocx = capabilities.get("ocx")
-    if isinstance(ocx, dict):
-        facts["ocx"] = ocx
     proxy = capabilities.get("proxy")
     if isinstance(proxy, dict):
         facts["proxy"] = proxy

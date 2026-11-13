@@ -142,12 +142,13 @@ def test_current_custom_endpoint_passthrough_marks_current_row(monkeypatch):
 # list_authenticated_providers: alias/canonical de-dup for Kimi (#49439)
 # ---------------------------------------------------------------------------
 #
-# A single Kimi credential used to surface TWO picker rows: the alias slug
-# "opencodex" (emitted by the PROVIDER_TO_MODELS_DEV pass) plus its canonical
-# "ocx" (re-emitted by the CANONICAL_PROVIDERS cross-check pass),
-# both backed by the same ocx-catalog models.dev provider. The picker
+# A synthetic alias family exercises canonical picker de-duplication.
+# A single credential must not surface TWO picker rows: the alias slug
+# "test-relay-alias" (emitted by the PROVIDER_TO_MODELS_DEV pass) plus its canonical
+# "magpie" (re-emitted by the CANONICAL_PROVIDERS cross-check pass),
+# both backed by the same magpie-catalog models.dev provider. The picker
 # must list each authenticated credential exactly once, under the CANONICAL
-# slug ("ocx") — matching list_authenticated_providers' other alias
+# slug ("magpie") — matching list_authenticated_providers' other alias
 # rows and the overlay slug-resolution contract (see
 # test_overlay_slug_resolution.py).
 
@@ -165,9 +166,9 @@ def _stub_kimi_discovery(monkeypatch, *, canonical):
 
     monkeypatch.setattr(providers, "_REGISTRY", dict(providers._REGISTRY))
     monkeypatch.setattr(providers, "_ALIASES", dict(providers._ALIASES))
-    providers.register_provider(ProviderProfile(name="ocx", aliases=("opencodex", "ocx-alias"),
-        env_vars=("OCX_API_KEY",), base_url="http://127.0.0.1:10100/v1"))
-    providers.register_provider(ProviderProfile(name="ocx-cn", env_vars=("OCX_CN_API_KEY",),
+    providers.register_provider(ProviderProfile(name="magpie", aliases=("test-relay-alias", "test-relay-alt"),
+        env_vars=("MAGPIE_API_KEY",), base_url="http://127.0.0.1:3425/v1"))
+    providers.register_provider(ProviderProfile(name="magpie-cn", env_vars=("MAGPIE_CN_API_KEY",),
         base_url="https://regional.invalid/v1"))
     import agent.models_dev as md
     import hermes_cli.models as hm
@@ -175,16 +176,16 @@ def _stub_kimi_discovery(monkeypatch, *, canonical):
     from hermes_cli import models_catalog_static
 
     kimi_map = {
-        "opencodex": "ocx-catalog",
-        "ocx": "ocx-catalog",
-        "ocx-alias": "ocx-catalog",
-        "ocx-cn": "ocx-catalog",
+        "test-relay-alias": "magpie-catalog",
+        "magpie": "magpie-catalog",
+        "test-relay-alt": "magpie-catalog",
+        "magpie-cn": "magpie-catalog",
     }
     monkeypatch.setattr(md, "PROVIDER_TO_MODELS_DEV", kimi_map)
     monkeypatch.setattr(
         md, "fetch_models_dev",
         lambda *a, **k: {
-            "ocx-catalog": {"name": "Kimi For Coding", "env": ["OCX_API_KEY"]},
+            "magpie-catalog": {"name": "Kimi For Coding", "env": ["MAGPIE_API_KEY"]},
         },
     )
 
@@ -201,31 +202,31 @@ def _stub_kimi_discovery(monkeypatch, *, canonical):
 
 
 def test_single_kimi_credential_yields_one_canonical_row(monkeypatch):
-    """One Kimi key yields a single row under the canonical 'ocx' slug."""
+    """One Kimi key yields a single row under the canonical 'magpie' slug."""
     import hermes_cli.models as hm
     from hermes_cli import models_catalog_static
 
     _stub_kimi_discovery(
         monkeypatch,
-        canonical=[models_catalog_static.ProviderEntry("ocx", "Kimi / Kimi Coding Plan", "desc")],
+        canonical=[models_catalog_static.ProviderEntry("magpie", "Kimi / Kimi Coding Plan", "desc")],
     )
-    monkeypatch.setenv("OCX_API_KEY", "sk-test-kimi")
+    monkeypatch.setenv("MAGPIE_API_KEY", "sk-test-kimi")
 
     rows = model_switch.list_authenticated_providers(max_models=10)
     slugs = [r["slug"] for r in rows]
 
-    # Exactly one Kimi / ocx-catalog-backed row, under the canonical slug —
-    # not both the alias ("opencodex") and its canonical ("ocx").
-    kimi_rows = [s for s in slugs if s in {"opencodex", "ocx"}]
-    assert kimi_rows == ["ocx"], (
+    # Exactly one Kimi / magpie-catalog-backed row, under the canonical slug —
+    # not both the alias ("test-relay-alias") and its canonical ("magpie").
+    kimi_rows = [s for s in slugs if s in {"test-relay-alias", "magpie"}]
+    assert kimi_rows == ["magpie"], (
         f"expected a single canonical Kimi row, got: {slugs}"
     )
-    assert slugs.count("ocx") == 1
-    assert "opencodex" not in slugs
+    assert slugs.count("magpie") == 1
+    assert "test-relay-alias" not in slugs
 
 
 def test_distinct_kimi_china_credential_still_listed(monkeypatch):
-    """A separate China (ocx-cn) credential remains its own row.
+    """A separate China (magpie-cn) credential remains its own row.
 
     Negative-control guard: the de-dup must collapse only the alias/canonical
     pair that share a credential, not legitimately distinct providers.
@@ -236,20 +237,20 @@ def test_distinct_kimi_china_credential_still_listed(monkeypatch):
     _stub_kimi_discovery(
         monkeypatch,
         canonical=[
-            models_catalog_static.ProviderEntry("ocx", "Kimi / Kimi Coding Plan", "desc"),
-            models_catalog_static.ProviderEntry("ocx-cn", "Kimi / Moonshot (China)", "desc"),
+            models_catalog_static.ProviderEntry("magpie", "Kimi / Kimi Coding Plan", "desc"),
+            models_catalog_static.ProviderEntry("magpie-cn", "Kimi / Moonshot (China)", "desc"),
         ],
     )
-    monkeypatch.setenv("OCX_API_KEY", "sk-test-kimi")
-    monkeypatch.setenv("OCX_CN_API_KEY", "sk-test-kimi-cn")
+    monkeypatch.setenv("MAGPIE_API_KEY", "sk-test-kimi")
+    monkeypatch.setenv("MAGPIE_CN_API_KEY", "sk-test-kimi-cn")
 
     rows = model_switch.list_authenticated_providers(max_models=10)
     slugs = [r["slug"] for r in rows]
 
-    assert "ocx" in slugs       # canonical global row
-    assert slugs.count("ocx") == 1
-    assert "opencodex" not in slugs          # alias collapsed into the canonical row
-    assert "ocx-cn" in slugs    # distinct China endpoint preserved
+    assert "magpie" in slugs       # canonical global row
+    assert slugs.count("magpie") == 1
+    assert "test-relay-alias" not in slugs          # alias collapsed into the canonical row
+    assert "magpie-cn" in slugs    # distinct China endpoint preserved
 
 
 def test_non_blocking_listing_opens_no_socket(monkeypatch, tmp_path):

@@ -106,11 +106,11 @@ def test_ambient_context_propagates_via_thread_context_helper():
 
 
 
-def test_ocx_sticky_key_follows_ambient_conversation():
+def test_magpie_sticky_key_follows_ambient_conversation():
     from agent.portal_tags import reset_conversation_context, set_conversation_context
     from providers import get_provider_profile
 
-    profile = get_provider_profile("ocx")
+    profile = get_provider_profile("magpie")
     token = set_conversation_context("root-conversation")
     try:
         _, explicit = profile.build_api_kwargs_extras(session_id="segment-after-compaction")

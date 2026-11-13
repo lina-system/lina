@@ -473,7 +473,7 @@ def _start_board_lines_writer(stop: threading.Event) -> threading.Thread | None:
     profile lock held after shutdown. A side feature: a start failure is logged and returns None, never a gateway
     that cannot start."""
     from hermes_cli.lina_board_plain import writer_thread
-    from hermes_cli.lina_ocx import lina_root
+    from hermes_cli.lina_deps import lina_root
     from hermes_cli.worker import settings
     try:
         thread = writer_thread(settings.root(lina_root()), stop)

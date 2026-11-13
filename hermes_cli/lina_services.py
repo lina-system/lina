@@ -5,10 +5,8 @@
 * ``store``: the memory store (``hermes_cli/store.py``). Postgres and the Honcho api and deriver run in the Docker
   compose project ``lina-store`` with ``restart: unless-stopped``, so Docker keeps them up and no launchd/systemd job
   is written for them.
-* ``ocx``: LINA's pinned OCX proxy (#32), launchd ``ai.lina.ocx`` / systemd ``lina-ocx``, written through
-  ``service_definition`` by ``hermes_cli/lina_ocx_service.py``.
 * ``worker``: ``lina worker serve`` (#35), launchd ``ai.lina.worker`` / systemd ``lina-worker``, written through
-  ``service_definition`` by ``hermes_cli/worker/service.py``. Its runs reach models through OCX.
+  ``service_definition`` by ``hermes_cli/worker/service.py``. Its runs reach models through magpie.
 * ``web``: the dashboard server of the LINA root (the app at ``/app/``, #168), launchd ``ai.lina.web`` / systemd
   ``lina-web``, written through ``service_definition`` by ``hermes_cli/lina_web_service.py`` (lina#288).
 
@@ -49,7 +47,6 @@ class Service:
 SERVICES = (
     Service("gateway", "ai.lina.gateway", "lina-gateway", "LINA_Gateway"),
     Service("store", "lina-store", "lina-store", "lina-store"),
-    Service("ocx", "ai.lina.ocx", "lina-ocx", "LINA_OCX"),
     Service("worker", "ai.lina.worker", "lina-worker", "LINA_Worker"),
     Service("web", "ai.lina.web", "lina-web", "LINA_Web"),
 )
@@ -100,11 +97,6 @@ def _store_state() -> str:
         return f"stopped ({exc})"
 
 
-def _ocx_state() -> str:
-    from hermes_cli import lina_ocx_service
-    return lina_ocx_service.state()
-
-
 def _worker_state() -> str:
     from hermes_cli.worker import service
     return service.state()
@@ -115,7 +107,7 @@ def _web_state() -> str:
     return lina_web_service.state()
 
 
-_STATE: dict[str, Callable[[], str]] = {"gateway": _gateway_state, "store": _store_state, "ocx": _ocx_state,
+_STATE: dict[str, Callable[[], str]] = {"gateway": _gateway_state, "store": _store_state,
                                         "worker": _worker_state, "web": _web_state}
 
 
@@ -154,7 +146,7 @@ def gateway_running() -> bool:
     ``find_gateway_pids(all_profiles=True)`` is host-wide (every ``gateway run`` of this account: another root's,
     a test's, Hermes Agent's beside LINA), so only the PIDs whose live home is this root or one of its profiles
     count; a gateway whose home cannot be read is not this root's."""
-    from hermes_cli.lina_ocx import lina_root
+    from hermes_cli.lina_deps import lina_root
     from hermes_cli.update_fleet_scope import partition_gateway_pids_by_scope
     owned, _foreign = partition_gateway_pids_by_scope(_gw().find_gateway_pids(all_profiles=True),
                                                       _root_homes(lina_root()))
@@ -183,13 +175,6 @@ def _run_store(verb: str) -> None:
         sys.exit(1)
 
 
-def _ocx(verb: str) -> None:
-    from hermes_cli import lina_ocx_service
-    code = lina_ocx_service.VERBS[verb]()
-    if code:
-        sys.exit(code)
-
-
 def _worker(verb: str) -> None:
     from hermes_cli.worker import service
     code = service.VERBS[verb]()
@@ -209,12 +194,11 @@ def worker_running() -> bool:
     return service.running()
 
 
-_VERBS: dict[str, Callable[[str], None]] = {"gateway": _gateway, "store": _run_store, "ocx": _ocx, "worker": _worker,
+_VERBS: dict[str, Callable[[str], None]] = {"gateway": _gateway, "store": _run_store, "worker": _worker,
                                             "web": _web}
 
-# Who runs on whom: a service is not stopped or restarted while a service that uses it still runs (the gateway's and
-# the worker's model calls go through OCX).
-USED_BY: dict[str, tuple[str, ...]] = {"store": ("gateway",), "ocx": ("gateway", "worker")}
+# A service is not stopped while another registered service uses it.
+USED_BY: dict[str, tuple[str, ...]] = {"store": ("gateway",)}
 _RUNNING: dict[str, Callable[[], bool]] = {"gateway": gateway_running, "worker": worker_running}
 
 
@@ -222,16 +206,9 @@ def act(verb: str, name: str) -> int:
     """``start``/``stop``/``restart`` one service with its own command, unchanged.
 
     The one rule added here: a service is not stopped or restarted while a service that uses it still runs (the
-    gateway uses the memory store and OCX, the worker uses OCX), so the person stops the user first, with that
+    gateway uses the memory store), so the person stops the user first, with that
     service's own command and its own checks (the gateway asks before it interrupts live sessions)."""
     service = BY_NAME[name]
-    if name == "ocx":
-        from hermes_cli.lina_ocx import OcxError, refuse_external
-        try:
-            refuse_external(f"lina services {verb} ocx")  # lina#232: an OCX run outside LINA is only read
-        except OcxError as exc:
-            print(f"OCX: {exc}")
-            return 1
     if service.issue:
         print(f"{name} is not installed yet: lina{service.issue} adds it.")
         return 1
@@ -275,7 +252,7 @@ def service_env(env: dict[str, str]) -> dict[str, str]:
 
 def service_definition(kind: str, label: str, argv: list[str], env: dict[str, str], *,
                        logs: tuple[Path, Path]) -> str:
-    """A launchd plist or a systemd user unit running *argv* as *label*: ``ai.lina.ocx`` (#32), ``ai.lina.worker``
+    """A launchd plist or a systemd user unit running *argv* as *label*: ``ai.lina.worker``
     (#35) and ``ai.lina.web`` (#288).
 
     On launchd the job's first program is ``/usr/bin/osascript`` (``gateway_launchd.launchd_program_arguments``):

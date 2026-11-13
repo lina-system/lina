@@ -12,7 +12,7 @@ lina worker hub ── FileNodeTransport ── ssh ──>   bash -c '<short sc
   run state: <worker root>/file_nodes/<device>/     $HOME/<root>/<ID>/work/{input,out,report.md}
   tasks/<ID>/ (job, prompts, slots, manifest,       runner.sh  (nohup setsid; drives omo host session)
   end state, denied-folder check)                   omo + its daemon (installed by the operator)
-model path: one ssh session from the hub carries the node's 127.0.0.1:10100 to the hub's OCX
+model path: checked on the node with curl of model_check (default http://127.0.0.1:3425/v1/models, HTTP 200 required)
 ```
 
 - **The hub keeps the run.** `hermes_cli/worker/file_node.py` answers the `_device` verbs (`hello`, `probe`,
@@ -71,7 +71,7 @@ devices:
       deny: [/volume1/backup, "#recycle", "#snapshot", "@*"]
       volumes: [/volume1]            # where the folder-name patterns are looked for
       root: lina-file-node           # task folders under the node's $HOME (default)
-      model_check: http://127.0.0.1:10100/healthz   # default
+      model_check: http://127.0.0.1:3425/v1/models   # default (settings.MODEL_CHECK)
       scan_s: 300                    # time limit of the denied-folder look (default)
 worker:
   access: {files-agent: full}        # a file node runs with access full only
@@ -80,7 +80,7 @@ worker:
 Add this node on the hub through the work settings, without editing `config.yaml` by hand:
 
 ```sh
-lina worker settings set devices.workers.files '{host: files, kind: file, role: files, omo: "~/.bun/bin/omo", deny: [/volume1/backup, "#recycle", "#snapshot", "@*"], volumes: [/volume1], root: lina-file-node, model_check: "http://127.0.0.1:10100/healthz", scan_s: 300}'
+lina worker settings set devices.workers.files '{host: files, kind: file, role: files, omo: "~/.bun/bin/omo", deny: [/volume1/backup, "#recycle", "#snapshot", "@*"], volumes: [/volume1], root: lina-file-node, model_check: "http://127.0.0.1:3425/v1/models", scan_s: 300}'
 lina worker settings set worker.access.files-agent full
 lina worker settings validate
 lina worker hosts
@@ -99,9 +99,10 @@ the whole volume as the node's user, so no narrower mode can be enforced there, 
 
 ## Model path
 
-`hello` and `probe` ask the node for `model_check` with curl. Anything but HTTP 200 gives `model_path: down`,
-`ready: false` and one reason line, which `lina worker hosts`, `lina devices` and the bid table show. A submit with
-`--host` onto that node is refused with the same line; a queued run starts only when it answers again.
+`hello` and `probe` ask the node for `model_check` (default `http://127.0.0.1:3425/v1/models`) with curl. Anything
+but HTTP 200 gives `model_path: down`, `ready: false` and one reason line, which `lina worker hosts`, `lina devices`
+and the bid table show. A submit with `--host` onto that node is refused with the same line; a queued run starts
+only when it answers again.
 
 ## Denied folders
 

@@ -3,7 +3,7 @@
 Which devices bid and how many runs each takes, which runners there are and the model each starts with, the model
 aliases, defaults per mode and fallback, and the routing rules (lina#256). They stay where `lina worker` reads them on
 every command, in the LINA root's `config.yaml`; this layer adds validation, revisions, rollback, a CLI, a client API
-and the OCX model list. A change applies from the next submit.
+and the magpie model list. A change applies from the next submit.
 
 ## Keys
 
@@ -12,18 +12,18 @@ devices:
   workers:
     build-a: {host: build-a, role: work, cap: 2, named_cap: 2, last: 0, fast: true, no_repo: false}
     nas:     {host: nas, kind: file, role: files, omo: omo, deny: ["#recycle"], volumes: [/volume1],
-              root: lina-file-node, model_check: "http://127.0.0.1:10100/healthz", scan_s: 300}
+              root: lina-file-node, model_check: "http://127.0.0.1:3425/v1/models", scan_s: 300}
     laptop:  {host: laptop-ssh, role: person}  # status only: never a node
 worker:
   default_runner: omo
   access: {files-agent: full, reader: read-only, builder: workspace-write}
   runners:
-    codex: {type: command, argv: [codex, exec, "-"], on: true, model: "opencodex/impl-model:high",
-            fallback_model: opencodex/small-model, access: workspace-write}
+    codex: {type: command, argv: [codex, exec, "-"], on: true, model: "codex/impl-model:high",
+            fallback_model: codex/small-model, access: workspace-write}
   models:
-    aliases: {planner: {provider: opencodex, id: plan-model, thinking: medium}}
+    aliases: {planner: {provider: claude, id: plan-model, thinking: medium}}
     defaults: {research: planner}      # by mode: ulw, research, mass, mass-research
-    fallback: opencodex/small-model
+    fallback: codex/small-model
   routing:                             # first match wins, else default_runner
     - {name: docs, when: {labels_any: [docs]}, runner: agy}
     - {name: small, when: {runner_label: runner/dsh, size: [S]}, runner: dsh}
@@ -32,12 +32,12 @@ worker:
 `on`, `model`, `fallback_model`, `models.fallback` and `routing` are read at submit (see below).
 `worker.access` maps agent names to their access ceiling (`read-only`, `workspace-write` or `full`), read at submit;
 it is distinct from a runner's `access`. It participates in revisions, rollback and outside-edit tracking.
-A model is an alias or `<provider>/<id>[:<effort>]`.
+A model is an alias or `<provider>/<id>[:<effort>]` in magpie's catalog form.
 
 Device `kind` is `lina` (default) or `file`. Only `kind: file` accepts `omo`, `deny`, `volumes`, `root`,
 `model_check` and `scan_s`; its role defaults to `files`, and cannot be `work` or `person`.
 Omitted file fields use the worker reader's defaults: `omo: omo`, empty `deny`/`volumes`, `root: lina-file-node`,
-`model_check: http://127.0.0.1:10100/healthz`, `scan_s: 300`. See [file-node configuration](file-node.md#configuration).
+`model_check: http://127.0.0.1:3425/v1/models`, `scan_s: 300`. See [file-node configuration](file-node.md#configuration).
 
 ## At submit
 
@@ -46,14 +46,14 @@ Omitted file fields use the worker reader's defaults: `omo: omo`, empty `deny`/`
 - the runner: `--runner`, else the first `routing` rule that holds for `--labels a,b` and `--size S|M|L` (a card
   session passes the issue's runner label and size), else `default_runner`. A runner with `on: false` is refused.
 - the model: `--model`, else the runner's `model`, else the mode default (`models.defaults`), else the runner's own.
-  When OCX has it `off`, `out_of_quota` or `no_account` and the fallback (the runner's `fallback_model`, else
+  When magpie has it `off`, `out_of_quota` or `no_account` and the fallback (the runner's `fallback_model`, else
   `models.fallback`) is usable, the run starts on the fallback and gets one `model_fallback` receipt
   `{from, to, why}`; when the fallback is not usable either, the chosen model stays. `--model` is checked, never
-  replaced. A submit never calls OCX: it decides from the models list this process last read (`…/models` or
+  replaced. A submit never calls magpie: it decides from the models list this process last read (`…/models` or
   `lina worker settings models`, kept 10 minutes), else from `work-settings/models-last-good.json`, the snapshot
   every good read writes (whole: a temp file, then a rename) for the submits that run in a process of their own
   (`lina worker submit`, `lina work submit`). It keeps only what the check uses: per model its
-  provider, id, efforts and off flags; per account its provider, paused and sign-in flags and quota windows (no
+  provider and id; per account its provider, paused and sign-in flags and quota windows (no
   account name, email, id or label); and `at`, the read time. It stays fresh while someone has the models view open
   (the hub page reads it once a minute); older than 10 minutes, missing or unreadable, the check is `unchecked` and
   the chosen model stays.
@@ -62,7 +62,7 @@ Omitted file fields use the worker reader's defaults: `omo: omo`, empty `deny`/`
   runner its runner label names (`--runner`, as before), else `default_runner`; with no rules every issue goes where
   its label says. A rule whose runner is off is passed over, and a runner that is off is refused with one line.
 - the job and its `submitted` receipt carry `settings: {rev, runner_source: --runner|routing:<rule>|default,
-  model_source, ocx_check: ok|off|out_of_quota|no_account|unchecked}`; the run record and the run card serve
+  model_source, model_state: ok|off|out_of_quota|no_account|unchecked}`; the run record and the run card serve
   `model` and `settingsRevision`. A follow-up keeps the run's model, and on the device the job's model wins over the
   device's own runner entry (which still gives the local `argv`).
 
@@ -124,7 +124,7 @@ worker:
 
 `lina worker settings show [--json] [--rev rN] | set <dotted.path> <yaml value> | edit | validate [file] |
 history [--limit N] | diff [rA] [rB] | rollback | route [--labels a,b] [--size S|M|L] | models [--json]`, e.g.
-`lina worker settings set worker.runners.codex.model opencodex/impl-model:high`, `set devices.workers.hub.cap 3`,
+`lina worker settings set worker.runners.codex.model codex/impl-model:high`, `set devices.workers.hub.cap 3`,
 `set worker.routing null`. A refusal prints `lina worker settings: <reason>` and exits 2.
 
 ## API
@@ -134,7 +134,7 @@ history [--limit N] | diff [rA] [rB] | rollback | route [--labels a,b] [--size S
 `POST …/route`; schema [docs/api/settings-client.yaml](api/settings-client.yaml). `/api/lina/events` carries
 `{source: settings, kind: revised|rolled_back|outside, id: rN}`.
 
-`…/models` lists OCX's enabled models (read-only, through `lina_models`) with efforts, state (`ok`, `off`,
-`out_of_quota`, `no_account`, `unknown`), quota left (100 - the used percent of the best usable account) and reset,
-and for each runner, mode default and the fallback whether its model is usable now, with one warning line when not.
-When OCX cannot be read it serves the last good list (up to 10 minutes) with an error.
+`…/models` lists magpie's models (read-only, through `lina_magpie`) with `{provider, id, state, left, resetAt, accounts}`
+(`state`: `ok`, `off`, `out_of_quota`, `no_account`, `unknown`; `left`: 100 - the used percent of the best usable
+account), and for each runner, mode default and the fallback whether its model is usable now, with one warning line
+when not. When magpie cannot be read it serves the last good list (up to 10 minutes) with an error (`source: magpie`).

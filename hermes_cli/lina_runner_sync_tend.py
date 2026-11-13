@@ -1,13 +1,10 @@
 """The daily runner sync's care of each followed block after the move and the follow (lina#531), on the hub first:
 
-1. **model list**: when OCX's model list or the hub's version of the runner changed since the last refresh
-   (``lina_runner_models.fingerprint``, kept in ``runner-sync/models.json``), the block's list is refreshed on the hub,
-   and the nodes refresh theirs the same day;
-2. **route**: the block's route source is checked on the hub; when it differs it is applied there and the hub probes
+1. **route**: the block's route source is checked on the hub; when it differs it is applied there and the hub probes
    the runner once with a real task before any node applies it. A check that fails, an apply that fails or a probe
    that fails after the apply holds the runner (``kind: route``), as any other failure does (#238);
-3. **probe**: the hub probes the runner (unless step 2 just did), then every reachable node that runs it is asked
-   through ``runner-probe`` to refresh and apply what the hub did and to probe it. A node with a run holding a slot,
+2. **probe**: the hub probes the runner (unless step 1 just did), then every reachable node that runs it is asked
+   through ``runner-probe`` to apply what the hub did and to probe it. A node with a run holding a slot,
    or without the verb yet, is probed on a later day.
 
 Every probe result lands in the device's ``runner-probes.json``, which readiness shows (``lina_runner_probe``).
@@ -21,48 +18,15 @@ from __future__ import annotations
 
 import json
 
-from hermes_cli import lina_ocx, lina_runner_models, lina_runner_probe, lina_runner_routes, lina_runners
+from hermes_cli import lina_runner_probe, lina_runner_routes, lina_runners
 from hermes_cli import lina_runner_sync_state as state
 
-MODELS = "models.json"
 NODE_TIMEOUT_S = 900
-
-
-def _fingerprints_path(run):
-    return state.sync_dir(run.root) / MODELS
 
 
 def probe(run, pin: lina_runners.RunnerPin) -> dict:
     env = run.env
-    return lina_runner_probe.probe(run.root, pin, run=env.run, popen=env.popen, ocx_logs=env.ocx_logs,
-                                   clock=env.clock)
-
-
-def models(run, name: str, pin: lina_runners.RunnerPin, rec: dict) -> bool:
-    """Refresh the hub's model list when OCX's list or the runner's version moved; True when it was refreshed."""
-    if lina_runner_models.ocx_client(pin) is None:
-        return False
-    if lina_ocx.external(run.root) is not None:
-        rec["models"] = {"state": "external", "reason": "ocx.external is set: the operator's OCX writes the model list"}
-        return False
-    try:
-        listed = run.env.ocx_models(run.root)
-    except lina_runners.OcxError as exc:
-        rec["models"] = {"state": "unknown", "reason": f"OCX's model list could not be read: {exc}"}
-        return False
-    mark = lina_runner_models.fingerprint(listed, lina_runners.current_version(run.root, pin))
-    marks = state.read_json(_fingerprints_path(run), {})
-    if marks.get(name) == mark:
-        rec["models"] = {"state": "same"}
-        return False
-    problem = lina_runner_models.refresh(run.root, pin, run.env.run)
-    if problem:
-        rec["models"] = {"state": "failed", "reason": problem}
-        run.event(f"{name} hub: model list not refreshed: {problem}")
-        return False
-    state.write_json(_fingerprints_path(run), {**marks, name: mark})
-    rec["models"] = {"state": "refreshed"}
-    return True
+    return lina_runner_probe.probe(run.root, pin, run=env.run, popen=env.popen, clock=env.clock)
 
 
 def route(run, name: str, pin: lina_runners.RunnerPin, rec: dict) -> tuple[dict | None, bool]:
@@ -124,7 +88,7 @@ def install_declared(run, name: str, pin: lina_runners.RunnerPin, rec: dict) -> 
     said: list[str] = []
     try:
         lina_runners.install_pin(run.root, pin, fetch=run.env.fetch, run=run.env.run, out=said.append)
-    except lina_runners.OcxError as exc:
+    except lina_runners.DepsError as exc:
         rec["install"] = {"state": "failed", "reason": str(exc)}
         run.hold(name, "hub", pin.version, f"install: {exc}", "install")
         return False
@@ -134,10 +98,10 @@ def install_declared(run, name: str, pin: lina_runners.RunnerPin, rec: dict) -> 
 
 
 def tend(run, name: str, pin: lina_runners.RunnerPin, rec: dict) -> None:
-    """Steps 1-3 for one runner; nothing on a plan, and nothing for a runner the hub has no copy of."""
+    """Steps 1-2 for one runner; nothing on a plan, and nothing for a runner the hub has no copy of."""
     if run.plan or lina_runners.current_version(run.root, pin) is None:
         return
-    asks = {"refresh": True} if models(run, name, pin, rec) else {}
+    asks = {}
     hub_probe, apply_route = route(run, name, pin, rec)
     if state.held(run.root, name, "hub"):
         rec["probes"] = {"hub": hub_probe}

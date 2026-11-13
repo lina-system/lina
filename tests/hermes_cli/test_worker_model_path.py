@@ -36,12 +36,13 @@ class ModelPath:
             def do_GET(self):
                 self.send_response(endpoint.status)
                 self.end_headers()
+                self.wfile.write(b'{"data": [{"id": "hub/p/m"}]}')
 
             def log_message(self, *args):
                 pass
 
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        self.url = f"http://127.0.0.1:{self.server.server_address[1]}/healthz"
+        self.url = f"http://127.0.0.1:{self.server.server_address[1]}/v1/models"
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
 
     def close(self) -> None:
@@ -72,11 +73,11 @@ class Node:
 @pytest.fixture
 def field(tmp_path, monkeypatch):
     """*make(...)*: the hub ``box`` and one node with its own LINA root. The node offers *runner* (``claude`` by
-    default: a pinned runner that reaches its model through the node's OCX) and, with *local*, a ``host: local``
-    device entry whose ``model_check`` is *model_check*; *ocx_port* writes that root's ``ocx.port``."""
+    default: a pinned runner that reaches its model through the node's magpie) and, with *local*, a ``host: local``
+    device entry whose ``model_check`` is *model_check*; *proxy_port* writes that root's ``worker.proxy.health``."""
 
     def make(model_check: str | None = None, runner: str = "claude", local: bool = True,
-             ocx_port: int | None = None) -> dict:
+             proxy_port: int | None = None) -> dict:
         hub_base, node_base = tmp_path / "hub", tmp_path / "node"
         hub_base.mkdir()
         node_base.mkdir()
@@ -108,8 +109,10 @@ def field(tmp_path, monkeypatch):
               runners:
                 {runner}: {spec}
             """)
-        if ocx_port is not None:
-            node += f"ocx:\n  port: {ocx_port}\n"
+        if proxy_port is not None:
+            node += f"  proxy: {{health: 'http://127.0.0.1:{proxy_port}/v1/models'}}\n"
+        if model_check:
+            node += f"  proxy: {{health: '{model_check}'}}\n"
         (node_base / "config.yaml").write_text(node, encoding="utf-8")
         node = Node(node_base / "worker")
         serve.serve_once(node.root)
@@ -121,10 +124,6 @@ def field(tmp_path, monkeypatch):
         monkeypatch.setattr(transport, "for_device", for_device)
         monkeypatch.setattr(hub_mod, "for_device", for_device)
         monkeypatch.setattr(lina_devices, "for_device", for_device)
-        # The node reports a healthy OCX, the #416 shape: its OCX answers while its model path does not, so only
-        # the model path decides and the answer does not depend on an OCX running on the host of this test.
-        monkeypatch.setattr("hermes_cli.lina_runner_sync_node.ocx_report",
-                            lambda root: {"external": False, "version": "1.0.0", "health": 200})
         monkeypatch.setattr(lina_devices, "omo_status", lambda dev: {"pinned": "1", "current": "1"})
         monkeypatch.setattr(lina_devices, "runner_status", lambda dev, root: [])
         lines: list[str] = []
@@ -140,7 +139,7 @@ def _closed_url() -> str:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
-    return f"http://127.0.0.1:{port}/healthz"
+    return f"http://127.0.0.1:{port}/v1/models"
 
 
 def _bid(lane: dict):
@@ -170,7 +169,7 @@ def test_the_node_reports_its_model_path_in_probe_and_hello(field, model_path):
     assert json.loads(node.call(["hello"]).out)["capabilities"]["model_path"] == "ok"
 
     model_path.status = 503
-    reason = f"model path does not answer ({model_path.url}: HTTP 503)"
+    reason = f"model path does not answer (magpie {model_path.url}: HTTP 503)"
     assert json.loads(node.call(["probe", "", "claude"]).out)["model_path_why"] == reason
     assert json.loads(node.call(["hello"]).out)["capabilities"]["model_path_why"] == reason
 
@@ -189,7 +188,7 @@ def test_a_node_whose_model_path_answers_is_bid_on_as_before(field, model_path):
 def test_a_node_whose_model_path_does_not_answer_is_passed_with_that_reason(field, model_path):
     model_path.status = 503
     lane = field(model_path.url)
-    reason = f"model path does not answer ({model_path.url}: HTTP 503)"
+    reason = f"model path does not answer (magpie {model_path.url}: HTTP 503)"
 
     winner, rows = _bid(lane)
 
@@ -205,7 +204,7 @@ def test_a_model_path_that_answers_nothing_at_all_is_named_with_its_url(field, m
 
     _, rows = _bid(lane)
 
-    assert rows[0]["why"] == f"model path does not answer ({model_path.url}: HTTP none)"
+    assert rows[0]["why"] == f"model path does not answer (magpie {model_path.url}: HTTP none)"
 
 
 def test_a_named_submit_to_a_node_whose_model_path_does_not_answer_is_refused(field, model_path):
@@ -221,7 +220,7 @@ def test_a_named_submit_to_a_node_whose_model_path_does_not_answer_is_refused(fi
 
 def test_a_model_path_passes_a_named_run_too_and_the_probe_row_says_it():
     dev = Device("node-a", "node-a", cap=2)
-    reason = "model path does not answer (http://127.0.0.1:10100/healthz: HTTP none)"
+    reason = "model path does not answer (magpie http://127.0.0.1:10100/v1/models: HTTP none)"
     found = probe(model_path="down", model_path_why=reason)
     for manual in (False, True):
         assert bidding.readiness(dev, found, repo=None, min_free_gb=5, manual=manual) == reason
@@ -230,7 +229,7 @@ def test_a_model_path_passes_a_named_run_too_and_the_probe_row_says_it():
 def test_a_node_whose_hello_alone_carries_the_model_path_is_passed_too(tmp_path):
     """The reason comes from the hello the same contact asks first when its probe reply has no answer of its own."""
     (tmp_path / "config.yaml").write_text("worker:\n  min_free_gb: 5\n", encoding="utf-8")
-    reason = "model path does not answer (http://127.0.0.1:10100/healthz: HTTP none)"
+    reason = "model path does not answer (magpie http://127.0.0.1:10100/v1/models: HTTP none)"
     found = bidding.with_node_facts(probe(), {"capabilities": {"model_path": "down", "model_path_why": reason}},
                                     "node-a", tmp_path / "worker")
     assert bidding.readiness(Device("node-a", "node-a"), found, repo=None, min_free_gb=5) == reason
@@ -243,7 +242,7 @@ def test_an_older_node_without_the_field_is_bid_on_as_before():
 
 
 def test_a_command_runner_with_its_own_credentials_needs_no_model_path(field):
-    """grok, agy and cursor-agent carry their own credentials on the node: a closed OCX port is not their business."""
+    """grok, agy and cursor-agent carry their own credentials on the node: a closed magpie port is not their business."""
     lane = field(_closed_url(), runner="grok")
 
     probe = json.loads(lane["node"].call(["probe", "", "grok"]).out)
@@ -260,10 +259,10 @@ def test_a_command_runner_with_its_own_credentials_needs_no_model_path(field):
 
 
 def test_an_omo_node_whose_model_path_does_not_answer_is_still_passed(field, model_path):
-    """omo reaches every model through the node's own OCX (lina#385), so its model path is still asked and judged."""
+    """omo reaches every model through the node's own magpie (lina#385), so its model path is still asked and judged."""
     model_path.status = 503
     lane = field(model_path.url, runner="omo")
-    reason = f"model path does not answer ({model_path.url}: HTTP 503)"
+    reason = f"model path does not answer (magpie {model_path.url}: HTTP 503)"
 
     winner, rows = _bid(lane)
 
@@ -271,12 +270,12 @@ def test_an_omo_node_whose_model_path_does_not_answer_is_still_passed(field, mod
     assert _hosts_line(lane).endswith(f" · {reason}")
 
 
-def test_a_node_with_no_model_check_asks_its_own_ocx_port(field, model_path):
-    """``ocx.port`` is not always 10100: a ``host: local`` entry without ``model_check`` takes that root's own port."""
+def test_a_node_with_no_model_check_asks_its_own_proxy_port(field, model_path):
+    """``magpie.port`` names the node's local endpoint: a ``host: local`` entry without ``model_check`` asks that configured endpoint."""
     port = int(model_path.url.removeprefix("http://127.0.0.1:").split("/")[0])
     model_path.status = 503
-    lane = field(None, ocx_port=port)
+    lane = field(None, proxy_port=port)
 
     asked = json.loads(lane["node"].call(["probe", "", "claude"]).out)
 
-    assert asked["model_path_why"] == f"model path does not answer (http://127.0.0.1:{port}/healthz: HTTP 503)"
+    assert asked["model_path_why"] == f"model path does not answer (magpie http://127.0.0.1:{port}/v1/models: HTTP 503)"

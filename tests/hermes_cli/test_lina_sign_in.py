@@ -205,11 +205,11 @@ class Hub:
         self.hellos += 1
 
         def row(name: str, by: str, signed: bool, shim: bool = True) -> dict:
-            state = {"ocx": "ocx", "cursor": "signed_out"}.get(by, "signed_in" if signed else "signed_out")
+            state = {"magpie": "magpie", "cursor": "signed_out"}.get(by, "signed_in" if signed else "signed_out")
             return {"name": name, "type": "command", "pin": name, "pinned": "1.0.0", "installed": "1.0.0",
-                    "sign_in": state, "sign_in_by": by, "ready": state == "signed_in" or by == "ocx",
+                    "sign_in": state, "sign_in_by": by, "ready": state == "signed_in" or by == "magpie",
                     "why": None, "shim": str(self.node_root / "bin" / "runners" / name) if shim else None}
-        return [row("codex", "ocx", False),
+        return [row("codex", "magpie", False),
                 row("grok", "grok", (self.node_home / ".grok" / "auth.json").exists()),
                 row("agy", "agy", (self.node_home / ".gemini/antigravity-cli/antigravity-oauth-token").exists()),
                 row("cursor", "cursor", False)]
@@ -368,9 +368,9 @@ def test_a_node_session_that_never_sees_stop_is_still_stopped_and_cleaned(tmp_pa
 
 
 @pytest.mark.parametrize(("runner", "state", "reason"), [
-    ("codex", "signed_in", "reported only: signs in through OCX"),
+    ("codex", "signed_in", "reported only: signs in through magpie"),
     ("cursor", "failed", "reported only: signs in with a key")])
-def test_runners_that_sign_in_through_ocx_or_a_key_are_reported_never_signed_in(tmp_path, monkeypatch, runner,
+def test_runners_that_sign_in_through_magpie_or_a_key_are_reported_never_signed_in(tmp_path, monkeypatch, runner,
                                                                                  state, reason):
     hub = Hub(tmp_path, monkeypatch)
 

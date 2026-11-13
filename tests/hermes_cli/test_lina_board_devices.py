@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from hermes_cli import lina_board_devices, lina_devices, lina_ocx
+from hermes_cli import lina_board_devices, lina_devices, lina_deps
 from hermes_cli.lina_omo import omo_pin
 from hermes_cli.lina_runners import pins
 from hermes_cli.lina_work_settings_gate import GATE
@@ -41,21 +41,21 @@ SECRET_TOKEN = "tok_abcdefghijklmnopqrstuvwxyz0123"
 
 def _row(name, *, installed, sign_in, ready, why, pinned=True, kind="command"):
     return {"name": name, "type": kind, "pin": name if pinned else None, "pinned": FLEET.get(name) if pinned else None,
-            "installed": installed, "sign_in": sign_in, "sign_in_by": "ocx", "ready": ready, "why": why}
+            "installed": installed, "sign_in": sign_in, "sign_in_by": "magpie", "ready": ready, "why": why}
 
 
 HELLO = {
     "build-a": [
         _row("omo", installed=None, sign_in=None, ready=None, why=None, pinned=False, kind="omo"),
-        _row("codex", installed=FLEET["codex"], sign_in="ocx", ready=True, why=None),
+        _row("codex", installed=FLEET["codex"], sign_in="magpie", ready=True, why=None),
         _row("grok", installed=FLEET["grok"], sign_in="signed_out", ready=False, why="sign in"),
-        _row("claude", installed="0.0.1", sign_in="ocx", ready=True, why=None),
+        _row("claude", installed="0.0.1", sign_in="magpie", ready=True, why=None),
         _row("dsh", installed=None, sign_in="unknown", ready=False, why="prepare"),
         _row("cursor-agent", installed=FLEET["cursor-agent"], sign_in="api_key", ready=False, why="something new"),
         _row("mine", installed=None, sign_in=None, ready=None, why=None, pinned=False),
     ],
     "store-b": [_row("omo", installed=None, sign_in=None, ready=None, why=None, pinned=False, kind="omo"),
-                _row("codex", installed=FLEET["codex"], sign_in="ocx", ready=True, why=None)],
+                _row("codex", installed=FLEET["codex"], sign_in="magpie", ready=True, why=None)],
 }
 
 
@@ -83,7 +83,7 @@ class Contact:
 class Nodes:
     def __init__(self, monkeypatch):
         self.calls: list[tuple[str, str]] = []
-        self.caps: dict[str, dict] = {}  # a node's hello capabilities beyond its runner rows (ocx, proxy)
+        self.caps: dict[str, dict] = {}  # a node's hello capabilities beyond its runner rows (magpie, proxy)
         self.omo = {"build-a": {"current": OMO, "daemon": {"running": True}},
                     "store-b": {"current": "0.0.1", "daemon": {"running": True}}}
         self.omo_reads: list[str] = []
@@ -152,7 +152,7 @@ def root(tmp_path, monkeypatch):
         """), encoding="utf-8")
     monkeypatch.setenv("LINA_HOME", str(lina))
     monkeypatch.setenv("HERMES_HOME", str(lina))
-    monkeypatch.setattr(lina_ocx, "lina_root", lambda: lina)
+    monkeypatch.setattr(lina_deps, "lina_root", lambda: lina)
     clock = [NOW]
     monkeypatch.setattr(time, "time", lambda: clock[0])
     return types.SimpleNamespace(path=lina, clock=clock)
@@ -202,10 +202,10 @@ def test_runner_cells_carry_fleet_installed_sign_in_and_one_reason(root, nodes, 
     build = next(m for m in _devices(client)["machines"] if m["name"] == "build-a")
 
     assert _cells(build) == {
-        "omo": (OMO, OMO, "ocx", True, None),
-        "codex": (FLEET["codex"], FLEET["codex"], "ocx", True, None),
+        "omo": (OMO, OMO, "magpie", True, None),
+        "codex": (FLEET["codex"], FLEET["codex"], "magpie", True, None),
         "grok": (FLEET["grok"], FLEET["grok"], "signed_out", False, "sign_in"),
-        "claude": (FLEET["claude"], "0.0.1", "ocx", False, "update"),
+        "claude": (FLEET["claude"], "0.0.1", "magpie", False, "update"),
         "dsh": (FLEET["dsh"], None, "unknown", False, "prepare"),
         "cursor-agent": (FLEET["cursor-agent"], FLEET["cursor-agent"], "api_key", False, "unknown"),
         "mine": (None, None, None, None, None),
@@ -217,7 +217,7 @@ def test_an_unreachable_node_lists_the_hub_s_runners_unreachable_and_an_old_one_
     machines = {m["name"]: m for m in _devices(client)["machines"]}
 
     offered = {"omo": OMO, "codex": FLEET["codex"], "grok": FLEET["grok"]}
-    assert _cells(machines["gone-c"]) == {name: (fleet, None, "ocx" if name == "omo" else None, False, "unreachable")
+    assert _cells(machines["gone-c"]) == {name: (fleet, None, "magpie" if name == "omo" else None, False, "unreachable")
                                           for name, fleet in offered.items()}
     assert machines["gone-c"]["why"] == "unreachable"
     assert {name: cell[4] for name, cell in _cells(machines["old-d"]).items()} == dict.fromkeys(offered, "update")
@@ -262,17 +262,17 @@ def test_roles_come_from_the_device_config_as_lina_229_reads_it(root, nodes, ssh
     assert (roles["store-b"], roles["nas-e"]) == ("files", "files"), "role: files, and a kind: file node's default"
     assert [p["name"] for p in view["person"]] == ["laptop"] and "laptop" not in roles
     nas = next(m for m in view["machines"] if m["name"] == "nas-e")
-    assert _cells(nas) == {"omo": (OMO, OMO, "ocx", True, None)}, "a file node's omo is its hello's, not lina omo status"
+    assert _cells(nas) == {"omo": (OMO, OMO, "magpie", True, None)}, "a file node's omo is its hello's, not lina omo status"
     assert "nas-e" not in nodes.omo_reads
 
 def test_the_omo_cell_is_served_from_a_background_read_every_ten_minutes(root, nodes, ssh, client):
     nodes.inline = False
     first = next(m for m in _devices(client)["machines"] if m["name"] == "store-b")
-    assert _cells(first)["omo"] == (OMO, None, "ocx", False, "unknown"), "no answer yet: unknown, never a guess"
+    assert _cells(first)["omo"] == (OMO, None, "magpie", False, "unknown"), "no answer yet: unknown, never a guess"
 
     nodes.run_queued()
     second = next(m for m in _devices(client)["machines"] if m["name"] == "store-b")
-    assert _cells(second)["omo"] == (OMO, "0.0.1", "ocx", False, "update")
+    assert _cells(second)["omo"] == (OMO, "0.0.1", "magpie", False, "update")
     assert nodes.queued == [], "a refresh started less than ten minutes ago is not started again"
 
     nodes.omo["store-b"] = {"error": "ssh: timed out"}
@@ -280,14 +280,14 @@ def test_the_omo_cell_is_served_from_a_background_read_every_ten_minutes(root, n
     _devices(client)
     nodes.run_queued()
     kept = next(m for m in _devices(client)["machines"] if m["name"] == "store-b")
-    assert _cells(kept)["omo"] == (OMO, "0.0.1", "ocx", False, "update"), "a failed read keeps the last answer"
+    assert _cells(kept)["omo"] == (OMO, "0.0.1", "magpie", False, "update"), "a failed read keeps the last answer"
 
     nodes.omo["store-b"] = {"current": None, "daemon": {"running": True}}
     root.clock[0] += lina_board_devices.OMO_EVERY_S
     _devices(client)
     nodes.run_queued()
     gone = next(m for m in _devices(client)["machines"] if m["name"] == "store-b")
-    assert _cells(gone)["omo"] == (OMO, None, "ocx", False, "prepare")
+    assert _cells(gone)["omo"] == (OMO, None, "magpie", False, "prepare")
 
 
 def test_the_omo_cell_needs_the_daemon_ready_by_the_probe(root, nodes, ssh, client, monkeypatch):
@@ -296,7 +296,7 @@ def test_the_omo_cell_needs_the_daemon_ready_by_the_probe(root, nodes, ssh, clie
         setattr(self, "descriptor", {"capabilities": {"runners": HELLO["build-a"]}}) or
         Reply(0, json.dumps(ready).encode())) if self.name == "build-a" else Reply(255, b"", "down"))
     build = next(m for m in _devices(client)["machines"] if m["name"] == "build-a")
-    assert _cells(build)["omo"] == (OMO, OMO, "ocx", False, "prepare")
+    assert _cells(build)["omo"] == (OMO, OMO, "magpie", False, "prepare")
 
 
 def test_person_devices_show_status_and_tool_versions_from_one_read_only_ssh_call(root, nodes, ssh, client):
@@ -339,7 +339,7 @@ class Actions:
         self.root = root
         self.gate: tuple = (OWNER, 0, "")
         self.services: list[tuple] = []
-        self.service_reply = {"service": "ocx", "action": "restart", "state": "running (pid 4242)"}
+        self.service_reply = {"service": "proxy", "action": "restart", "state": "running (pid 4242)"}
         monkeypatch.setattr(GATE, "check", lambda peer, base=None, now=None: self.gate)
         monkeypatch.setattr(lina_devices, "service_call", self._service)
 
@@ -363,14 +363,14 @@ def _action(reply, status):
 
 
 def test_restart_goes_through_the_service_layer_and_is_logged(actions, client):
-    body = _action(client.post("/api/lina/devices/build-a/restart", json={"service": "ocx"}), 200)
+    body = _action(client.post("/api/lina/devices/build-a/restart", json={"service": "proxy"}), 200)
 
     assert body == {"ok": True, "device": "build-a", "action": "restart", "state": "restarted", "reason": None}
-    assert actions.services == [("build-a", "ocx", "restart")]
+    assert actions.services == [("build-a", "proxy", "restart")]
     (line,) = actions.log()
     assert {k: line[k] for k in ("by", "device", "action", "service", "state", "reason")} == {
         "by": {"principal": OWNER["principal"], "device": OWNER["device"]}, "device": "build-a", "action": "restart",
-        "service": "ocx", "state": "restarted", "reason": None}
+        "service": "proxy", "state": "restarted", "reason": None}
     assert line["at"] == NOW
 
 
@@ -401,8 +401,8 @@ def test_an_unknown_service_or_runner_is_400(actions, client, path, body):
 
 @pytest.mark.parametrize("service, reply", [
     ("worker", {"service": "worker", "action": "restart", "instance_id": "w-0002"}),
-    ("ocx", {"service": "ocx", "action": "restart", "state": "running (pid 4242)"}),
-], ids=["worker", "ocx"])
+    ("proxy", {"service": "proxy", "action": "restart", "state": "running (pid 4242)"}),
+], ids=["worker", "magpie"])
 def test_a_restart_the_node_carried_out_is_restarted(actions, client, service, reply):
     actions.service_reply = reply
     body = _action(client.post("/api/lina/devices/build-a/restart", json={"service": service}), 200)
@@ -413,9 +413,9 @@ def test_a_restart_the_node_carried_out_is_restarted(actions, client, service, r
     ("worker", {"service": "worker"}),
     ("worker", {"service": "worker", "action": "stopped", "instance_id": "w-0002"}),
     ("worker", {"service": "worker", "action": "restart"}),
-    ("ocx", {"service": "ocx", "action": "restart", "state": None}),
-    ("ocx", {"service": "worker", "action": "restart", "instance_id": "w-0002"}),
-], ids=["empty-reply", "unknown-action", "worker-no-instance", "ocx-no-state", "other-service"])
+    ("proxy", {"service": "proxy", "action": "restart", "state": None}),
+    ("proxy", {"service": "worker", "action": "restart", "instance_id": "w-0002"}),
+], ids=["empty-reply", "unknown-action", "worker-no-instance", "magpie-no-state", "other-service"])
 def test_a_restart_without_the_node_s_affirmative_answer_is_502(actions, client, service, reply):
     actions.service_reply = reply
     reply = client.post("/api/lina/devices/build-a/restart", json={"service": service})
@@ -542,10 +542,7 @@ def test_a_runner_cell_says_signing_in_while_its_sign_in_runs_and_not_after(acti
 
 
 # lina#589: the node's model proxy by kind, its restart and where its accounts are signed in.
-OCX_CAPS = {"ocx": {"external": False, "version": "1.0.0", "health": 200},
-            "proxy": {"kind": "ocx", "health": 200, "version": "1.0.0"}}
-MAGPIE_CAPS = {"ocx": {"external": False, "version": None, "health": None},
-               "proxy": {"kind": "magpie", "health": 200, "models": 23, "remote_id": "hub",
+MAGPIE_CAPS = {"proxy": {"health": 200, "models": 23, "remote_id": "hub",
                          "service": {"name": "magpie", "state": "running"}}}
 
 
@@ -560,42 +557,32 @@ def _machine(client, name):
     return next(m for m in _devices(client)["machines"] if m["name"] == name)
 
 
-def test_an_ocx_node_shows_its_ocx_and_its_runners_as_before(root, nodes, ssh, client):
-    nodes.caps["build-a"] = OCX_CAPS
-    build = _machine(client, "build-a")
-
-    assert build["proxy"] == {"kind": "ocx", "health": 200, "version": "1.0.0", "models": None, "link": None,
-                              "service": None, "signIn": "node"}
-    signs = {name: cell[2] for name, cell in _cells(build).items()}
-    assert signs == {"omo": "ocx", "codex": "ocx", "claude": "ocx", "grok": "signed_out", "dsh": "unknown",
-                     "cursor-agent": "api_key", "mine": None}
-
 
 def test_a_magpie_node_shows_its_link_to_the_hub_model_count_and_service_and_no_node_sign_in(root, nodes, ssh,
                                                                                                client):
     nodes.caps["build-a"] = MAGPIE_CAPS
     build = _machine(client, "build-a")
 
-    assert build["proxy"] == {"kind": "magpie", "health": 200, "version": None, "models": 23, "link": "hub",
+    assert build["proxy"] == {"health": 200, "models": 23, "link": "hub",
                               "service": {"name": "magpie", "state": "running"}, "signIn": "hub"}
     signs = {name: cell[2] for name, cell in _cells(build).items()}
     assert signs == {"omo": "magpie", "codex": "magpie", "claude": "magpie", "grok": "signed_out", "dsh": "unknown",
                      "cursor-agent": "api_key", "mine": None}
 
 
-def test_a_node_reporting_no_proxy_shows_none_and_an_older_node_its_ocx(root, nodes, ssh, client):
-    nodes.caps["store-b"] = {"ocx": {"external": False, "version": None, "health": None}}
-    nodes.caps["build-a"] = {"ocx": {"external": True, "health": 503}}  # an older node: no capabilities.proxy
+def test_a_node_reporting_no_proxy_shows_none_and_an_older_node_its_magpie(root, nodes, ssh, client):
+    nodes.caps["store-b"] = {}
+    nodes.caps["build-a"] = {}
     machines = {m["name"]: m for m in _devices(client)["machines"]}
 
     assert machines["store-b"]["proxy"] is None and machines["old-d"]["proxy"] is None
     assert machines["gone-c"]["proxy"] is None, "an unreachable node shows no proxy, not a guessed one"
-    assert machines["build-a"]["proxy"] == {"kind": "ocx", "health": 503, "version": None, "models": None,
-                                            "link": None, "service": None, "signIn": "node"}
+    assert machines["build-a"]["proxy"] is None
+
 
 
 def test_a_proxy_restart_goes_to_the_node_s_own_proxy_service_and_is_logged(actions, client):
-    actions.service_reply = {"service": "proxy", "kind": "magpie", "action": "restart", "name": "magpie",
+    actions.service_reply = {"service": "proxy", "action": "restart", "name": "magpie",
                              "state": "running"}
     body = _action(client.post("/api/lina/devices/build-a/restart", json={"service": "proxy"}), 200)
 
@@ -605,7 +592,7 @@ def test_a_proxy_restart_goes_to_the_node_s_own_proxy_service_and_is_logged(acti
 
 def test_a_proxy_restart_while_a_run_is_active_on_the_node_is_409_with_its_reason(actions, client):
     reason = "1 run(s) active on this node: the magpie restart waits until they end"
-    actions.service_reply = {"service": "proxy", "kind": "magpie", "action": "error", "busy": 1, "reason": reason}
+    actions.service_reply = {"service": "proxy", "action": "error", "busy": 1, "reason": reason}
     reply = client.post("/api/lina/devices/build-a/restart", json={"service": "proxy"})
 
     assert (reply.status_code, reply.json()["detail"]) == (409, reason)
@@ -622,6 +609,3 @@ def test_sign_in_through_the_proxy_is_refused_on_a_magpie_node_and_other_runners
 
     _action(client.post("/api/lina/devices/build-a/sign-in", json={"runner": "grok"}), 202)
     assert start.calls == [("build-a", "grok", root.path)]
-
-    nodes.caps["build-a"] = OCX_CAPS
-    _action(client.post("/api/lina/devices/build-a/sign-in", json={"runner": "codex"}), 202)

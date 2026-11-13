@@ -2,14 +2,14 @@
 
 `lina runners` installs, pins and reports every runner a node offers
 (lina#222). The pins live in `pm/lina-deps.json` under `runners`, next to the
-Node and OCX pins.
+Node pin.
 
 ## One block per runner (lina#531)
 
 Each runner, omo included, is one block: how it is installed and pinned, how its
 sign-in is read (`sign_in`: a named check, `{file: <path>}` or `{env: <NAME>}`),
-where its model list comes from and how it is refreshed
-(`models: {file, refresh: {ocx_client}}`), its route source (`route: {source}`,
+where its model list comes from
+(`models: {file}`), its route source (`route: {source}`,
 `ocx-omo` for omo) and its one-call probe (`trial`, `probe` in settings). The
 repo describes the built-in runners in `pm/lina-deps.json` `runners.<name>`;
 `worker.runners.<name>` in the LINA root's config adds or overrides one with
@@ -41,9 +41,9 @@ checks pass but whose probe failed is `not ready: probe failed` in
 
 | Runner | Installer | Integrity | Sign-in (owner, 11-06) |
 |---|---|---|---|
-| `codex` (`@openai/codex`) | npm on the pinned Node | npm `dist.integrity` | through OCX |
-| `claude` (`@anthropic-ai/claude-code`) | npm on the pinned Node | npm `dist.integrity` | through OCX |
-| `claude-agent-acp`, `codex-acp` (`@zed-industries/*`, for #221) | npm on the pinned Node | npm `dist.integrity` | through OCX |
+| `codex` (`@openai/codex`) | npm on the pinned Node | npm `dist.integrity` | through magpie |
+| `claude` (`@anthropic-ai/claude-code`) | npm on the pinned Node | npm `dist.integrity` | through magpie |
+| `claude-agent-acp`, `codex-acp` (`@zed-industries/*`, for #221) | npm on the pinned Node | npm `dist.integrity` | through magpie |
 | `dsh` (`@deepseek-ai/dsh`) | npm on the pinned Node | npm `dist.integrity` | no read-only check known (`unknown`) |
 | `grok` | the binary `https://x.ai/cli/install.sh` downloads | sha256 recorded by LINA (the source publishes none) | `grok login` (`~/.grok/auth.json` exists) |
 | `cursor-agent` | the tarball `https://cursor.com/install` downloads | sha256 recorded by LINA (the source publishes none) | `CURSOR_API_KEY` |
@@ -52,7 +52,7 @@ checks pass but whose probe failed is `not ready: probe failed` in
 ## Layout
 
 - `vendor/runners/<name>/<version>/`: one installed version. npm runners are
-  installed with `lina_ocx.npm_install` (the lock must carry the pinned
+  installed with `lina_deps.npm_install` (the lock must carry the pinned
   integrity before any package code runs); the others are downloaded, checked
   against the pinned hash for this platform and only then kept.
 - `vendor/runners/<name>/current`: the active version; `previous` records the one
@@ -78,7 +78,7 @@ global npm) is only read: `status` shows its path and `--version` as
   (the `current` link), `installed` (what the active install is: an npm
   runner's installed `package.json` with its entry present, another runner's
   `--version`; `installed_why` when it cannot say), `versions`,
-  `person_installed`, `sign_in` (`signed_in`, `signed_out`, `api_key`, `ocx`,
+  `person_installed`, `sign_in` (`signed_in`, `signed_out`, `api_key`, `magpie`,
   or `unknown` with `sign_in_why`), `ready` and one `why` (`prepare`, `update`,
   `sign in`, `unknown`). A runner that updated itself in place shows `update`;
   a missing entry shows `prepare`. `--offered` reports the runners this node
@@ -88,10 +88,11 @@ global npm) is only read: `status` shows its path and `--version` as
   runner is matched by name, then by the command in `argv`. This is what
   `hello` carries.
 
-`sign_in` `ocx` means the node reaches the models through an OCX that answers:
-LINA's own service when it is installed, else the operator's external OCX
-(`ocx.external.cli`) when its `/healthz` answers on `ocx.port`. A node with no
-OCX at all reports `unknown` with the reason (`OCX is not installed`). A runner
+`sign_in` `magpie` means the node's magpie answers `/v1/models` with HTTP 200
+and at least one model. Accounts are signed in on the hub's magpie; other nodes
+link to it through their local magpie. LINA never installs, configures, starts or
+stops magpie. A node whose magpie is down or has no models reports `unknown`
+with the reason and is not ready. A runner
 whose sign-in has no read-only check (`unknown`, today `dsh`) is shown as
 `unknown` with its reason and stays ready: unknown is not a failure, and only a
 reason the node can name makes a runner `not ready`.
@@ -118,17 +119,16 @@ whose hello has no runner rows yet, each `update`.
 nodes into one question per runner, naming the nodes and how to sign in on each.
 Writing it into the inbox and the hub's sign-in button are #230 and #234.
 
-`lina devices service <name> <ocx|worker> <status|restart>`: on any device
-through its `service` verb. The worker goes through #218's
-`NegotiatedTransport.service` with the instance its `hello` reports; OCX is
-`service ocx <action>`, which the node hands to `lina_runners.node_service` and
-the service layer (`lina_services.act`, its refusals included: OCX is not
-restarted while the worker or gateway runs on it).
+`lina devices service <name> <proxy|worker> <status|restart>` uses the device's
+`service` verb. The worker uses the instance reported by `hello` for its
+compare-and-act check. `proxy` reports or restarts the node's local magpie
+service through the device service action; LINA does not manage its installation
+or configuration.
 
 ## Daily sync (lina#238)
 
 Each runner pin with `follow` moves once a day to its source's newest version,
-after a trial on the hub, and the nodes follow the same day. OCX and the
+after a trial on the hub, and the nodes follow the same day. The
 ACP adapters keep LINA's pins (omo follows npm `latest` like the others,
 lina#531); `gh`, `opencode` and `pi` are not runners.
 
@@ -153,15 +153,7 @@ nothing that day.
 2. a version above the hub's pin is installed on the hub beside the current one
    and asked one real request (the pin's `trial`: "Reply with exactly OK and
    nothing else." must come back as a line `OK`; dsh is asked once over ACP).
-   codex, claude and dsh also need a new `200` in the hub's OCX log
-   (`ocx logs --json`, read-only with `ocx.external`, asked of OCX itself before
-   and after the trial, never from the 60 s cache of `lina models`): a `requestId` that was
-   not in the log read just before the trial, of the trial's kind (the pin's
-   `trial.ocx_match`: `model_contains`, `model_endswith`, `protocol`). A pin with
-   `ocx: true` and no `ocx_match`, or a log that cannot be read before the trial,
-   fails without a trial. OCX records no client, so another request of the same
-   model and protocol at the same moment cannot be told apart: the `OK` answer
-   is the main evidence, the `200` shows the runner went through OCX. While a
+   The real runner response is the proof. While a
    run holds a hub slot (checked before the install and before the switch), the
    hub neither installs nor switches that day and the nodes do not follow;
    nothing is held;
@@ -170,8 +162,7 @@ nothing that day.
    node checks again that no run holds a slot, writes the same file in its own
    root, upgrades (`lina runners upgrade`: hash, `--version`, switch, shim
    trial, back to `previous` on failure) and answers;
-4. then each block is cared for (lina#531): its model list is refreshed on the
-   hub and the nodes when OCX's model list or the runner's version changed; its
+4. then each block is cared for (lina#531): its
    route source is checked and, when it differs, applied on the hub and probed
    there once with a real task before the nodes apply it (a failed check, apply
    or probe holds the runner, `kind: route`); then the hub and every node that
@@ -204,7 +195,7 @@ A node with a run holding a slot, an unreachable node, a node without the
 `runner-sync` verb (`update`) and a node that never installed the runner
 (`prepare`, see `lina runners install`) are skipped and follow on a later day.
 `hello` carries `pin_from` (`repo` or `sync`) per runner row, `platform`, and
-`ocx` (`external`, `version`, `health`: the `/healthz` status code);
+`capabilities.proxy` (`url`, `health`, `models`, `remote_id`, `service`);
 `lina devices --json` adds `hub_pinned` and `same_as_hub` to each row.
 
 Each run writes `runner-sync/YYYYMMDD.json` (sources, the hub's trial, each
@@ -219,7 +210,7 @@ record only; a day with nothing to say sends none (lina#531). `--plan` installs,
 `lina runners sync status` shows the hub's pins, holds, the last run, issues
 and notes; `--issues` prints only the issue lines (`- none` when there are
 none): holds, a node behind the hub's pin for over 24 hours
-(`runner-sync/lag.json`), an OCX whose health is not 200, and sign-ins.
+(`runner-sync/lag.json`), a node's magpie whose health is not 200 or whose model list is empty, and sign-ins.
 Unreachable nodes and lags under 24 hours are notes.
 
 `worker.runner_sync: {at: "04:00"}` (off by default) lets `lina worker serve` on

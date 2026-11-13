@@ -36,7 +36,7 @@ class TestDeveloperRoleParity:
         msgs = [{"role": "system", "content": "Be helpful"}, {"role": "user", "content": "hi"}]
         kw = transport.build_kwargs(
             model="gpt-5.4", messages=msgs, tools=None,
-            provider_profile=get_provider_profile("ocx"),
+            provider_profile=get_provider_profile("magpie"),
         )
         assert kw["messages"][0]["role"] == "developer"
 
@@ -48,7 +48,7 @@ class TestRequestOverridesParity:
     def test_extra_body_override_legacy(self, transport):
         kw = transport.build_kwargs(
             model="gpt-5.4", messages=_msgs(), tools=None,
-            provider_profile=get_provider_profile("ocx"),
+            provider_profile=get_provider_profile("magpie"),
             request_overrides={"extra_body": {"custom_key": "custom_val"}},
         )
         assert kw["extra_body"]["custom_key"] == "custom_val"
@@ -58,7 +58,7 @@ class TestRequestOverridesParity:
     def test_top_level_override(self, transport):
         kw = transport.build_kwargs(
             model="gpt-5.4", messages=_msgs(), tools=None,
-            provider_profile=get_provider_profile("ocx"),
+            provider_profile=get_provider_profile("magpie"),
             request_overrides={"top_p": 0.9},
         )
         assert kw["top_p"] == 0.9

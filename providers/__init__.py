@@ -216,8 +216,8 @@ def _has_named_custom_provider(name: str, home: Path | None, hkey: str) -> bool:
 
 
 # The profile whose wire policy configured custom routes (``custom``, ``custom:<name>``, a named
-# ``providers:`` entry) use: every model call goes through OCX, so there is no separate custom profile.
-CUSTOM_ROUTE_PROFILE = "ocx"
+# ``providers:`` entry) use: every model call goes through magpie, so there is no separate custom profile.
+CUSTOM_ROUTE_PROFILE = "magpie"
 
 
 def get_provider_profile(name: str) -> ProviderProfile | None:
@@ -247,7 +247,7 @@ def get_provider_profile(name: str) -> ProviderProfile | None:
     if profile is None and not is_custom_route and not checked and _miss_recheck_due(layer, name):
         if _refresh_home_layer(layer, home, key, force=True):
             profile = lookup(name)
-    # Custom routes share the OCX wire policy (OpenAI-compatible chat completions) unless a
+    # Custom routes share the magpie wire policy (OpenAI-compatible chat completions) unless a
     # plugin explicitly registered that route. Other names retain exact lookup.
     if profile is None and is_custom_route:
         profile = lookup(CUSTOM_ROUTE_PROFILE)

@@ -108,7 +108,7 @@ def _row(path: Path, now: float) -> dict:
 
 def checks(now: float | None = None) -> dict:
     """``{version: 1, at, checks}`` for every regular ``status/*.json`` file, newest ``at`` first."""
-    from hermes_cli.lina_ocx import lina_root
+    from hermes_cli.lina_deps import lina_root
     now = time.time() if now is None else now
     folder = lina_root() / "status"
     found = sorted(folder.glob("*.json")) if folder.is_dir() else []

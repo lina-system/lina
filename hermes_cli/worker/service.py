@@ -64,7 +64,7 @@ def state(base: Path | None = None) -> str:
 
 
 def start(base: Path | None = None, out=print) -> int:
-    from hermes_cli.lina_ocx import lina_root
+    from hermes_cli.lina_deps import lina_root
     base = base or lina_root()
     kind = backend()
     if kind is None:

@@ -34,7 +34,7 @@ from pathlib import Path
 
 from hermes_platform.resolver import locate_command
 from tools.environments.local import build_subprocess_env
-from hermes_cli import lina_ocx
+from hermes_cli import lina_deps
 from hermes_cli.worker.runners import lina_copy
 from hermes_cli.worker.runners.base import Handle, ModelProfile, RunnerError, Task, standard_result
 from hermes_cli.worker.runners.access import recorded_access
@@ -95,7 +95,7 @@ class CommandRunner:
             raise RunnerError(f"runner {name}: `access_args` must map access modes to lists of strings")
         self.env = {str(k): str(v) for k, v in (spec.get("env") or {}).items()}
         self.limits = limits or {}
-        self.root = root or lina_ocx.lina_root()
+        self.root = root or lina_deps.lina_root()
 
     def honours(self, mode: str) -> tuple[bool, str]:
         supported = mode in ACCESS and (mode in self.access_args if self.access_args is not None

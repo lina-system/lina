@@ -33,7 +33,7 @@ class RunnerError(RuntimeError):
 @dataclass(frozen=True)
 class ModelProfile:
     """The main model of a run, recorded with it: where it came from (``--model``, ``runner:<runner>`` from the work
-    settings, ``mode:<mode>``, ``fallback:<ocx state>``, ``runner`` for the runner's own default)."""
+    settings, ``mode:<mode>``, ``fallback:<model state>``, ``runner`` for the runner's own default)."""
     provider: str | None = None
     id: str | None = None
     thinking: str | None = None

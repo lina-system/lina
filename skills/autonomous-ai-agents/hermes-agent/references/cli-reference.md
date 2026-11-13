@@ -9,7 +9,7 @@
 | `lina -w` | Interactive chat in an isolated worktree | `hermes_cli/_parser.py`; consumed by `hermes_cli/main.py` |
 | `lina --continue` / `lina --resume <session>` | Resume recent or selected chat | `hermes_cli/_parser.py`, `hermes_cli/main.py` |
 | `lina setup` | Setup wizard | `hermes_cli/subcommands/setup.py` |
-| `lina model` | Model/provider picker; select OCX | `hermes_cli/subcommands/model.py` |
+| `lina model` | Model/provider picker; select magpie | `hermes_cli/subcommands/model.py` |
 | `lina doctor` | Configuration and dependency checks | `hermes_cli/subcommands/doctor.py` |
 | `lina config path` / `lina config env-path` | Resolve settings and secrets files | `hermes_cli/subcommands/config.py` |
 | `lina config get <key>` / `lina config set <key> <value>` | Inspect/update a setting | `hermes_cli/subcommands/config.py` |

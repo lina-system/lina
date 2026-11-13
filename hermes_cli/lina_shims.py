@@ -61,7 +61,7 @@ def _retire(bin_dir: Path, out) -> None:
 def install(base: Path | None = None, *, out=print) -> int:
     """``lina install --shims``: write ``work`` into ``$LINA_HOME/bin/`` for this interpreter, pinned to that LINA
     root, and remove the ``omo-task`` shim an older install wrote there."""
-    from hermes_cli.lina_ocx import lina_root
+    from hermes_cli.lina_deps import lina_root
     from hermes_cli.worker.settings import child_pythonpath
     root = base or lina_root()
     if not TEMPLATES.is_dir():

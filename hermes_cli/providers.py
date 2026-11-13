@@ -322,7 +322,7 @@ def _plugin_profile_pdef(name: str) -> Optional[ProviderDef]:
         prof = _profile(name)
     except Exception:
         return None
-    # ``custom`` routes borrow the ocx profile's wire policy, not its identity: only a profile
+    # ``custom`` routes borrow the magpie profile's wire policy, not its identity: only a profile
     # registered under this name (or alias) is a provider definition here.
     if prof is None or (name != prof.name and name not in prof.aliases):
         return None

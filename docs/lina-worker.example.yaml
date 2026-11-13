@@ -26,23 +26,24 @@ worker:
   # Requested access defaults to workspace-write. An agent needs an explicit full ceiling for full access.
   access: {reviewer: read-only, builder: workspace-write}
   models:
-    aliases:                                 # names for --model; ids are whatever the runner's provider serves
-      planner: {provider: opencodex, id: planning-model-id, thinking: medium}
-      builder: {provider: opencodex, id: implementation-model-id, thinking: high}
+    aliases:                                 # names for --model; ids are in magpie's catalog form <provider>/<id>
+      planner: {provider: claude, id: planning-model-id, thinking: medium}
+      builder: {provider: codex, id: implementation-model-id, thinking: high}
     defaults:                                # by mode: planning-heavy work and long implementation
       research: planner
       mass-research: planner
       ulw: builder
       mass: builder
-  proxy:                                     # THIS node's model proxy, in the node's own config.yaml (lina#585);
-    kind: ocx                                # ocx (default, also when absent) or magpie (installed separately);
-    remote_id: hub                           # magpie: the id of its remote link to the hub (model ids read
+  proxy:                                     # THIS node's local magpie, in the node's own config.yaml (lina#585);
+    remote_id: hub                           # the id of its remote link to the hub (model ids read
                                              # <remote_id>/<provider>/<id>; "" on the node whose own magpie
-                                             # holds them: <provider>/<id>); health: optional address of the
-                                             # proxy check (ocx /healthz, magpie /v1/models, lina#586);
+                                             # holds them: <provider>/<id>, lina#623); health: optional address of the
+                                             # proxy check (default http://127.0.0.1:3425/v1/models, lina#586);
+                                             # url: optional magpie gateway for usage, quota and model screens;
+                                             # key_env: optional .env variable holding a gateway key (lina#625);
                                              # service: magpie's local unit / launchd label the device
                                              # screen restarts (default magpie, lina#589).
-                                             # Switch and rollback per node: docs/worker-proxy-switch.md
+                                             # Node setup: docs/worker-proxy-switch.md
   runners:
     omo: {type: omo}                         # built in: LINA's pinned omo (lina#34)
     claude:

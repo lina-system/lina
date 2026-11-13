@@ -661,7 +661,7 @@ class TestPromptCacheKeyCapability:
 
         assert "prompt_cache_key" not in kwargs
 
-    @pytest.mark.parametrize("provider", [None, "ocx", "custom"])
+    @pytest.mark.parametrize("provider", [None, "magpie", "custom"])
     def test_default_off_never_leaks_unknown_body_field(self, transport, provider):
         from providers import get_provider_profile
 

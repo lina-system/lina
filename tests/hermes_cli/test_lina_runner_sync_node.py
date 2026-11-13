@@ -1,9 +1,9 @@
 """The node side of the daily runner sync (lina#238), and the parts the hub and node share: the moved pins laid over
-the repo pins, the ``runner-sync`` verb, what ``hello`` reports for it, the version rules, the OCX condition of a
+the repo pins, the ``runner-sync`` verb, what ``hello`` reports for it, the version rules, the answer of a
 trial, and the once-a-day start from ``lina worker serve``.
 
 The runner is the real Grok pin; its "release" is a Python script handed to a fake fetch. Nothing reaches the network
-and no real service, ssh or OCX is touched.
+and no real service, ssh or magpie is touched.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ import time
 
 import pytest
 
-from hermes_cli import lina_ocx, lina_runner_sync_daily, lina_runners
+from hermes_cli import lina_deps, lina_runner_sync_daily, lina_runners
 from hermes_cli import lina_runner_sync_state as state
 from hermes_cli import lina_runner_sync_trial as trials
 from hermes_cli.worker import device, protocol
@@ -35,9 +35,9 @@ def node(tmp_path, monkeypatch):
     (vendor / "1.0.70").mkdir(parents=True)
     (vendor / "1.0.70" / "grok").write_bytes(release("1.0.70"))
     (vendor / "1.0.70" / "grok").chmod(0o755)
-    lina_ocx.set_current(root, "1.0.70", vendor)
-    monkeypatch.setattr(lina_ocx, "lina_root", lambda: root)
-    monkeypatch.setattr(lina_ocx, "platform_key", lambda: "linux-x64")
+    lina_deps.set_current(root, "1.0.70", vendor)
+    monkeypatch.setattr(lina_deps, "lina_root", lambda: root)
+    monkeypatch.setattr(lina_deps, "platform_key", lambda: "linux-x64")
     served = {URL: release("1.0.71")}
     monkeypatch.setattr(lina_runners, "download", lambda url, dest: dest.write_bytes(served[url]))
     return {"root": root, "worker": root / "worker", "served": served}
@@ -58,7 +58,7 @@ def test_only_the_runners_follow_and_each_source_names_the_pinned_artifacts(tmp_
     table = lina_runners.pins(root=tmp_path, moved=False)
     followed = {name for name, pin in table.items() if pin.follow}
     assert followed == {"omo", "codex", "claude", "dsh", "grok", "cursor-agent", "agy"}, \
-        "OCX and the ACP adapters keep LINA's pins; omo follows like every tool (lina#531)"
+        "The ACP adapters keep LINA's pins; omo follows like every tool (lina#531)"
     assert table["claude"].follow == {"npm": "stable"}
     for name in followed:
         pin = table[name]
@@ -149,12 +149,12 @@ def test_the_verb_refuses_what_the_sync_does_not_move_or_moves_without_a_hash(no
     assert not (node["root"] / state.OVERLAY).exists()
 
 
-def test_hello_offers_the_verb_and_reports_platform_and_ocx(node):
+def test_hello_offers_the_verb_and_reports_platform_and_proxy(node):
     hello = protocol.hello(node["worker"])
     caps = hello["capabilities"]
     assert "runner-sync" in caps["verbs"]
     assert caps["platform"] == "linux-x64"
-    assert set(caps["ocx"]) == {"external", "version", "health"} and caps["ocx"]["external"] is False
+    assert set(caps["proxy"]) == {"url", "health", "models", "remote_id", "service"}
 
 
 @pytest.mark.parametrize(("new", "old", "order", "major"), [
@@ -183,25 +183,10 @@ def _installed_runner(root, trial: dict) -> lina_runners.RunnerPin:
     return runner
 
 
-def test_a_trial_through_ocx_needs_a_200_logged_after_it_began(tmp_path):
-    runner = _installed_runner(tmp_path, {"argv": ["-p", "{prompt}"], "ocx": True,
-                                          "ocx_match": {"model_contains": "haiku"}})
-    began = 2_000_000_000.0
 
-    def attempt(after):
-        logs = iter([{"logs": []}, after])
-        return trials.trial(tmp_path, runner, "1.0.71", ocx_logs=lambda root: next(logs), clock=lambda: began)
-
-    row = {"requestId": "r1", "requestedModel": "anthropic/claude-haiku-5-5"}
-    assert attempt({"logs": [{**row, "status": 200, "timestamp": (began + 2) * 1000}]}) == (True, "OCX answered 200")
-    assert attempt([{**row, "status": 200, "time": "2001-01-01T00:00:00Z"}])[0] is False, \
-        "an old 200 is not this trial's"
-    assert attempt([{**row, "status": 502, "ts": began + 2}])[0] is False
-
-
-def test_a_trial_without_ocx_only_needs_the_answer(tmp_path):
+def test_a_trial_only_needs_the_answer(tmp_path):
     runner = _installed_runner(tmp_path, {"argv": ["-p", "{prompt}"]})
-    assert trials.trial(tmp_path, runner, "1.0.71", ocx_logs=lambda root: pytest.fail("no OCX")) == \
+    assert trials.trial(tmp_path, runner, "1.0.71") == \
         (True, "answered OK")
 
 

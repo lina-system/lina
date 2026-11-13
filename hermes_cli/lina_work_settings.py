@@ -10,12 +10,12 @@ devices:
 worker:
   default_runner: omo
   runners:
-    codex: {type: command, argv: [codex, exec, "-"], on: true, model: "opencodex/impl-model:high",
-            fallback_model: opencodex/small-model, access: workspace-write}
+    codex: {type: command, argv: [codex, exec, "-"], on: true, model: "codex/impl-model:high",
+            fallback_model: codex/small-model, access: workspace-write}
   models:
-    aliases: {planner: {provider: opencodex, id: plan-model, thinking: medium}}
+    aliases: {planner: {provider: claude, id: plan-model, thinking: medium}}
     defaults: {research: planner}
-    fallback: opencodex/small-model
+    fallback: codex/small-model
   routing:                                       # first match wins, else default_runner
     - {name: docs, when: {runner_label: runner/agy, labels_any: [docs], size: [S, M]}, runner: agy}
   goal_drive: true                               # the hub's goal drive (docs/work/goal-drive.md); false = off
@@ -64,7 +64,7 @@ RUNNER = {"type": _STR, "argv": _STRS, "follow_up_argv": _STRS, "model_args": _S
           "flavor": _STR, "usage_limit": "regex", "install": "block", "sign_in": "block", "models": "block",
           "route": "block", "probe": "block"}
 INSTALLERS = ("npm", "binary", "tarball")
-SIGN_IN_KINDS = ("none", "ocx", "grok", "agy", "cursor", "unknown")
+SIGN_IN_KINDS = ("none", "magpie", "grok", "agy", "cursor", "unknown")
 GOAL_LIMITS = {"workers": _INT, "attempts": _INT, "runs": _INT, "wall_h": _INT, "usage_move": _BOOL}
 ALIAS = {"provider": _STR, "id": _STR, "thinking": _STR}
 RULE = {"name": _STR, "when": "when", "runner": _STR}

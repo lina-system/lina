@@ -8,7 +8,7 @@ Background delegation remains process-local. A returned handle is not proof the 
 
 ## Scheduled work
 
-Use the `cronjob` tool for scheduled work. Inspect existing jobs with `lina cron list`, scheduler state with `lina cron status`, and actual execution attempts with `lina cron runs`. Configuration alone does not prove delivery. Verify the job's working directory, profile, OCX model routing, and delivery target.
+Use the `cronjob` tool for scheduled work. Inspect existing jobs with `lina cron list`, scheduler state with `lina cron status`, and actual execution attempts with `lina cron runs`. Configuration alone does not prove delivery. Verify the job's working directory, profile, magpie model routing, and delivery target.
 
 Scripts without an agent run avoid inference cost; scripts used as pre-run collection feed their output to the agent. Inspect `hermes_cli/subcommands/cron.py` before naming creation flags. Respect scheduler locks and preserve conversation role alternation when delivering results.
 

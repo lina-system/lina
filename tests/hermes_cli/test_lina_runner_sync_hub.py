@@ -14,7 +14,7 @@ import time
 
 import pytest
 
-from hermes_cli import lina_ocx, lina_runner_sync, lina_runner_sync_daily, lina_runners
+from hermes_cli import lina_deps, lina_runner_sync, lina_runner_sync_daily, lina_runners
 from hermes_cli import lina_runner_sync_state as state
 from tests.hermes_cli.test_lina_runner_sync import _hold_a_hub_slot, current, make_hub, release, run
 from tests.hermes_cli.test_lina_runner_sync_node import _Ended, _local
@@ -43,7 +43,7 @@ def _install_grok(root) -> None:
     entry = vendor / "1.0.70" / "grok"
     entry.write_bytes(release("1.0.70"))
     entry.chmod(0o755)
-    lina_ocx.set_current(root, "1.0.70", vendor)
+    lina_deps.set_current(root, "1.0.70", vendor)
 
 
 def _record(root) -> dict:

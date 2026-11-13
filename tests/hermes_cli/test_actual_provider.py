@@ -21,7 +21,7 @@ def test_actual_profile_fetch_models_sends_credential_only_to_original_origin(
     import http.server
     import threading
 
-    profile = get_provider_profile("ocx")
+    profile = get_provider_profile("magpie")
 
     source_auth_headers: list[str | None] = []
     target_auth_headers: list[str | None] = []

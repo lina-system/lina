@@ -193,8 +193,8 @@ def _worker_model_path_answers(request, monkeypatch):
     """Default every work node's model path to answering ``200`` for a test (lina#416).
 
     ``worker.device.probe``/``hello`` ask the node's model path for a runner that reaches models
-    through the node's own OCX (omo, claude, codex) and a node that does not answer is never bid
-    on, so without this every test that places work on such a device would depend on a live OCX
+    through the node's own MAGPIE (omo, claude, codex) and a node that does not answer is never bid
+    on, so without this every test that places work on such a device would depend on a live MAGPIE
     on the machine running the suite — and would give a different answer on a host that runs one.
     Only the socket is stubbed: the URL, the runner the field is asked for, the
     ``model_path``/``model_path_why`` shape and the bid's use of it run as they do on a node. The

@@ -17,7 +17,7 @@
 4. The node script stops the CLI, removes its folder and the node's runner report cache; the hub reads hello again
    and the result says whether the node now reports the runner signed in.
 
-Runners that sign in through OCX or a key are only reported here. No address, code or token is printed, logged or
+Runners that sign in through magpie or a key are only reported here. No address, code or token is printed, logged or
 written into a result, the inbox or a card.
 """
 
@@ -65,7 +65,7 @@ METHODS = {
     "grok": Method(("login", "--oauth"), ".grok/auth.json"),
     "agy": Method((), ".gemini/antigravity-cli/antigravity-oauth-token", pty=True, menu=True),
 }
-REPORTED_ONLY = {"ocx": "reported only: signs in through OCX", "cursor": "reported only: signs in with a key"}
+REPORTED_ONLY = {"magpie": "reported only: signs in through magpie", "cursor": "reported only: signs in with a key"}
 
 # $1 the sign-in folder, $2 report cache to remove, $3 a pid to spare (the caller). Stops every process recorded in
 # the folder's `pids` and all their descendants (found before any is signalled, so a CLI that a terminal wrapper put

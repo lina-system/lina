@@ -12,7 +12,7 @@ from pathlib import Path
 import tempfile
 import time
 
-from hermes_cli.lina_ocx import lina_root
+from hermes_cli.lina_deps import lina_root
 from hermes_cli.undo.models import UndoError
 
 

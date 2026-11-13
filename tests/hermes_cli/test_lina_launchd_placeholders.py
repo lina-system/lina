@@ -2,7 +2,7 @@
 
 launchd jobs do not download cloud placeholders by default, so a job opening a not yet downloaded file of a synced
 Desk (and every child process it starts, which inherits the setting) would fail. The gateway plist already set it;
-the services written through ``service_definition`` (``ai.lina.ocx``, ``ai.lina.worker``) and the one-off gateway job
+the services written through ``service_definition`` (``ai.lina.worker``) and the one-off gateway job
 must too. The plists are generated and read back; nothing is loaded.
 """
 
@@ -13,12 +13,8 @@ import sys
 
 import pytest
 
-from hermes_cli import gateway_launchd_runtime, lina_ocx_service, lina_services
+from hermes_cli import gateway_launchd_runtime, lina_services
 from hermes_cli.worker import service as worker_service
-
-
-def _ocx(tmp_path) -> dict:
-    return plistlib.loads(lina_ocx_service.definition("launchd", tmp_path, "0.0.0", 10100).encode())
 
 
 def _worker(tmp_path) -> dict:
@@ -30,7 +26,7 @@ def _seam(tmp_path) -> dict:
         "launchd", "ai.lina.any", ["/bin/true"], {}, logs=lina_services.service_logs(tmp_path, "any")).encode())
 
 
-@pytest.mark.parametrize("plist", [_ocx, _worker, _seam], ids=["ocx", "worker", "service_definition"])
+@pytest.mark.parametrize("plist", [_worker, _seam], ids=["worker", "service_definition"])
 def test_service_plists_materialize_dataless_files(tmp_path, plist):
     data = plist(tmp_path)
     assert data["MaterializeDatalessFiles"] is True

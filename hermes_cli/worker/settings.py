@@ -16,7 +16,7 @@ worker:
   todo_link: {kind: hermes, command: [my-todo]}  # `<command> link|evidence|note <to-do> ...` for --todo; unset = none
   hub_rules: "- This machine is the hub: ..."     # added to the first prompt of a run on a `host: local` device
   models: {...}                    # see models.py
-  proxy: {kind: ocx}               # this node's model proxy, ocx or magpie: proxy.py, docs/worker-proxy-switch.md
+  proxy: {remote_id: hub}          # this node's magpie and its link to the hub: proxy.py, docs/worker-proxy-switch.md
   runners: {...}                   # see runners/__init__.py
 ```
 
@@ -35,7 +35,7 @@ from pathlib import Path
 LOCAL = "local"
 ROLES = ("work", "files", "person")
 FILE_KIND = "file"
-MODEL_CHECK = "http://127.0.0.1:10100/healthz"  # a node's model path: its own OCX's /healthz, asked on the node
+MODEL_CHECK = "http://127.0.0.1:3425/v1/models"  # a node's model path: its own magpie's model list, asked on the node
 DEFAULTS = {"cap": 1, "min_free_gb": 5, "min_free_mem_gb": 4, "input_max_mb": 300, "memory_max": "12G",
             "cooloff_failures": 2, "cooloff_window_s": 1800, "cooloff_quick_s": 120, "cooloff_s": 900,
             "poll_s": 15.0, "stall_grace_s": 600.0, "answered_grace_s": 60.0, "background_max_s": 3 * 3600.0,
@@ -156,7 +156,7 @@ class Device:
     deny: tuple[str, ...] = ()  # a file node's denied folders: absolute paths and folder-name patterns
     volumes: tuple[str, ...] = ()  # where a file node's folder-name patterns are looked for (3 levels deep)
     root: str = "lina-file-node"  # a file node's task folders, under its HOME
-    model_check: str | None = None  # the node's model path, asked on the node; None: not set, use the root's ocx.port
+    model_check: str | None = None  # the node's model path, asked on the node; None: MODEL_CHECK
     scan_s: int = 300  # how long the denied-folder check may look after a run
 
     @property

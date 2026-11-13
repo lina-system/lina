@@ -16,7 +16,7 @@ import subprocess
 from pathlib import Path
 from typing import Callable
 
-from hermes_cli import lina_ocx, lina_runners
+from hermes_cli import lina_deps, lina_runners
 from hermes_cli import lina_runner_sync_state as state
 
 VERB = "runner-sync"
@@ -83,22 +83,6 @@ def _one(worker_root: Path, root: Path, name: str, entry: dict, run, fetch) -> d
 
 def platform() -> str | None:
     try:
-        return lina_ocx.platform_key()
-    except lina_ocx.OcxError:
+        return lina_deps.platform_key()
+    except lina_deps.DepsError:
         return None
-
-
-def ocx_report(root: Path) -> dict:
-    """``hello``'s ``capabilities.ocx``: whether OCX runs outside LINA, LINA's own version, and the ``/healthz``
-    status code on the configured port (None when nothing answers). Nothing here is a secret."""
-    try:
-        external = lina_ocx.external(root) is not None
-    except lina_ocx.OcxError:
-        external = True
-    try:
-        port = lina_ocx.configured_port(root)
-    except (lina_ocx.OcxError, KeyError, ValueError, TypeError):
-        port = lina_ocx.DEFAULT_PORT
-    status, _ = lina_ocx.http_get(port, "/healthz", timeout=1)
-    return {"external": external, "version": None if external else lina_ocx.current_version(root),
-            "health": status or None}

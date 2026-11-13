@@ -19,7 +19,7 @@ class _RecordingProfile:
         return ["relay-only-model"]
 
 
-@pytest.mark.parametrize("provider", ["ocx"])
+@pytest.mark.parametrize("provider", ["magpie"])
 def test_canonical_url_preserves_native_catalog_but_other_paths_stay_relays(monkeypatch, provider):
     from hermes_cli.config import atomic_config_write
     from hermes_constants import get_hermes_home

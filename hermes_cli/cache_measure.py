@@ -1,8 +1,8 @@
-"""Prompt-cache hit rate from OCX usage rows, by the method of the lina#17 baseline (lina#25).
+"""Prompt-cache hit rate from usage-log rows, by the method of the lina#17 baseline (lina#25).
 
 ``lina memory cache-report --usage <usage.jsonl>`` reads only the usage fields of each row (``inputTokens``,
 ``cacheReadInputTokens``, ``cacheCreationInputTokens``, ``cacheCreation1hInputTokens``, ``outputTokens``,
-``conversationId``, ``timestamp``); no transcript and no message text. ``inputTokens`` is OCX's total input, cache
+``conversationId``, ``timestamp``); no transcript and no message text. ``inputTokens`` is the request's total input, cache
 reads and creations included, so the token-weighted hit rate is ``sum(cache_read) / sum(input_total)`` over the
 metered rows. A row without ``inputTokens`` (a cancelled request) is unreported: it is counted apart and never as a
 miss or as zero. ``cacheCreationInputTokens`` is every cache write; ``cacheCreation1hInputTokens`` is the 1h-tier

@@ -1,4 +1,4 @@
-"""``hermes omo`` (``lina omo``) subcommand: LINA's pinned omo (install, upgrade, rollback, status) and its OCX
+"""``hermes omo`` (``lina omo``) subcommand: LINA's pinned omo (install, upgrade, rollback, status) and its magpie
 routing through ocx-omo (``lina omo routing plan|apply|check``)."""
 
 from __future__ import annotations
@@ -29,12 +29,12 @@ def _run(args) -> int:
 
 
 def _cmd_omo(args) -> None:
-    from hermes_cli.lina_ocx import OcxError
+    from hermes_cli.lina_deps import DepsError
     if not args.omo_action:
         args.omo_action, args.json = "status", False
     try:
         sys.exit(_run(args))
-    except OcxError as exc:
+    except DepsError as exc:
         print(f"omo: {exc}")
         sys.exit(1)
 
@@ -42,7 +42,7 @@ def _cmd_omo(args) -> None:
 def build_omo_parser(subparsers) -> None:
     """Attach the ``omo`` subcommand to ``subparsers``."""
     parser = subparsers.add_parser(
-        "omo", help="LINA's pinned omo: install, upgrade, rollback, status, and its OCX routing",
+        "omo", help="LINA's pinned omo: install, upgrade, rollback, status, and its magpie routing",
         description="Installs the pinned omo under $LINA_HOME/vendor/omo with the pinned Node (nothing global; an omo "
                     "installed by hand is left alone) and runs it through $LINA_HOME/bin/omo. `routing` runs ocx-omo "
                     "on the pinned Node with the same arguments and exit codes (check: 0 in step, 10 changes to "

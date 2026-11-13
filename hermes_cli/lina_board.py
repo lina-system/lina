@@ -2,7 +2,7 @@
 worker runs on cards and inbox.
 
 Sources: the work record (``lina work``: the owner's to-dos, decisions, due groups), ``lina worker`` (runs that are
-not kanban work cards, and the devices of ``devices.workers``), LINA's own OCX or ``ocx.external`` (quota). Each read
+not kanban work cards, and the devices of ``devices.workers``), this machine's magpie (quota). Each read
 is separate, so a source that fails shows up in ``errors`` and the counts made from it are ``None``, never 0. Every
 count is the length of a list in the same snapshot. Notice lines are in the work record's locale (``work.locale``).
 """
@@ -20,7 +20,7 @@ from typing import Any, Callable
 
 API_VERSION = 1
 DONE_WINDOW_S = 86400
-# The app polls /board, /devices and /quota together and each outside read is seconds of ssh and OCX calls, so one read
+# The app polls /board, /devices and /quota together and each outside read is seconds of ssh and magpie calls, so one read
 # answers every request for this long.
 READ_TTL_S = 5
 # A finished good read older than READ_TTL_S still answers at once for this long while one background read replaces
@@ -135,9 +135,9 @@ def warm() -> threading.Thread:
 
 
 def _root() -> Path:
-    """The board's own root: the work record, the quota view and the read marks (``lina_ocx.lina_root``). Worker
+    """The board's own root: the work record, the quota view and the read marks (``lina_deps.lina_root``). Worker
     state is not read from here but through :func:`_worker_base` (lina#269)."""
-    from hermes_cli.lina_ocx import lina_root
+    from hermes_cli.lina_deps import lina_root
     return lina_root()
 
 
@@ -213,7 +213,7 @@ def quota_read(root: Path, now: float) -> list[dict]:
 
 def _source(name: str, errors: list[dict], read: Callable[[], Any]):
     """One source's read; a failure becomes ``{source, message}`` in *errors* and the read gives None. Each source is
-    a separate store, device or process (sqlite, psql, ssh, OCX) with its own error types, and one that fails must not
+    a separate store, device or process (sqlite, psql, ssh, magpie) with its own error types, and one that fails must not
     take the others down, so any error is caught here and reported."""
     from hermes_cli.config_backend import ConfigBackendUnavailable
     started = time.monotonic()
@@ -241,7 +241,7 @@ def _outside(name: str, root: Path, errors: list[dict], read: Callable[[list[dic
 
 
 def _parallel(reads: dict[str, Callable[[list[dict]], Any]]) -> tuple[dict[str, Any], list[dict]]:
-    """Each read in its own thread with the request's context (they wait on ssh, OCX and the record, not the CPU);
+    """Each read in its own thread with the request's context (they wait on ssh, magpie and the record, not the CPU);
     the errors in the order of *reads*, whatever order the reads end in."""
     errors: dict[str, list[dict]] = {name: [] for name in reads}
     with ThreadPoolExecutor(len(reads), thread_name_prefix="lina-board") as pool:
@@ -322,11 +322,11 @@ def devices(now: float | None = None) -> dict:
 
 
 def quota(now: float | None = None) -> dict:
-    """``GET /api/lina/quota``: the quota view and the services OCX holds no account for (``missing``, null when
-    OCX could not be read)."""
+    """``GET /api/lina/quota``: the quota view and the services magpie holds no account for (``missing``, null when
+    magpie could not be read)."""
     from hermes_cli.lina_board_quota import view
     now, root, errors = time.time() if now is None else now, _root(), []
-    data, at = _outside("quota-view", root, errors, lambda errs: view(root, now, errs))
+    data, at = _outside("quota-view", root, errors, lambda _errs: view(root, now))
     return {"version": API_VERSION, "at": min(now, at or now), "errors": errors,
             "quota": data["quota"] if data else [],
             "missing": data["missing"] if data else None}
@@ -334,7 +334,7 @@ def quota(now: float | None = None) -> dict:
 
 def board(now: float | None = None) -> dict:
     """``GET /api/lina/board``: one snapshot of everything above. The four reads run at once; their calls to other
-    devices and to OCX are shared (:data:`READS`: the quota view, the nodes' ``hello`` and ``probe``, the running
+    devices and to magpie are shared (:data:`READS`: the quota view, the nodes' ``hello`` and ``probe``, the running
     runs' live view), so ``at`` is the time of the oldest of those served. The record, the hub's runs and the read
     marks are read for every request, so a write (a read mark, ``counts.unread``) shows at once."""
     now, root = time.time() if now is None else now, _root()

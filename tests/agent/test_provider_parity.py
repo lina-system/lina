@@ -346,7 +346,7 @@ class TestBuildApiKwargsAIGateway:
 
 class TestBuildApiKwargsConnectorMetadata:
     def test_connector_data_use_is_not_sent_to_other_providers(self, monkeypatch):
-        agent = _make_agent(monkeypatch, "ocx")
+        agent = _make_agent(monkeypatch, "magpie")
         messages = [{"role": "user", "content": "hi"},
                     {"role": "assistant", "content": "", "tool_calls": [
                         {"id": "c1", "type": "function", "function": {"name": "tool_call", "arguments": "{}"}}]},

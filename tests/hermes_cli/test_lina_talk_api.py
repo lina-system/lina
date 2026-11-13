@@ -17,7 +17,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import hermes_yaml
-from hermes_cli import lina_ocx, lina_talk
+from hermes_cli import lina_deps, lina_talk
 from tests.hermes_cli._work_env import WorkEnv
 
 pytestmark = pytest.mark.platforms("posix")
@@ -111,7 +111,7 @@ class FakeGateway:
 @pytest.fixture
 def work(tmp_path, monkeypatch):
     env = WorkEnv(tmp_path, monkeypatch)
-    monkeypatch.setattr(lina_ocx, "lina_root", lambda: env.root)
+    monkeypatch.setattr(lina_deps, "lina_root", lambda: env.root)
     env.goal_and_todos()
     env.ok("add", "할 일", "--by", "owner", "--from", "beta", "--title", "회의 자료 보기", "--why", "기록용",
            "--done", "확인했다")

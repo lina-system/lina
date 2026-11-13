@@ -57,7 +57,7 @@
 | 앞머리 꼬리표 | `^[^\s:]+:\s` (목표 이름·할 일 제목) |
 | 길이 | 칸별 규칙 표의 길이를 넘는 글 |
 
-경고만 하는 것: 영어 단어가 셋 이상 이어질 때, 허용 목록 밖 영어 단어가 있을 때. 허용 목록: GitHub, Claude, OpenAI, Gemini, Slack, Telegram, NAS, Codex, Grok, Cursor, Antigravity, OCX, Synology, iPhone, Mac.
+경고만 하는 것: 영어 단어가 셋 이상 이어질 때, 허용 목록 밖 영어 단어가 있을 때. 허용 목록: GitHub, Claude, OpenAI, Gemini, Slack, Telegram, NAS, Codex, Grok, Cursor, Antigravity, magpie, Synology, iPhone, Mac.
 
 | 칸 | 쓰는 곳 | 꼭 쓰나 | 걸리면 | 쓰는 명령 |
 |---|---|---|---|---|

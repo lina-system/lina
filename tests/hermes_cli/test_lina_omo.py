@@ -18,10 +18,8 @@ from pathlib import Path
 
 import pytest
 
-from hermes_cli import lina_ocx, lina_omo, lina_omo_routing
+from hermes_cli import lina_deps, lina_omo, lina_omo_routing
 from hermes_cli.subcommands.omo import build_omo_parser
-from hermes_cli.worker.models import NAMES
-from tests.hermes_cli._lina_ocx_fakes import installed_root
 
 INTEGRITY = "sha512-" + "A" * 86 + "=="
 PINNED = "5.1.51"
@@ -96,15 +94,14 @@ def world(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(account))
     log = tmp_path / "calls.jsonl"
     monkeypatch.setenv("FAKE_LOG", str(log))
-    real = lina_ocx.pins()
+    real = lina_deps.pins()
     tarball = _node_tarball(real.node_version)
     digest = hashlib.sha256(tarball).hexdigest()
-    monkeypatch.setattr(lina_ocx, "pins", lambda path=None: lina_ocx.Pins(
-        real.node_version, "https://nodejs.invalid/dist", {key: digest for key in real.node_sha256}, real.package,
-        real.version, real.integrity))
+    monkeypatch.setattr(lina_deps, "pins", lambda path=None: lina_deps.Pins(
+        real.node_version, "https://nodejs.invalid/dist", {key: digest for key in real.node_sha256}))
     monkeypatch.setattr(lina_omo, "omo_pin", lambda path=None: lina_omo.OmoPin("omo-ai", PINNED, INTEGRITY))
-    monkeypatch.setattr(lina_ocx, "lina_root", lambda: root)
-    monkeypatch.setattr(lina_ocx, "LOCK_DIR", tmp_path / "npm-locks")
+    monkeypatch.setattr(lina_deps, "lina_root", lambda: root)
+    monkeypatch.setattr(lina_deps, "LOCK_DIR", tmp_path / "npm-locks")
 
     def fetch(url, dest):
         Path(dest).write_bytes(tarball)
@@ -118,7 +115,7 @@ def world(tmp_path, monkeypatch):
 def _catalog(world) -> Path:
     catalog = world["tmp"] / "acct" / ".omo" / "agent" / "models.json"
     catalog.parent.mkdir(parents=True)
-    catalog.write_text(json.dumps({"providers": {"opencodex": {"models": [{"id": "gpt-fake"}]}}}))
+    catalog.write_text(json.dumps({"providers": {"magpie": {"models": [{"id": "gpt-fake"}]}}}))
     return catalog
 
 
@@ -159,7 +156,7 @@ def test_install_writes_only_under_the_lina_home_and_the_shim_runs_current_on_th
 def test_an_omo_whose_lock_has_another_integrity_is_refused_and_nothing_is_kept(world, monkeypatch):
     monkeypatch.setattr(lina_omo, "omo_pin", lambda path=None: lina_omo.OmoPin("omo-ai", PINNED,
                                                                                "sha512-" + "B" * 86 + "=="))
-    with pytest.raises(lina_ocx.OcxError, match="the pin is sha512-B"):
+    with pytest.raises(lina_deps.DepsError, match="the pin is sha512-B"):
         lina_omo.install(world["root"], fetch=world["fetch"], out=lambda line: None)
     assert not (world["root"] / "vendor" / "omo" / PINNED).exists()
     assert lina_omo.current_version(world["root"]) is None
@@ -193,13 +190,13 @@ def test_an_upgrade_whose_omo_reports_another_version_keeps_current(world, monke
 
 @pytest.mark.platforms("posix")
 @pytest.mark.parametrize("code", [0, 10])
-def test_lina_omo_routing_check_passes_ocx_omo_s_exit_code_through(world, monkeypatch, code):
+def test_lina_omo_routing_check_passes_the_tool_exit_code_through(world, monkeypatch, code):
     _install(world)
     monkeypatch.setenv("FAKE_CODES", json.dumps({"check": code}))
     assert _lina_omo("routing", "check", "--json") == code
     assert world["calls"]()[-1] == ["ocx-omo", "check", "--json", "--omo-task",
                                     str(lina_omo.omo_task_path(world["root"])), "--models",
-                                    str(world["tmp"] / "acct" / ".omo" / "agent" / "models.json")]
+                                    str(world["tmp"] / "acct" / ".omo" / "agent" / "models.json"), "--remote-id", "hub"]
 
 
 @pytest.mark.platforms("posix")
@@ -216,24 +213,13 @@ def test_install_shows_pending_routing_and_applies_it_only_with_apply(world, mon
 
 
 @pytest.mark.platforms("posix")
-def test_install_on_a_fresh_home_without_lina_s_ocx_reports_routing_not_set_up_and_succeeds(world):
+def test_install_without_a_model_catalog_reports_routing_not_set_up_and_succeeds(world):
     lines = []
     assert lina_omo_routing.install_step(root=world["root"], fetch=world["fetch"], out=lines.append) == 0
-    assert any("not set up" in line and "lina models install" in line for line in lines)
+    assert any("not set up" in line and "magpie's connection command" in line for line in lines)
     assert not [call for call in world["calls"]() if call[:1] == ["ocx-omo"]]
     assert not (world["tmp"] / "acct" / ".omo").exists()  # nothing written into omo's home
 
-
-@pytest.mark.platforms("posix")
-def test_install_on_a_fresh_home_sets_up_omo_s_catalog_through_lina_s_running_ocx(world, monkeypatch):
-    installed_root(world["root"])
-    monkeypatch.setattr(lina_ocx, "own_proxy_running", lambda root, port: True)
-    lines = []
-    assert lina_omo_routing.install_step(root=world["root"], fetch=world["fetch"], out=lines.append) == 0
-    catalog = world["tmp"] / "acct" / ".omo" / "agent" / "models.json"
-    assert json.loads(catalog.read_text())["providers"]["opencodex"]["models"] == [{"id": "gpt-fake"}]
-    assert [call[1] for call in world["calls"]() if call[:1] == ["ocx-omo"]] == ["check"]
-    assert not any("not set up" in line for line in lines)
 
 
 # lina#587: the routes follow the node's model proxy (`worker.proxy`, lina#585).
@@ -250,57 +236,56 @@ def _models(world, providers: dict) -> Path:
 
 
 @pytest.mark.platforms("posix")
-def test_routing_on_a_magpie_node_passes_the_proxy_its_remote_and_the_one_name_table(world):
+def test_routing_passes_the_configured_remote_id_without_translation_options(world):
     _install(world)
-    _proxy(world, "{kind: magpie, remote_id: link-a}")
+    _proxy(world, "{remote_id: link-a}")
     assert _lina_omo("routing", "plan") == 0
     assert world["calls"]()[-1] == ["ocx-omo", "plan", "--omo-task", str(lina_omo.omo_task_path(world["root"])),
                                     "--models", str(world["tmp"] / "acct" / ".omo" / "agent" / "models.json"),
-                                    "--proxy", "magpie", "--remote-id", "link-a", "--names", str(NAMES)]
-    assert NAMES.is_relative_to(Path(lina_omo_routing.__file__).parent)  # LINA's table, not a copy in the build
+                                    "--remote-id", "link-a"]
 
 
 @pytest.mark.platforms("posix")
 def test_routing_on_a_node_whose_own_magpie_holds_the_models_passes_an_empty_remote_id(world):
     _install(world)
-    _proxy(world, '{kind: magpie, remote_id: ""}')
+    _proxy(world, '{remote_id: ""}')
     assert _lina_omo("routing", "plan") == 0
-    assert world["calls"]()[-1][-6:] == ["--proxy", "magpie", "--remote-id", "", "--names", str(NAMES)]
+    assert world["calls"]()[-1][-2:] == ["--remote-id", ""]
 
 
 @pytest.mark.platforms("posix")
-def test_install_on_a_magpie_node_reads_magpie_s_catalog_and_never_enables_ocx_s_integration(world, monkeypatch):
-    installed_root(world["root"])
-    monkeypatch.setattr(lina_ocx, "own_proxy_running", lambda root, port: True)
-    _proxy(world, "{kind: magpie}")
-    catalog = _models(world, {"opencodex": {"models": [{"id": "gpt-fake"}]}})
+def test_install_requires_a_magpie_catalog_and_leaves_other_provider_catalogs_unchanged(world, monkeypatch):
+    _proxy(world, "{}")
+    catalog = _models(world, {"other": {"models": [{"id": "gpt-fake"}]}})
     before, lines = catalog.read_text(), []
     assert lina_omo_routing.install_step(root=world["root"], fetch=world["fetch"], out=lines.append) == 0
     assert any("not set up" in line and "providers.magpie" in line for line in lines)
-    assert catalog.read_text() == before  # OCX did not write omo's catalog
+    assert catalog.read_text() == before  # magpie did not write omo's catalog
     assert not [call for call in world["calls"]() if call[:1] == ["ocx-omo"]]
 
     _models(world, {"magpie": {"models": [{"id": "hub/codex/gpt-fake"}]}})
     assert lina_omo_routing.install_step(root=world["root"], fetch=world["fetch"], out=lines.append) == 0
     checked = [call for call in world["calls"]() if call[:1] == ["ocx-omo"]]
     assert [call[1] for call in checked] == ["check"]
-    assert checked[0][-6:] == ["--proxy", "magpie", "--remote-id", "hub", "--names", str(NAMES)]
+    assert checked[0][-2:] == ["--remote-id", "hub"]
 
 
 @pytest.mark.platforms("posix")
-def test_a_wrong_worker_proxy_is_an_error_with_its_key_and_ocx_omo_is_not_run(world):
+def test_a_wrong_worker_proxy_is_an_error_with_its_key_and_routing_is_not_run(world):
     _install(world)
-    _proxy(world, "{kind: openrouter}")
+    _proxy(world, "{remote_id: invalid/name}")
     lines = []
     assert lina_omo_routing.run_verb("check", [], world["root"], out=lines.append) == 2
     assert lina_omo_routing.check(world["root"])[0] == 2
-    assert any("worker.proxy.kind" in line for line in lines)
+    assert any("worker.proxy.remote_id" in line for line in lines)
     assert not [call for call in world["calls"]() if call[:1] == ["ocx-omo"]]
 
 
-def test_a_change_of_the_name_table_changes_the_build_digest(tmp_path):
-    table = tmp_path / "proxy_names.json"
-    table.write_bytes(NAMES.read_bytes())
-    assert lina_omo_routing.source_digest(names=table) == lina_omo_routing.source_digest()
-    table.write_text(json.dumps({"namespaces": {"anthropic": "claude"}, "bare_prefixes": {}}))
-    assert lina_omo_routing.source_digest(names=table) != lina_omo_routing.source_digest()
+def test_a_change_of_routing_sources_changes_the_build_digest(tmp_path):
+    import shutil
+    source = tmp_path / "routing"
+    shutil.copytree(lina_omo_routing.SOURCE, source)
+    before = lina_omo_routing.source_digest(source)
+    policy = source / "policy.default.json"
+    policy.write_text(policy.read_text() + "\n")
+    assert lina_omo_routing.source_digest(source) != before

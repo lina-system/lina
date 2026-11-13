@@ -2,11 +2,11 @@
 
 ``worker/settings.py`` ``lina_home()`` (lina#227) is the worker's root: ``LINA_HOME`` when set, and a
 ``HERMES_HOME`` of Hermes Agent's (a Hermes card session's) ignored for the platform default. The board resolved its
-own root instead (``lina_ocx.lina_root``, the ``HERMES_HOME`` default) and handed that to ``worker_read``,
+own root instead (``lina_deps.lina_root``, the ``HERMES_HOME`` default) and handed that to ``worker_read``,
 ``devices_read`` and the event stream, so inside a card session, or whenever the two roots differed, it read worker
 state nobody wrote: no runs, no devices, no run events.
 
-``lina_ocx.lina_root`` is deliberately NOT patched here — a patched root is exactly what made the two agree and hid
+``lina_deps.lina_root`` is deliberately NOT patched here — a patched root is exactly what made the two agree and hid
 this case. The run is written through the hub's own store under ``settings.root()``, which resolves ``lina_home()``
 itself, the same way ``lina worker submit`` does.
 """
@@ -16,7 +16,7 @@ from __future__ import annotations
 import pytest
 
 import hermes_constants
-from hermes_cli import lina_board, lina_board_events, lina_ocx
+from hermes_cli import lina_board, lina_board_events, lina_deps
 from tests.hermes_cli._work_env import NOW, WorkEnv
 
 pytestmark = pytest.mark.platforms("posix")
@@ -29,7 +29,7 @@ READY = {"runner": "omo", "ready": True, "serve": True, "running": 1, "cores": 8
 @pytest.fixture
 def split_roots(tmp_path, monkeypatch):
     """``LINA_HOME`` at the worker's root and ``HERMES_HOME`` at a Hermes Agent home: the worker writes the first and
-    the board's own root (``lina_ocx.lina_root``, left unpatched) is the second. Both are under *tmp_path*."""
+    the board's own root (``lina_deps.lina_root``, left unpatched) is the second. Both are under *tmp_path*."""
     env = WorkEnv(tmp_path, monkeypatch)
     env.config(extra=DEVICES)  # the LINA root's config: the devices and the worker's settings
     hermes_agent = tmp_path / "account" / ".hermes"
@@ -64,7 +64,7 @@ def test_the_board_reads_the_runs_devices_and_run_events_the_worker_wrote(split_
     env = split_roots
     monkeypatch.setattr(hub.Hub, "meta", lambda _hub, job, live=False: {"state": "running"})
     board_root = lina_board._root()
-    assert board_root == lina_ocx.lina_root() != env.root  # the two roots disagree, as they do in a card session
+    assert board_root == lina_deps.lina_root() != env.root  # the two roots disagree, as they do in a card session
 
     _worker_run("OT-ALP0001", "exec_start", host="here")
     now = float(NOW)

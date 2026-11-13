@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from hermes_cli import lina_ocx, lina_runner_sync, lina_runners
+from hermes_cli import lina_deps, lina_runner_sync, lina_runners
 from hermes_cli import lina_runner_sync_state as state
 from hermes_cli.lina_runner_sync import Env
 from hermes_cli.lina_runner_sync_sources import SourceError
@@ -57,8 +57,8 @@ def test_a_tool_added_as_one_settings_block_is_installed_probed_and_listed_by_th
     root.mkdir()
     (root / "config.yaml").write_text(json.dumps({"worker": {"runners": {"faketool": settings_block()}}}))
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setattr(lina_ocx, "lina_root", lambda: root)
-    monkeypatch.setattr(lina_ocx, "platform_key", lambda: "linux-x64")
+    monkeypatch.setattr(lina_deps, "lina_root", lambda: root)
+    monkeypatch.setattr(lina_deps, "platform_key", lambda: "linux-x64")
     notices: list[str] = []
 
     def fetch(url: str, dest: Path) -> None:
@@ -66,8 +66,6 @@ def test_a_tool_added_as_one_settings_block_is_installed_probed_and_listed_by_th
         Path(dest).write_bytes(release("1.0.0"))
 
     env = Env(http=Source("1.0.1"), fetch=fetch, nodes=lambda root: [], sign_in=lambda runner: "none",
-              ocx_logs=lambda root: pytest.fail("the probe does not read OCX logs"),
-              ocx_models=lambda root: pytest.fail("the block has no model refresh"),
               notify=lambda root, text: notices.append(text) or "kept")
     assert lina_runners.current_version(root, lina_runners.pins()["faketool"]) is None
 

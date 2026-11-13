@@ -1,7 +1,7 @@
 """lina#25: a 200-turn synthetic load through the real ``AIAgent`` against a model that caches like Anthropic.
 
 ``context.engine: lcm-x`` (its default compaction settings) and ``memory.provider: lina-memory``, recalls every ten
-turns, a skill added, the date turning at midnight and two compactions. Every request becomes an OCX usage row
+turns, a skill added, the date turning at midnight and two compactions. Every request becomes a magpie usage row
 (``cache_server.py``) and, with ``memory.prefix_fingerprints`` on, a prefix fingerprint; ``lina memory cache-report``
 reads both. Each run writes its rows and report beside it (``--basetemp`` keeps them). One test file per
 ``memory.auto_recall_append`` setting, so each stays well within the runner's per-file limit.

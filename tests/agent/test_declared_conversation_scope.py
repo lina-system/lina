@@ -64,15 +64,15 @@ def _agent(session_id, session_db=None, key=None):
 def _sticky_key(session_id):
     from providers import get_provider_profile
 
-    return get_provider_profile("ocx").build_api_kwargs_extras(session_id=session_id)[1][
+    return get_provider_profile("magpie").build_api_kwargs_extras(session_id=session_id)[1][
         "extra_headers"
     ]["session-id"]
 
 
-def _ocx_headers(session_id):
+def _magpie_headers(session_id):
     from providers import get_provider_profile
 
-    _extra_body, top_level = get_provider_profile("ocx").build_api_kwargs_extras(
+    _extra_body, top_level = get_provider_profile("magpie").build_api_kwargs_extras(
         model="x-ai/grok-4",
         session_id=session_id,
     )
@@ -380,7 +380,7 @@ class TestPromptCacheKeyStability:
 
 
 class TestProviderStickyKeys:
-    """OCX sticky ids read the declared routing scope."""
+    """MAGPIE sticky ids read the declared routing scope."""
 
     @pytest.fixture(autouse=True)
     def _clean_context(self):
@@ -412,25 +412,25 @@ class TestProviderStickyKeys:
         finally:
             reset_conversation_context(conversation)
 
-    def test_ocx_header_follows_the_declared_scope(self):
+    def test_magpie_header_follows_the_declared_scope(self):
         scope = declared_conversation_scope(_agent(RUN_1, None, CHAT_KEY))
         token = set_affinity_scope(scope)
         try:
-            headers = _ocx_headers(RUN_1)
-            headers_next = _ocx_headers(RUN_2)
+            headers = _magpie_headers(RUN_1)
+            headers_next = _magpie_headers(RUN_2)
         finally:
             reset_affinity_scope(token)
 
         assert headers["session-id"] == headers_next["session-id"] == scope
 
-    def test_ocx_sticky_key_follows_the_declared_scope(self):
+    def test_magpie_sticky_key_follows_the_declared_scope(self):
         from providers import get_provider_profile
 
         scope = declared_conversation_scope(_agent(RUN_1, None, CHAT_KEY))
         token = set_affinity_scope(scope)
         try:
-            body = get_provider_profile("ocx").build_api_kwargs_extras(session_id=RUN_1)[1]
-            body_next = get_provider_profile("ocx").build_api_kwargs_extras(session_id=RUN_2)[1]
+            body = get_provider_profile("magpie").build_api_kwargs_extras(session_id=RUN_1)[1]
+            body_next = get_provider_profile("magpie").build_api_kwargs_extras(session_id=RUN_2)[1]
         finally:
             reset_affinity_scope(token)
 

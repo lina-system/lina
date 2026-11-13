@@ -6,7 +6,7 @@ the shared judge in ``lina-system/.github`` sets), ``labels_any`` shares a label
 issue's size. A rule with no condition matches every issue (validation keeps it last).
 
 ``decide`` is the run path's one call (lina#257): at submit it picks the runner and the model a run starts with and
-says where each came from, under which settings revision, and what OCX said of the model.
+says where each came from, under which settings revision, and what magpie said of the model.
 """
 
 from __future__ import annotations
@@ -52,19 +52,19 @@ def route(doc: dict, labels: list[str] | None = None, size: str | None = None) -
 class Decision:
     runner: str
     model: object  # ModelProfile | None: None is the runner's own default
-    settings: dict  # {rev, runner_source, model_source, ocx_check}
+    settings: dict  # {rev, runner_source, model_source, model_state}
     fallback: dict | None = None  # the model_fallback receipt {from, to, why}
 
 
 def decide(base: Path | None, runner: str | None, mode: str, override: str | None, labels: list[str] | None = None,
            size: str | None = None, now: float | None = None) -> Decision:
     """The runner (``--runner``, else routing on *labels*/*size*, else the default; one that is off is refused with
-    ``SettingsError``) and the model (``--model``, else the runner's ``model``, else the mode default). When OCX has
+    ``SettingsError``) and the model (``--model``, else the runner's ``model``, else the mode default). When magpie has
     that model ``off``, ``out_of_quota`` or ``no_account`` and the fallback (the runner's ``fallback_model``, else
-    ``worker.models.fallback``) is usable, the fallback is used; an explicit ``--model`` is only checked. OCX is never
+    ``worker.models.fallback``) is usable, the fallback is used; an explicit ``--model`` is only checked. magpie is never
     called here: the check reads the models view's last good list (``last_good``: this process's, else the snapshot
     file another process wrote), and without one of the last ten minutes it is ``unchecked``, so a submit never waits
-    on OCX."""
+    on magpie."""
     from hermes_cli import lina_work_settings_models as wm
     from hermes_cli.lina_work_settings_store import Store
     from hermes_cli.worker import models
@@ -104,5 +104,5 @@ def decide(base: Path | None, runner: str | None, mode: str, override: str | Non
                 fallback = {"from": models.name(model), "to": models.name(used), "why": check}
                 model = used
     settings = {"rev": rev.id, "runner_source": runner_source,
-                "model_source": model.source if model is not None else "runner", "ocx_check": check}
+                "model_source": model.source if model is not None else "runner", "model_state": check}
     return Decision(runner, model, settings, fallback)

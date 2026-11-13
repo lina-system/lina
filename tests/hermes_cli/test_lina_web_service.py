@@ -29,11 +29,10 @@ import urllib.request
 import pytest
 
 import hermes_constants
-from hermes_cli import lina_ocx_service, lina_services
+from hermes_cli import lina_services
 from hermes_cli import lina_web_service as web
 from hermes_cli.worker import service as worker_service
 from hermes_cli.worker import settings as worker_settings
-from tests.hermes_cli._lina_ocx_fakes import installed_root
 from tests.waiting import wait_until
 
 APP_HTML = '<html><head></head><body><div id="root">lina-app</div></body></html>'
@@ -54,14 +53,14 @@ def _systemd_parts(unit: str) -> tuple[list[str], dict[str, str]]:
 
 
 def _definitions(root, port):
-    return {"ocx": lambda kind: lina_ocx_service.definition(kind, root, "2.95.0", port),
-            "worker": lambda kind: worker_service.definition(kind, root),
+    return {"worker": lambda kind: worker_service.definition(kind, root),
             "web": lambda kind: web.definition(kind, root)}
 
 
-@pytest.mark.parametrize("name", ["ocx", "worker", "web"])
+@pytest.mark.parametrize("name", ["worker", "web"])
 def test_every_launchd_job_starts_under_osascript_with_its_own_logs(tmp_path, name):
-    root = installed_root(tmp_path / "lina")
+    root = tmp_path / "lina"
+    root.mkdir()
     define = _definitions(root, _free_port())[name]
     written = tmp_path / f"{name}.plist"
     written.write_text(define("launchd"), encoding="utf-8")
@@ -205,9 +204,9 @@ def test_service_jobs_never_carry_a_card_sessions_env(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_KANBAN_TASK", "t_card")
     monkeypatch.setenv("HERMES_KANBAN_WORKSPACE", str(tmp_path / "card-workspace"))
     monkeypatch.setenv("HERMES_DELEGATED_CHILD_CONTEXT", "1")
-    from hermes_cli.lina_ocx import lina_root
+    from hermes_cli.lina_deps import lina_root
     started_from = lina_root()  # what `lina services start` resolves in that shell
-    definitions = {**_definitions(installed_root(tmp_path / "lina"), _free_port()),
+    definitions = {**_definitions(tmp_path / "lina", _free_port()),
                    "worker": lambda kind: worker_service.definition(kind, started_from),
                    "web": lambda kind: web.definition(kind, started_from)}
     for name, define in definitions.items():

@@ -1,5 +1,5 @@
 {
-  "_comment": "Runtimes LINA installs for itself (lina#32, lina#34), read by hermes_cli/lina_ocx.py and hermes_cli/lina_runners.py. Each `runners.<name>` is one runner block (lina#531), omo included: how it is installed and pinned, `sign_in`, `models` (its model list and refresh), `route` (its route source) and `trial` (the one-call probe). Node serves OCX, omo and ocx-omo (>= 24); its sha256 per platform comes from nodejs.org/dist/v<version>/SHASUMS256.txt. The OCX and omo integrity is npm's dist.integrity for that exact version; tests/hermes_cli/test_lina_deps_pin.py checks it against the registry. Runners (lina#222): `npm` runners are installed like omo, and their integrity is npm's dist.integrity; `binary`/`tarball` runners come from the URL their own installer script downloads, checked against `sha256` or `sha512` per platform (agy's sha512 is its release manifest's; grok and cursor-agent publish none, so LINA recorded the sha256 of the official artifact, and grok's GCS md5 matched). `sign_in` names the read-only check in hermes_cli/lina_runners.py; `env` is set in the shim LINA runs them through.",
+  "_comment": "Runtimes LINA installs for itself, read by hermes_cli/lina_deps.py and hermes_cli/lina_runners.py. Node serves omo, ocx-omo and npm runners (>= 24); platform sha256 values come from nodejs.org/dist/v<version>/SHASUMS256.txt. Each runners.<name> describes its install, sign_in, models, route and trial. npm integrity is dist.integrity for that exact version; binary and tarball artifacts are checked against their pinned hashes.",
   "node": {
     "version": "24.22.2",
     "dist": "https://nodejs.org/dist",
@@ -9,11 +9,6 @@
       "linux-arm64": "95c264150aceb7f3437a29fd6984924f5f8d1511ea3cbd6c508b83f6c555dae2",
       "linux-x64": "361718c444e49af2ca5a110c83ba6a8901143f23ab285ebbef0341f391f482a9"
     }
-  },
-  "ocx": {
-    "package": "@bitkyc08/opencodex",
-    "version": "2.95.0",
-    "integrity": "sha512-7P/NZOqEq3EQ8NLvNf3evBvCSgjOkhfFA817KEKTKPIkaDmW0eIlQ4+XAzjj11VMTgNAkt32KJeyL4mJQGdJdg=="
   },
   "runners": {
     "omo": {
@@ -39,10 +34,7 @@
         ]
       },
       "models": {
-        "file": "~/.omo/agent/models.json",
-        "refresh": {
-          "ocx_client": "omo"
-        }
+        "file": "~/.omo/agent/models.json"
       },
       "route": {
         "source": "ocx-omo"
@@ -55,7 +47,7 @@
       "version": "0.166.0-alpha.5.1",
       "integrity": "sha512-agRE7KtoI+2zrPV59soKKCxkDaK0qaoz3qmnjKZ3VtkpiMzkcxke2POlgQfLv09Wy6ZnaXEcX73UQh5y3UXZoA==",
       "bin": "codex",
-      "sign_in": "ocx",
+      "sign_in": "magpie",
       "follow": {
         "npm": "latest"
       },
@@ -69,14 +61,7 @@
           "-C",
           "{dir}",
           "{prompt}"
-        ],
-        "ocx": true,
-        "ocx_match": {
-          "protocol": "responses"
-        }
-      },
-      "models": {
-        "file": "~/.codex/opencodex-catalog.json"
+        ]
       }
     },
     "claude": {
@@ -85,7 +70,7 @@
       "version": "2.1.311",
       "integrity": "sha512-7SgBitii1ZscdbRJXLcub7Vv2pfvH3wo7RrCKg4vZpklIfz9HgigJFFJGIjCY6jzoPDvbQcwwugvm3A8PTejzw==",
       "bin": "claude",
-      "sign_in": "ocx",
+      "sign_in": "magpie",
       "env": {
         "DISABLE_AUTOUPDATER": "1"
       },
@@ -98,11 +83,7 @@
           "{prompt}",
           "--model",
           "haiku"
-        ],
-        "ocx": true,
-        "ocx_match": {
-          "model_contains": "haiku"
-        }
+        ]
       }
     },
     "dsh": {
@@ -118,11 +99,7 @@
       "trial": {
         "acp": [
           "acp"
-        ],
-        "ocx": true,
-        "ocx_match": {
-          "model_endswith": "deepseek-v4.1-flash"
-        }
+        ]
       }
     },
     "claude-agent-acp": {
@@ -132,7 +109,7 @@
       "integrity": "sha512-aQ1gAm1MBalwEgE/VB/m4z6sXw/fRccNOW268pNLXnWV704ZuLbbm0N+oEv8KTmd53dJ6YzMhMpD8p5ig6C+sA==",
       "bin": "claude-agent-acp",
       "check": "package",
-      "sign_in": "ocx"
+      "sign_in": "magpie"
     },
     "codex-acp": {
       "installer": "npm",
@@ -141,7 +118,7 @@
       "integrity": "sha512-XKzqztT5R8Wg1BVFnk6/U4JVx5GNUaZgxpf9gP2Cw6BsknvJWh3aefcAGZQljgdMivRqczjNKYL4F6H65dc5vA==",
       "bin": "codex-acp",
       "check": "package",
-      "sign_in": "ocx"
+      "sign_in": "magpie"
     },
     "grok": {
       "installer": "binary",

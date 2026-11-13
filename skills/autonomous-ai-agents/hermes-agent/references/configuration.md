@@ -4,7 +4,7 @@ Use `lina config path` and `lina config env-path` to locate the active profile's
 
 | Section | Inspect for |
 | --- | --- |
-| `model` | OCX provider, model identifier, endpoint |
+| `model` | magpie provider, model identifier, endpoint |
 | `agent` | Turn limits, reasoning, stop verification |
 | `terminal` | Working directory, backend, timeout |
 | `display` | CLI skin, language, reasoning display |
@@ -18,4 +18,4 @@ Check key names against `hermes_cli/config_defaults.py` and their runtime reader
 
 Use `lina tools list` before claiming a tool is available. `lina tools enable <name>` and `lina tools disable <name>` change configured toolsets; start a fresh session for the new tool schema. A service-gated tool also needs its own credential. Check `toolsets.py` and `tools/registry.py` rather than maintaining a second catalog here.
 
-Settings belong in `config.yaml`; secrets belong in `.env`. Do not use an environment variable to store a new non-secret behavior setting. For voice, verify the enabled STT/TTS provider and dependencies, then test real audio. Model inference access through OCX does not establish a voice service credential.
+Settings belong in `config.yaml`; secrets belong in `.env`. Do not use an environment variable to store a new non-secret behavior setting. For voice, verify the enabled STT/TTS provider and dependencies, then test real audio. Model inference access through magpie does not establish a voice service credential.

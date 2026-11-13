@@ -12,7 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import hermes_yaml
-from hermes_cli import lina_ocx
+from hermes_cli import lina_deps
 from tests.hermes_cli._work_env import NOW, WorkEnv
 
 pytestmark = pytest.mark.platforms("posix")
@@ -46,7 +46,7 @@ def _valid(schema_name: str, data):
 @pytest.fixture
 def work(tmp_path, monkeypatch):
     env = WorkEnv(tmp_path, monkeypatch)
-    monkeypatch.setattr(lina_ocx, "lina_root", lambda: env.root)
+    monkeypatch.setattr(lina_deps, "lina_root", lambda: env.root)
     env.brief = tmp_path / "brief.md"
     env.brief.write_text("Check the machine and write out/report.txt\n", encoding="utf-8")
     return env

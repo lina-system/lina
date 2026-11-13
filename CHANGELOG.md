@@ -8,6 +8,10 @@ Hermes Agent upstream changes are not listed here; see the upstream history on t
 
 ## [Unreleased]
 
+### Removed
+
+- The old model proxy OCX (opencodex) and the per-node proxy kind are gone (lina#590, closes lina#614): LINA reaches models through magpie only. Removed: `worker.proxy.kind` and `worker.proxy.read` with every `ocx` branch behind them, `through_ocx` and the OCX model-name table (`hermes_cli/worker/proxy_names.json`; a model is named in magpie's catalog form `<provider>/<id>`), the OCX health check and `capabilities.ocx` of a node's hello, `lina models install|upgrade|rollback|refresh|takeover`, `lina services ... ocx` and the `ocx` device service, the `ocx` block of the config defaults and `ocx.external`, the `ocx` model provider (now `magpie`, `http://127.0.0.1:3425/v1`, `MAGPIE_API_KEY`), OCX reads in usage, quota and the work settings' model list, the per-kind fields of the device screen (`proxy.kind`, `proxy.version`), the `opencodex` mode of ocx-omo (it searches magpie's providers directly and takes no `--proxy`/`--names`), and the `ocx` pin of `pm/lina-deps.json`. A runner pin's sign-in `ocx` is now `magpie`; a run record's `ocx_check` is now `model_state`; the daily runner check reports a node's magpie (`- proxy: <node> ...`). `worker.proxy.remote_id` stays the one setting that tells the hub (`""`) from a node. A config that still has `worker.proxy.kind`, an `ocx:` block or `providers.opencodex` loads without error; those keys are not read. The shared Node and npm install code moved to `hermes_cli/lina_deps.py`.
+
 ### Added
 
 - `worker.proxy.remote_id: ""` marks a `magpie` node whose own magpie holds the models (the hub itself): runs open as `magpie` with `<provider>/<id>`, `lina omo routing plan|apply|check` write `magpie/<provider>/<id>` (ocx-omo `--remote-id ""`), and the device screen shows its link as `local`; an absent `remote_id` is still `hub` and a `/` is still refused (lina#623).

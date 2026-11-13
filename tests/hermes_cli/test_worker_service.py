@@ -1,5 +1,5 @@
 """``lina worker serve`` as the LINA service ``worker`` (lina#35): launchd ``ai.lina.worker`` / systemd ``lina-worker``
-written through ``service_definition``, registered on ``lina services``, and OCX not stopped under a running worker."""
+written through ``service_definition``, registered on ``lina services``."""
 
 import plistlib
 
@@ -44,16 +44,9 @@ def test_running_follows_the_serve_heartbeat(tmp_path):
     assert service.running(base) is True
 
 
-def test_the_worker_is_a_real_service_that_runs_on_ocx(monkeypatch, capsys):
+def test_the_worker_is_a_registered_service():
     worker = lina_services.BY_NAME["worker"]
     assert not worker.issue and "worker" in lina_services._VERBS and "worker" in lina_services._STATE
-    assert "worker" in lina_services.USED_BY["ocx"]
-    calls = []
-    monkeypatch.setitem(lina_services._VERBS, "ocx", lambda verb: calls.append(verb))
-    monkeypatch.setitem(lina_services._RUNNING, "gateway", lambda: False)
-    monkeypatch.setitem(lina_services._RUNNING, "worker", lambda: True)
-    assert lina_services.act("stop", "ocx") == 1
-    assert calls == [] and "lina services stop worker" in capsys.readouterr().out
 
 
 @pytest.mark.platforms("linux")

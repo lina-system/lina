@@ -1,15 +1,9 @@
 {
-  "provider": "opencodex",
-  "namespaces": [
-    "",
-    "anthropic",
-    "google-antigravity",
-    "google",
-    "xai"
-  ],
-  "exclude": [
-    "gpt-6-astra--fast",
-    "gpt-6.1-sol--fast"
+  "providers": [
+    "codex",
+    "claude",
+    "antigravity",
+    "grok"
   ],
   "extras": {
     "categories.architect": [

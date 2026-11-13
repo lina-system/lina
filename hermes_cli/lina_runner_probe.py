@@ -53,7 +53,7 @@ def verdict(root: Path, runner: lina_runners.RunnerPin, installed: str | None) -
 
 def probe(root: Path, runner: lina_runners.RunnerPin, *,
           run: Callable[..., subprocess.CompletedProcess] = subprocess.run, popen=subprocess.Popen,
-          ocx_logs=None, clock: Callable[[], float] = time.time) -> dict:
+          clock: Callable[[], float] = time.time) -> dict:
     """One real call to the current version of *runner*, recorded; returns the record."""
     from hermes_cli import lina_runner_sync_trial as trials
     version = lina_runners.current_version(root, runner)
@@ -61,7 +61,7 @@ def probe(root: Path, runner: lina_runners.RunnerPin, *,
         result = {"state": "failed", "why": "not installed", "version": None, "at": clock()}
     else:
         ok, why = trials.trial(root, runner, version, run=run, popen=popen,
-                               ocx_logs=ocx_logs or trials.read_ocx_logs, clock=clock)
+                               clock=clock)
         result = {"state": "done" if ok else "failed", "why": why, "version": version, "at": clock()}
     record(root, runner.name, result)
     return result
@@ -69,12 +69,9 @@ def probe(root: Path, runner: lina_runners.RunnerPin, *,
 
 def tend(root: Path, runner: lina_runners.RunnerPin, asked: dict, *,
          run: Callable[..., subprocess.CompletedProcess] = subprocess.run, **kw) -> dict:
-    """One device's daily care of one block: refresh its model list and apply its route when asked, then probe."""
-    from hermes_cli import lina_runner_models, lina_runner_routes
+    """One device's daily care of one block: apply its route when asked, then probe."""
+    from hermes_cli import lina_runner_routes
     done: dict = {}
-    if asked.get("refresh"):
-        problem = lina_runner_models.refresh(root, runner, run)
-        done["models"] = {"state": "failed", "why": problem} if problem else {"state": "refreshed"}
     if asked.get("route"):
         code = lina_runner_routes.apply(root, runner, run=run)
         done["route"] = {"state": "applied"} if code in (0, None) else {"state": "failed", "why": f"apply exit {code}"}
@@ -82,8 +79,7 @@ def tend(root: Path, runner: lina_runners.RunnerPin, asked: dict, *,
 
 
 def apply(worker_root: Path, payload: dict, **kw) -> dict:
-    """The node side of ``runner-probe``: for each named runner, the hub's asks first (``refresh``: its model list,
-    ``route``: apply its route source, both after the hub's own probe passed), then its probe."""
+    """Apply the route when asked after the hub probe passed, then probe each named runner."""
     from hermes_cli.worker import slots
     root = worker_root.parent
     wanted = payload.get("runners") if isinstance(payload, dict) else None

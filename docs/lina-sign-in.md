@@ -3,7 +3,7 @@
 Each runner keeps its own sign-in, and the node only checks and reports it
 ([lina-runners.md](lina-runners.md)): Grok and Antigravity (agy) through their
 own CLI, Cursor with `CURSOR_API_KEY`, Claude and Codex (and their ACP adapters)
-through OCX. For Grok and agy the hub can do the sign-in in one step:
+through the node's magpie. Accounts are signed in on the hub's magpie. For Grok and agy the hub can do the sign-in in one step:
 
 ```sh
 lina devices sign-in <node> <runner> [--json]
@@ -23,7 +23,7 @@ and a one-line `reason`. When a person is needed it also has `need` and
 ## The flow
 
 1. The hub reads the node's `hello` and finds the runner's row. Runners that sign
-   in through OCX or a key are refused with `reported only: ...`, and their
+   in through magpie or a key are refused with `reported only: ...`, and their
    current state is returned. A runner that is already signed in is left alone.
    A runner LINA has not installed on the node (no shim) is refused with the
    `lina runners install` to run there.

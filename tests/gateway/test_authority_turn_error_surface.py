@@ -99,19 +99,19 @@ def test_a_managed_worker_turn_carries_the_free_tier_failure_to_the_owner():
 
 
 _AUTH_FAILED = {'failure_reason': 'auth', 'failure_retryable': False, 'error': 'HTTP 401: invalid api key'}
-_OCX = {'provider': 'ocx', 'model': 'anthropic/claude-sonnet-4'}
+_MAGPIE = {'provider': 'magpie', 'model': 'anthropic/claude-sonnet-4'}
 
 
 def _assert_update_key_card(complete):
     surface = complete['error_surface']
-    assert (surface['layer'], surface['auth_kind'], surface['api_key_env']) == ('auth', 'api_key', 'OCX_API_KEY')
-    assert (surface['provider'], surface['model']) == (_OCX['provider'], _OCX['model'])
+    assert (surface['layer'], surface['auth_kind'], surface['api_key_env']) == ('auth', 'api_key', 'MAGPIE_API_KEY')
+    assert (surface['provider'], surface['model']) == (_MAGPIE['provider'], _MAGPIE['model'])
 
 
 def test_an_auth_failure_offers_the_agents_key_action_when_the_result_names_no_provider():
     """Real failed results (``agent/turn_recovery._failed_turn_result``) carry no provider or model;
     the card's sign-in / update-key action comes from the agent that ran, as on the TUI path."""
-    _assert_update_key_card(_complete(*_authority_turn(Platform.LOCAL, _AUTH_FAILED, identity=_OCX)))
+    _assert_update_key_card(_complete(*_authority_turn(Platform.LOCAL, _AUTH_FAILED, identity=_MAGPIE)))
 
 
 def test_a_managed_worker_auth_failure_offers_the_agents_key_action(tmp_path, monkeypatch):
@@ -120,7 +120,7 @@ def test_a_managed_worker_auth_failure_offers_the_agents_key_action(tmp_path, mo
 
     class Identity:
         def __init__(self, **kwargs):
-            vars(self).update(_OCX)
+            vars(self).update(_MAGPIE)
 
     sent = []
     _execute(_minimax_frame(tmp_path, monkeypatch), monkeypatch, base=Identity, sent=sent,

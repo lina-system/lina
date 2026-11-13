@@ -29,7 +29,7 @@ review, not automatic permission to commit, push or merge.
 - Install the Codex CLI and check `codex --version` and `codex exec --help`.
 - Use a repository with its instructions available and a dedicated worktree for
   each writing run. Record the initial status and base revision.
-- Configure model access through OCX. Never read or copy authentication files.
+- Configure model access through magpie. Never read or copy authentication files.
 - Use `terminal` with a PTY for interactive runs and `process` for session input,
   logs and cancellation. Keep long runs in a background session.
 
@@ -78,33 +78,34 @@ Those issues describe planned integration, not an available work subcommand.
    to evade a sandbox's inability to write repository metadata.
    Done when the work record reflects verified results and remaining blockers.
 
-## OCX Configuration
+## magpie Configuration
 
-LINA model calls use the `ocx` provider (`opencodex` alias), with `OCX_BASE_URL`
-and secret `OCX_API_KEY`; the default local API is `http://127.0.0.1:10100/v1`.
+LINA model calls use the `magpie` provider, with `MAGPIE_BASE_URL`
+and secret `MAGPIE_API_KEY`; the default local API is `http://127.0.0.1:3425/v1`.
 LINA's provider setting does not configure the standalone Codex process.
 
-For Codex, use its existing OCX provider entry in `~/.codex/config.toml`:
+For Codex, use its existing magpie provider entry in `~/.codex/config.toml`:
 
 ```toml
-model_provider = "opencodex"
-model = "<OCX catalog model id>"
+model_provider = "magpie"
+model = "<magpie catalog model id>"
 
-[model_providers.opencodex]
-name = "OCX"
-base_url = "<OCX endpoint compatible with this Codex version>"
-env_key = "OCX_API_KEY"
+[model_providers.magpie]
+name = "magpie"
+base_url = "<magpie endpoint compatible with this Codex version>"
+env_key = "MAGPIE_API_KEY"
 ```
 
 Preserve the installation's transport settings; LINA's chat-completions endpoint
-alone does not prove Codex Responses compatibility. Check `ocx inspect catalog
---json` for models and supported reasoning settings. Never replace routing with
-direct vendor auth to work around a proxy failure.
+alone does not prove Codex Responses compatibility. Check the configured magpie
+gateway's `/v1/models` catalog for available models and verify supported reasoning
+settings with a bounded request. Never replace routing with direct vendor auth
+to work around a proxy failure.
 
 Project agent roles belong in `.codex/agents/<name>.toml`; keep reusable brief
 instructions in `AGENTS.md` and project skills in `.agents/skills/`. Ask explicitly
 for delegation, isolate each writer, and verify installed-version role settings.
-Verify the actual model/provider and real tool execution in OCX logs; text that
+Verify the actual model/provider and real tool execution in magpie logs; text that
 looks like a tool call is not proof it ran. Keep trial settings project-local.
 
 ## Pitfalls

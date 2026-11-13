@@ -10,7 +10,7 @@ import threading
 
 import pytest
 
-from hermes_cli import lina_ocx, lina_push, lina_push_watch
+from hermes_cli import lina_deps, lina_push, lina_push_watch
 from hermes_cli.lina_push_watch import Sender
 from tests.hermes_cli._lina_push_fakes import Device, PushService, throwaway_key
 from tests.hermes_cli._work_env import NOW, WorkEnv
@@ -21,7 +21,7 @@ pytestmark = pytest.mark.platforms("posix")
 @pytest.fixture
 def work(tmp_path, monkeypatch):
     env = WorkEnv(tmp_path, monkeypatch)
-    monkeypatch.setattr(lina_ocx, "lina_root", lambda: env.root)
+    monkeypatch.setattr(lina_deps, "lina_root", lambda: env.root)
     from hermes_cli.worker import hub
     monkeypatch.setattr(hub.Hub, "meta", lambda _hub, job, live=False: {"state": "running"})
     (env.root / "worker" / "hub" / "jobs").mkdir(parents=True)

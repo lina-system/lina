@@ -1,11 +1,5 @@
-"""The daily runner sync cares for each block after the move (lina#531): it refreshes the model list when OCX's list or
-the runner's version changed, checks the route and, when it differs, applies it on the hub and probes once with a
-real task before the nodes apply it, and has every node probe the runner the same day.
-
-The tool is a fake binary added by a settings block on the hub and on one node; the node answers through its real
-``runner-probe`` verb. The route source is this module (registered in ``lina_runner_routes.SOURCES``); OCX's model
-refresh is the one boundary replaced, by a recorder. Nothing reaches the network.
-"""
+"""Daily runner care (lina#531): check routes, apply on the hub, probe there before nodes apply,
+and probe every node each day. The fake tool runs through the real runner-probe verb."""
 import hashlib
 import json
 import sys
@@ -13,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from hermes_cli import lina_ocx, lina_runner_models, lina_runner_probe, lina_runner_routes, lina_runner_sync, lina_runners
+from hermes_cli import lina_deps, lina_runner_probe, lina_runner_routes, lina_runner_sync, lina_runners
 from hermes_cli import lina_runner_sync_state as state
 from hermes_cli.lina_runner_sync import Env, NodeView
 from hermes_cli.worker.transport import Reply
@@ -49,7 +43,7 @@ def block(body: bytes) -> dict:
                         "follow": {"channel": CHANNEL, "artifact": "https://fake.invalid/faketool-{version}-{platform}",
                                    "platforms": {"linux-x64": "linux"}}},
             "sign_in": "none", "probe": {"argv": ["-p", "{prompt}"]},
-            "models": {"file": "~/.faketool/models.json", "refresh": {"ocx_client": "faketool"}},
+            "models": {"file": "~/.faketool/models.json"},
             "route": {"source": "fake-route"}}
 
 
@@ -77,16 +71,13 @@ class Text:
 def world(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path / "acct"))
     monkeypatch.delenv("FAKETOOL_ANSWER", raising=False)
-    monkeypatch.setattr(lina_ocx, "platform_key", lambda: "linux-x64")
+    monkeypatch.setattr(lina_deps, "platform_key", lambda: "linux-x64")
     monkeypatch.setitem(lina_runner_routes.SOURCES, "fake-route", __name__)
     ROUTE.clear()
     ROUTE.update(check=10, checks=[], applied=[])
-    refreshed: list[Path] = []
-    monkeypatch.setattr(lina_runner_models, "refresh", lambda root, runner, run=None: refreshed.append(root))
     hub = lina_root(tmp_path / "hub", tool())
     node = lina_root(tmp_path / "node", tool())
-    monkeypatch.setattr(lina_ocx, "lina_root", lambda: hub)
-    ocx = {"models": [{"id": "gpt-a"}]}
+    monkeypatch.setattr(lina_deps, "lina_root", lambda: hub)
     notices: list[str] = []
 
     def call(verb, data, timeout):
@@ -97,9 +88,9 @@ def world(tmp_path, monkeypatch):
     view = NodeView("build-a", True, platform="linux-x64", verbs=("hello", "runner-sync", lina_runner_probe.VERB),
                     rows={"faketool": row}, call=call)
     env = Env(http=Text(), nodes=lambda root: [view], sign_in=lambda runner: "none",
-              ocx_logs=lambda root: pytest.fail("the probe does not read OCX logs"),
-              ocx_models=lambda root: ocx["models"], notify=lambda root, text: notices.append(text) or "kept")
-    return {"hub": hub, "node": node, "env": env, "ocx": ocx, "refreshed": refreshed, "notices": notices, "row": row}
+
+              notify=lambda root, text: notices.append(text) or "kept")
+    return {"hub": hub, "node": node, "env": env, "notices": notices, "row": row}
 
 
 def sync(world) -> dict:
@@ -111,7 +102,6 @@ def sync(world) -> dict:
 @pytest.mark.platforms("posix")
 def test_a_differing_route_is_applied_on_the_hub_probed_there_then_applied_and_probed_on_the_nodes(world):
     rec = sync(world)
-    assert rec["models"] == {"state": "refreshed"} and world["refreshed"] == [world["hub"], world["node"]]
     assert rec["route"] == {"state": "applied"}
     assert ROUTE["applied"] == [world["hub"], world["node"]], "the hub applies first, the node after its probe passed"
     assert rec["probes"]["hub"]["state"] == "done" and rec["probes"]["build-a"]["state"] == "done"
@@ -120,28 +110,13 @@ def test_a_differing_route_is_applied_on_the_hub_probed_there_then_applied_and_p
 
 
 @pytest.mark.platforms("posix")
-def test_nothing_is_refreshed_or_applied_again_while_nothing_moved_but_the_probes_run_each_day(world):
+def test_routes_in_step_are_not_applied_but_probes_run_each_day(world):
     sync(world)
     ROUTE.update(check=0, applied=[])
-    world["refreshed"].clear()
     rec = sync(world)
-    assert rec["models"] == {"state": "same"} and world["refreshed"] == []
     assert rec["route"] == {"state": "in step"} and ROUTE["applied"] == []
     assert rec["probes"]["build-a"]["state"] == "done" and "route" not in rec["probes"]["build-a"]
 
-    world["ocx"]["models"] = [{"id": "gpt-a"}, {"id": "gpt-b"}]
-    assert sync(world)["models"] == {"state": "refreshed"}, "OCX's list changed"
-    assert world["refreshed"] == [world["hub"], world["node"]]
-
-
-@pytest.mark.platforms("posix")
-def test_an_external_ocx_is_never_asked_to_write_a_model_list_and_is_not_an_alert(world, monkeypatch):
-    monkeypatch.setattr(lina_ocx, "external", lambda root=None: {"cli": "/opt/ocx"})
-    world["env"].ocx_models = lambda root: pytest.fail("an external OCX's list is not compared")
-    rec = sync(world)
-    assert rec["models"]["state"] == "external" and world["refreshed"] == []
-    assert not [line for line in world["notices"] if "model list" in line]
-    assert rec["probes"]["build-a"]["state"] == "done", "the probes still run"
 
 
 @pytest.mark.platforms("posix")
@@ -166,7 +141,7 @@ def test_a_route_check_that_fails_holds_the_runner(world):
 @pytest.mark.platforms("posix")
 def test_a_day_where_everything_went_well_sends_no_notice(world):
     rec = sync(world)
-    assert rec["route"] == {"state": "applied"} and rec["models"] == {"state": "refreshed"}
+    assert rec["route"] == {"state": "applied"}
     assert world["notices"] == [], "quiet when fine"
 
 

@@ -38,8 +38,8 @@ def build_memory_parser(subparsers, *, cmd_memory: Callable) -> None:
                               help="Honcho api for the old memory search (default: not run)")
     _eval_parser.add_argument("--json", default=None, help="also write the scores and every ranking here")
     _cache_parser = memory_sub.add_parser(
-        "cache-report", help="Prompt-cache hit rate from OCX usage rows (the lina#17 baseline method)")
-    _cache_parser.add_argument("--usage", required=True, help="OCX usage.jsonl")
+        "cache-report", help="Prompt-cache hit rate from usage-log rows (the lina#17 baseline method)")
+    _cache_parser.add_argument("--usage", required=True, help="a usage.jsonl whose rows carry inputTokens and cacheReadInputTokens")
     _cache_parser.add_argument("--from", dest="start", default=None, help="first ingress time, ISO with offset")
     _cache_parser.add_argument("--to", dest="end", default=None, help="end of the window (exclusive), ISO with offset")
     _cache_parser.add_argument("--conversation", action="append", default=None,
