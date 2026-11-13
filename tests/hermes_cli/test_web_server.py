@@ -2928,7 +2928,10 @@ class TestNewEndpoints:
         profile_env = (profile_dir / ".env").read_text(encoding="utf-8")
         assert f"MCP_BEARER_SERVER_API_KEY={secret}" in profile_env
         assert "Bearer Bearer" not in profile_env
-        assert not (root / ".env").exists()
+        # The root .env holds only the web servers copy of the new agents gateway key (lina#643), never the MCP secret.
+        root_env = (root / ".env").read_text(encoding="utf-8") if (root / ".env").exists() else ""
+        assert secret not in root_env
+        assert "MCP_BEARER_SERVER_API_KEY" not in root_env
 
 
     # --- New profiles endpoints: active / description / model / describe-auto ---

@@ -12,8 +12,9 @@ left as a note the agent's next messaging DM turn reads (``gateway/app_talk_carr
 
 The owner's window per agent (lina#482) runs turns in the same app conversation with no to-do: :func:`resolve_agent`
 names the agent, :func:`history` reads the conversation's earlier turns, and no note is carried into the messenger
-chat. The gateway key is the web server's ``LINA_GATEWAY_KEY_<AGENT>``, else its ``API_SERVER_KEY``; a refused key
-answers :data:`REFUSED_KEY` and never the key itself.
+chat. The gateway key is the web server's ``LINA_GATEWAY_KEY_<AGENT>`` (``hermes_cli/lina_gateway_key.py``: from its
+environment, else its own ``.env``, where creating the agent writes the profile's key), else its ``API_SERVER_KEY``;
+a refused key answers :data:`REFUSED_KEY`, which names the mismatch and never the key itself.
 """
 
 from __future__ import annotations
@@ -27,9 +28,9 @@ from typing import AsyncIterator, Optional
 MAX_CHARS = 4000
 SESSION_TITLE = "LINA app: {agent}"
 _CRON_FIRE_PATH = "/api/cron/fire"
-KEY_ENV = "LINA_GATEWAY_KEY_{agent}"
 _MESSAGES_PAGE = 500  # the gateway's cap per messages page (api_server._handle_session_messages)
-REFUSED_KEY = "the gateway refused the key for {agent}"
+REFUSED_KEY = ("the gateway refused the key for {agent}: the web server's {env} does not match the API_SERVER_KEY "
+               "in {agent}'s profile .env (lina doctor names the mismatch)")
 
 
 class TalkError(Exception):
@@ -107,14 +108,12 @@ def profile_home(agent: str) -> Path:
 def gateway(agent: str) -> tuple[str, str]:
     """``(base URL, API key)`` of the agent's gateway api_server on loopback: the port the cron forwarder resolves
     (``/p/<agent>`` on a multiplexed default listener), the key from this process's ``LINA_GATEWAY_KEY_<AGENT>``
-    (the agent name in upper case), else its shared ``API_SERVER_KEY``."""
-    import os
+    (``lina_gateway_key.web_server_key``), else its shared ``API_SERVER_KEY``."""
+    from hermes_cli.lina_gateway_key import web_server_key
     from hermes_cli.web_server_cron import _gateway_fire_endpoint
+    from hermes_constants import get_hermes_home
     base = _gateway_fire_endpoint(agent, profile_home(agent)).removesuffix(_CRON_FIRE_PATH)
-    key = os.environ.get(KEY_ENV.format(agent=agent.upper()))
-    if key is None:
-        key = os.environ.get("API_SERVER_KEY", "")
-    return base, key.strip()
+    return base, web_server_key(agent, get_hermes_home())
 
 
 def http_client():
@@ -168,7 +167,8 @@ def _upstream(agent: str, status: int, body: bytes, media_type: str) -> Opened:
     """The gateway's own answer, except a refused key: the gateway's 401 body is never relayed, and the dashboard
     client must not read it as its own sign-in expiring."""
     if status == 401:
-        return Opened(502, _error_body("gateway_refused_key", REFUSED_KEY.format(agent=agent)))
+        from hermes_cli.lina_gateway_key import key_env
+        return Opened(502, _error_body("gateway_refused_key", REFUSED_KEY.format(agent=agent, env=key_env(agent))))
     return Opened(status, body, media_type)
 
 
