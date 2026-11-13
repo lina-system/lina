@@ -53,7 +53,7 @@ def root(request, tmp_path, monkeypatch):
         (base / "config.yaml").write_text(TODAY, encoding="utf-8")
     monkeypatch.setenv("LINA_HOME", str(base))
     monkeypatch.setattr(lina_magpie, "get", lambda proxy, path: {"data": [{"id": "hub/openai/m-open"}]})
-    monkeypatch.setattr(lina_magpie, "quota_accounts", lambda proxy: [])
+    monkeypatch.setattr(lina_magpie, "model_accounts", lambda proxy: [])
     from hermes_cli import lina_work_settings_models
     lina_work_settings_models.forget()
     return base

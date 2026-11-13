@@ -200,13 +200,20 @@ def account(card: dict) -> dict:
             "active": False, "paused": False, "quota": quota}
 
 
-def accounts(data) -> list[dict]:
-    """The subscription and plan cards of ``/v1/magpie/quotas`` as accounts; a key's balance has no window."""
-    return [account(card) for card in _rows(data, "data") if card.get("kind") != "balance"]
+def accounts(data, *, balances: bool = False) -> list[dict]:
+    """The subscription and plan cards of ``/v1/magpie/quotas`` as accounts. A key's balance has no window, so the
+    quota view leaves it out; with ``balances`` it stays, as an account whose headroom is unknown."""
+    return [account(card) for card in _rows(data, "data") if balances or card.get("kind") != "balance"]
 
 
 def quota_accounts(proxy: proxies.Proxy) -> list[dict]:
     return accounts(get(proxy, "/v1/magpie/quotas?kept=1"))
+
+
+def model_accounts(proxy: proxies.Proxy) -> list[dict]:
+    """The accounts a model can run on, a key's balance included: the settings check must not call a model
+    of a balance-backed provider ``no_account``."""
+    return accounts(get(proxy, "/v1/magpie/quotas?kept=1"), balances=True)
 
 
 def view(proxy: proxies.Proxy, name: str):

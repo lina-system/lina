@@ -89,7 +89,7 @@ class Env:
         self.owner(True)
         monkeypatch.setenv("LINA_HOME", str(self.root))
         monkeypatch.setattr(lina_magpie, "get", lambda proxy, path: {"data": [{"id": "hub/openai/m-open"}]})
-        monkeypatch.setattr(lina_magpie, "quota_accounts", lambda proxy: [
+        monkeypatch.setattr(lina_magpie, "model_accounts", lambda proxy: [
             {"provider": "openai", "id": "a1", "quota": {"weeklyPercent": 25, "weeklyResetAt": 1_700_000_000}}])
         from hermes_cli import lina_work_settings_gate, lina_work_settings_models
         lina_work_settings_gate.GATE.reset()

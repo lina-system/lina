@@ -76,7 +76,7 @@ class FakeMagpie:
 def magpie(monkeypatch):
     fake = FakeMagpie()
     monkeypatch.setattr(lina_magpie, "get", fake.get)
-    monkeypatch.setattr(lina_magpie, "quota_accounts", lambda proxy: QUOTA["accounts"])
+    monkeypatch.setattr(lina_magpie, "model_accounts", lambda proxy: QUOTA["accounts"])
     wm.forget()
     yield fake
     fake.release.set()

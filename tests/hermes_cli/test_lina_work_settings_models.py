@@ -82,7 +82,7 @@ def magpie(tmp_path, monkeypatch):
     monkeypatch.setenv("LINA_HOME", str(base))
     fake = FakeMagpie()
     monkeypatch.setattr(lina_magpie, "get", fake.get)
-    monkeypatch.setattr(lina_magpie, "quota_accounts", lambda proxy: QUOTA["accounts"])
+    monkeypatch.setattr(lina_magpie, "model_accounts", lambda proxy: QUOTA["accounts"])
     from hermes_cli import lina_work_settings_models
     lina_work_settings_models.forget()
     return fake
@@ -128,6 +128,16 @@ def test_each_runner_mode_default_and_the_fallback_say_whether_their_model_is_us
     assert data["warnings"] == [w for w in (runners["codex"]["warning"], runners["dsh"]["warning"],
                                             modes["research"]["warning"]) if w]
     assert data["errors"] == []
+
+
+def test_a_model_of_a_balance_backed_provider_is_unknown_not_without_an_account(magpie, monkeypatch):
+    import json
+    from pathlib import Path
+    quotas = json.loads((Path(__file__).parent / "fixtures" / "magpie" / "quotas.json").read_text(encoding="utf-8"))
+    monkeypatch.setattr(lina_magpie, "get", lambda proxy, path: {"data": [{"id": "hub/openrouter/some-model"}]})
+    monkeypatch.setattr(lina_magpie, "model_accounts", lambda proxy: lina_magpie.accounts(quotas, balances=True))
+    row = next(r for r in _view()["models"] if r["provider"] == "openrouter")
+    assert (row["state"], row["accounts"]) == ("unknown", 1)
 
 
 @pytest.mark.parametrize("models", ["x", 3, ["planner"], {"defaults": ["research"], "aliases": "y", "fallback": 4}])

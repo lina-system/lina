@@ -69,7 +69,7 @@ def read(now: float) -> tuple[list, list, list[dict]]:
     try:
         proxy = node_proxy()
         listed = lina_magpie.model_rows(lina_magpie.get(proxy, "/v1/models"), proxy.remote_id)
-        accounts = lina_magpie.quota_accounts(proxy)
+        accounts = lina_magpie.model_accounts(proxy)
     except lina_magpie.MagpieError as exc:
         log.warning("work settings: magpie could not be read: %s", exc)
         with _LOCK:

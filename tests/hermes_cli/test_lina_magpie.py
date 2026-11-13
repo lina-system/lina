@@ -192,6 +192,12 @@ def test_magpie_quota_cards_become_accounts_with_unknown_windows_left_out():
     assert "@" not in json.dumps(cards)
 
 
+def test_model_accounts_keep_a_key_s_balance_as_an_account_of_unknown_headroom():
+    cards = lina_magpie.accounts(_fixture("quotas.json"), balances=True)
+    assert [card["provider"] for card in cards] == ["claude", "codex", "grok", "openrouter"]
+    assert cards[-1]["quota"] == {"quotaUnavailable": True}
+
+
 @pytest.mark.platforms("posix")
 def test_the_board_quota_reads_magpie_s_kept_quotas_in_the_quota_row_shape(root, magpie, monkeypatch):
     _proxy(root, f"{{url: '{magpie.url}'}}")

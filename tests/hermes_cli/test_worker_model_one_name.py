@@ -56,7 +56,7 @@ def base(tmp_path, monkeypatch):
     from hermes_cli import lina_magpie
     monkeypatch.setattr(lina_magpie, "get", lambda proxy, path: {"data": [
         {"id": f"hub/{r['provider']}/{r['id']}"} for r in LIVE if not r.get("disabled")]})
-    monkeypatch.setattr(lina_magpie, "quota_accounts", lambda proxy: QUOTA["accounts"])
+    monkeypatch.setattr(lina_magpie, "model_accounts", lambda proxy: QUOTA["accounts"])
     wm.forget()
     wm.read(time.time())  # the models view has just read magpie: decide checks against this last good list
     yield home

@@ -36,7 +36,7 @@ def root(tmp_path, monkeypatch):
     monkeypatch.delenv("HERMES_KANBAN_TASK", raising=False)
     monkeypatch.setattr(lina_magpie, "get", lambda proxy, path: {"data": [
         {"id": f"hub/{r['provider']}/{r['id']}"} for r in LIVE if not r.get("disabled")]})
-    monkeypatch.setattr(lina_magpie, "quota_accounts", lambda proxy: NAMED_QUOTA["accounts"])
+    monkeypatch.setattr(lina_magpie, "model_accounts", lambda proxy: NAMED_QUOTA["accounts"])
     wm.forget()
     yield base
     wm.forget()
