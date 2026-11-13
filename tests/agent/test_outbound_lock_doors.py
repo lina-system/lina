@@ -48,6 +48,38 @@ def _fake_telegram():
             self.calls.append(("edit", chat_id, content))
             return SendResult(success=True, message_id=message_id)
 
+        # Inherits send_exec_approval, which renders through this hook (Telegram, Slack, Discord, Relay).
+        async def _send_exec_approval_prompt(self, prompt):
+            self.calls.append(("approval", prompt.chat_id, prompt.text))
+            return SendResult(success=True, message_id="a1")
+
+        async def send_native_task_card_progress(self, chat_id, tasks, *, title=None, reply_to=None,
+                                                 metadata=None, fallback_text=None):
+            self.calls.append(("task_card", chat_id, tasks))
+            return SendResult(success=True)
+
+        async def send_update_prompt(self, chat_id, prompt, default="", session_key="", metadata=None):
+            self.calls.append(("update_prompt", chat_id, prompt))
+            return SendResult(success=True)
+
+        async def send_model_picker(self, chat_id, providers, current_model, current_provider, session_key,
+                                    on_model_selected, metadata=None):
+            self.calls.append(("model_picker", chat_id, providers))
+            return SendResult(success=True)
+
+        async def send_choice_picker(self, chat_id, title, choices, session_key, on_choice_selected,
+                                     metadata=None):
+            self.calls.append(("choice_picker", chat_id, title))
+            return SendResult(success=True)
+
+        async def play_tts(self, chat_id, audio_path, **kwargs):
+            self.calls.append(("play_tts", chat_id, audio_path))
+            return SendResult(success=True)
+
+        async def abandon_open_draft(self, chat_id, content, metadata=None):
+            self.calls.append(("seal_draft", chat_id, content))
+            return SendResult(success=True)
+
     adapter = FakeTelegram(PlatformConfig(enabled=True), Platform.TELEGRAM)
     adapter.calls = []
     return adapter
@@ -67,6 +99,39 @@ def test_adapter_edit(chat, calls):
     adapter = _fake_telegram()
     result = asyncio.run(adapter.edit_message(chat, "m1", "new text"))
     assert len(adapter.calls) == calls and result.success is bool(calls)
+
+
+# Content doors that do not pass through send(): each must be refused on its own.
+_ADAPTER_DOORS = {
+    "inherited_exec_approval": lambda adapter, chat: adapter.send_exec_approval(chat, "rm -rf build", "s1"),
+    "native_task_card": lambda adapter, chat: adapter.send_native_task_card_progress(
+        chat, [{"id": "t1", "title": "read the logs", "status": "in_progress"}]),
+    "update_prompt": lambda adapter, chat: adapter.send_update_prompt(chat, "Restart now?"),
+    "model_picker": lambda adapter, chat: adapter.send_model_picker(chat, ["p"], "m", "p", "s1", None),
+    "choice_picker": lambda adapter, chat: adapter.send_choice_picker(chat, "Reasoning", [], "s1", None),
+    "play_tts": lambda adapter, chat: adapter.play_tts(chat, "answer.ogg"),
+    "abandon_open_draft": lambda adapter, chat: adapter.abandon_open_draft(chat, "partial answer"),
+}
+
+
+@pytest.mark.parametrize("door", sorted(_ADAPTER_DOORS))
+@pytest.mark.parametrize("chat, calls", [("111", 1), ("222", 0)])
+def test_adapter_content_door(door, chat, calls):
+    from agent.outbound_lock import is_outbound_refusal
+
+    _allow("telegram:111")
+    adapter = _fake_telegram()
+    result = asyncio.run(_ADAPTER_DOORS[door](adapter, chat))
+    assert len(adapter.calls) == calls
+    assert is_outbound_refusal(result) is not bool(calls)
+
+
+def test_a_refused_task_card_does_not_fall_back_to_text():
+    from gateway.relay.egress import declined_send
+
+    _allow("telegram:111")
+    result = asyncio.run(_fake_telegram().send_native_task_card_progress("222", [{"id": "t1"}]))
+    assert declined_send(result)  # _task_card_publish suppresses its text fallback on a decline
 
 
 def test_a_stream_whose_chat_leaves_the_list_stops_without_a_fallback_send():

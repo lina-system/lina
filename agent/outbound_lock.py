@@ -1,20 +1,22 @@
 """The outbound lock (lina#638): ``outbound.allow`` in the active profile's ``config.yaml`` lists the
-only destinations a message may leave to. Missing or empty means unrestricted.
+only destinations a message may leave to. Unset or an empty list means unrestricted; any other value
+that names no usable destination (``false``, ``0``, ``{}``, a list of blanks) allows nothing.
 
 Every egress door calls :func:`check_outbound` with the destination as that door will send it, i.e.
 after alias / home-channel resolution, and refuses the send when it returns a string. Doors:
 ``send_message`` (tool, ``hermes send``, kanban notifier) through ``_send_to_platform`` and
-``_handle_react``; every gateway adapter's ``send*`` and ``edit_message`` methods (wrapped by
-:func:`guard_adapter_class` from ``BasePlatformAdapter.__init_subclass__``; a refused edit ends the
-stream like a connector decline); cron delivery (``cron/scheduler_delivery_outbound.py``);
+``_handle_react``; every gateway adapter content method in :data:`ADAPTER_MESSAGE_METHODS`, inherited
+ones included (wrapped by :func:`guard_adapter_class` from ``BasePlatformAdapter.__init_subclass__``;
+a refused edit ends the stream like a connector decline, a refused task card suppresses its text
+fallback); cron delivery (``cron/scheduler_delivery_outbound.py``);
 ``hermes peer dm``/``run``; ``message_agent``; the webhook ``github_comment`` deliver; worker end
 notices. ``tests/agent/test_outbound_lock_doors.py`` drives each door with a fake transport.
 
 Entries: ``<platform>:<chat id>[:<thread id>]``, parsed like ``resolve_send_target`` (an entry
 without a thread allows every thread of the chat), and ``agent:<name>`` for another agent (a local
 profile, a peer ``<peer>``, which allows all its agents, or ``<peer>/<agent>``). The config is read
-through ``read_raw_config_readonly``, cached on the file signature, so an edit applies to the next
-send without a restart; resolved entries are cached per profile home and channel-directory state.
+through ``load_user_config_effective`` (the managed overlay applied), cached on the file signatures,
+so an edit applies to the next send without a restart; resolved entries are cached per profile home and channel-directory state.
 
 A refusal names ``outbound.allow``, is logged once per target per process, and is counted in
 ``<HERMES_HOME>/outbound_refusals.json``, which ``hermes doctor`` reports.
@@ -35,12 +37,13 @@ logger = logging.getLogger(__name__)
 CONFIG_KEY = "outbound.allow"
 AGENT_PLATFORM = "agent"
 REFUSALS_FILE = "outbound_refusals.json"
-# The adapter methods that put content in a chat (a send, or an edit carrying new text); each takes
-# the destination as ``chat_id``.
+# The adapter methods that put content in a chat (a send, an edit carrying new text, a prompt, a
+# picker, a task card, played audio, a draft seal); each takes the destination as ``chat_id``.
 ADAPTER_MESSAGE_METHODS = (
     "send", "send_for_platform", "send_draft", "edit_message", "send_exec_approval", "send_slash_confirm",
     "send_clarify", "send_private_notice", "send_multiple_images", "send_image", "send_animation",
-    "send_voice", "send_video", "send_document", "send_image_file",
+    "send_voice", "send_video", "send_document", "send_image_file", "send_native_task_card_progress",
+    "send_update_prompt", "send_model_picker", "send_choice_picker", "play_tts", "abandon_open_draft",
 )
 
 # Adapters whose own send* answers the client that asked (the local app/TUI stream, the API server's HTTP
@@ -54,18 +57,23 @@ _counts_lock = threading.Lock()
 
 
 def allow_entries() -> Optional[list[str]]:
-    """The active profile's ``outbound.allow`` entries, or None when unrestricted. A value that is
-    set but is not a list or string allows nothing (fails closed)."""
-    from hermes_cli.config import read_raw_config_readonly
-    section = read_raw_config_readonly().get("outbound")
-    allow = section.get("allow") if isinstance(section, dict) else None
-    if not allow:
+    """The active profile's ``outbound.allow`` entries (managed overlay applied), or None when
+    unrestricted: only an unset key or an empty list. Any other value that is not a string or a list,
+    and a string or list with no non-blank entry, allows nothing (fails closed)."""
+    from hermes_cli.config_effective import load_user_config_effective
+    section = load_user_config_effective().get("outbound")
+    if section is None:
+        return None
+    if not isinstance(section, dict):
+        return []
+    allow = section.get("allow")
+    if allow is None or allow == []:
         return None
     if isinstance(allow, str):
         allow = [allow]
     if not isinstance(allow, list):
         return []
-    return [str(entry).strip() for entry in allow if str(entry).strip()] or None
+    return [str(entry).strip() for entry in allow if str(entry).strip()]
 
 
 def _parse_entry(entry: str) -> Optional[tuple[str, str, Optional[str]]]:
@@ -197,11 +205,14 @@ def is_outbound_refusal(result: Any) -> bool:
 
 
 def guard_adapter_class(cls: type) -> None:
-    """Route the ``send*`` methods ``cls`` defines or takes from a mixin through :func:`check_outbound`."""
+    """Route the content methods ``cls`` defines, takes from a mixin or inherits from
+    ``BasePlatformAdapter`` through :func:`check_outbound`. Inherited defaults are guarded too: some
+    end in a guarded ``send()``, but ``send_exec_approval`` renders through
+    ``_send_exec_approval_prompt``, which never passes one. A refusal returns at the outermost wrapper,
+    so a default that does reach ``send()`` is never counted twice."""
     for name in ADAPTER_MESSAGE_METHODS:
-        # Mixins supply send methods too; BasePlatformAdapter's own defaults delegate to send().
         owner = next((klass for klass in cls.__mro__ if name in klass.__dict__), None)
-        if owner is None or (owner.__module__, owner.__name__) == ("gateway.platforms.base", "BasePlatformAdapter"):
+        if owner is None:
             continue
         method = owner.__dict__[name]
         if (getattr(method, "_outbound_guarded", False)

@@ -80,10 +80,33 @@ def test_agent_entries_name_another_agent_or_every_agent_of_a_peer():
     assert check_outbound("agent", "other", door="test")
 
 
-def test_a_malformed_value_allows_nothing():
+@pytest.mark.parametrize("value", [{"telegram": "111"}, False, 0, {}, "", [""], ["  "]])
+def test_a_set_value_that_names_no_destination_allows_nothing(value):
     config = get_hermes_home() / "config.yaml"
-    config.write_text(json.dumps({"outbound": {"allow": {"telegram": "111"}}}), encoding="utf-8")
+    config.write_text(json.dumps({"outbound": {"allow": value}}), encoding="utf-8")
     assert check_outbound("telegram", "111", door="test")
+
+
+@pytest.mark.parametrize("outbound", [{"allow": None}, {"allow": []}, None, {}])
+def test_only_an_unset_or_empty_list_is_unrestricted(outbound):
+    config = get_hermes_home() / "config.yaml"
+    config.write_text(json.dumps({"outbound": outbound}), encoding="utf-8")
+    assert check_outbound("telegram", "111", door="test") is None
+
+
+def test_a_list_from_the_managed_overlay_applies(tmp_path: Path, monkeypatch):
+    from hermes_cli import managed_scope
+
+    managed = tmp_path / "managed"
+    managed.mkdir()
+    (managed / "config.yaml").write_text(json.dumps({"outbound": {"allow": ["telegram:111"]}}), encoding="utf-8")
+    monkeypatch.setenv("HERMES_MANAGED_DIR", str(managed))
+    managed_scope.invalidate_managed_cache()
+    try:
+        assert check_outbound("telegram", "111", door="test") is None
+        assert check_outbound("telegram", "222", door="test")
+    finally:
+        managed_scope.invalidate_managed_cache()
 
 
 def test_the_list_is_reread_after_a_config_change_without_a_restart():
@@ -128,6 +151,19 @@ def test_a_channel_directory_change_moves_a_name_entry():
     assert check_outbound("telegram", "111", door="test") is None
     _directory(home, "333000")
     assert check_outbound("telegram", "333000", door="test") is None
+    assert check_outbound("telegram", "111", door="test")
+
+
+def test_an_alias_change_moves_a_name_entry():
+    home = get_hermes_home()
+    _allow("telegram:trial")
+    (home / "channel_directory.json").write_text(json.dumps({"updated_at": None, "platforms": {"telegram": [
+        {"id": "111", "name": "trial", "type": "group"}, {"id": "222", "name": "other", "type": "group"}]}}),
+        encoding="utf-8")
+    assert check_outbound("telegram", "111", door="test") is None
+    (home / "channel_aliases.json").write_text(json.dumps({"telegram": {"111": "old", "222": "trial"}}),
+                                               encoding="utf-8")
+    assert check_outbound("telegram", "222", door="test") is None
     assert check_outbound("telegram", "111", door="test")
 
 

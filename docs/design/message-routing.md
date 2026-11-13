@@ -209,8 +209,9 @@ or an agent's message without `reply_to`) on a finished place is stored and star
 ### Outbound allowlist (built: lina#638)
 
 A test copy of an agent must not reach real people, whatever its copied jobs, skills or prompts say. The profile's
-`config.yaml` key `outbound.allow` lists the only destinations a message may leave to; missing or empty means
-unrestricted. Entries are `<platform>:<chat id>` (a `:<thread id>` suffix limits it to one thread, parsed like a
+`config.yaml` key `outbound.allow` (read with the managed overlay applied) lists the only destinations a message may
+leave to; unset or an empty list means unrestricted, and any other value that names no usable destination (`false`,
+`0`, `{}`, a list of blanks) allows nothing. Entries are `<platform>:<chat id>` (a `:<thread id>` suffix limits it to one thread, parsed like a
 `send_message` target) and `agent:<name>` (a local profile, a peer `<peer>` with all its agents, or `<peer>/<agent>`):
 
 ```yaml
@@ -222,9 +223,11 @@ outbound:
 
 The check is `agent/outbound_lock.py::check_outbound`, and it runs on the resolved target (after alias and home-channel
 resolution). The doors that call it: the `send_message` tool, `hermes send` and the kanban notifier
-(`tools/send_message_tool.py`); every gateway adapter `send*` and `edit_message` method, which covers replies,
-streamed edits, notices, webhook cross-platform delivery and cron's live lane (`BasePlatformAdapter.__init_subclass__`;
-a refused edit ends the stream with no fallback send); cron delivery, including
+(`tools/send_message_tool.py`); every gateway adapter content method, defined or inherited (`send*`, `edit_message`,
+the exec-approval, update, model and choice prompts, the native task card, played TTS and the draft seal), which covers
+replies, streamed edits, notices, webhook cross-platform delivery and cron's live lane
+(`BasePlatformAdapter.__init_subclass__`; a refused edit ends the stream and a refused task card stops the card, both
+with no fallback send); cron delivery, including
 `deliver: <platform>` home channels and `bot-chat:<profile>` (`cron/scheduler_delivery_outbound.py`); `hermes peer
 dm`/`run`; `message_agent`; the webhook `github_comment` deliver; and worker end notices.
 `tests/agent/test_outbound_lock_doors.py` drives each door with a fake transport: a refused target makes no outbound
