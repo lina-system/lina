@@ -54,8 +54,11 @@ def _set_if_missing(env_path: Path, key: str, value: str, *, private: bool) -> s
         current = _value(env_path, key)
         if current:
             return current
-        lines = [line for line in (_read_env_lines(env_path) if env_path.exists() else [])
-                 if not _env_line_defines_key(line, key)]
+        try:
+            existing = _read_env_lines(env_path)
+        except FileNotFoundError:
+            existing = []
+        lines = [line for line in existing if not _env_line_defines_key(line, key)]
         lines.append(f"{key}={_quote_env_value(value)}\n")
         _write_env_lines(env_path, lines, preserve_mode=not private)
     return value
