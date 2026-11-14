@@ -34,7 +34,7 @@ from .compaction_policy import (
     resolve_threshold,
     threshold_tokens,
 )
-from .sqlite_session import configured_store_backend, route_to_host_store
+from .sqlite_session import configured_store_backend, route_to_host_store, store_backend
 from .config import LCMConfig, _disabled_tool_names, containment_base_dir, host_message_uid_mode, lcm_env_get, profile_bound
 from .dag import SummaryDAG, SummaryNode
 from . import sender_capture
@@ -1162,6 +1162,10 @@ class LCMEngine(
         self._assertion_extraction_last_duration_ms = 0.0
         self._assertion_extraction_last_error = ""
         self._assertion_extraction_last_model = ""
+        # The unset LCM_EMBEDDINGS_ENABLED default turns the local model on; _bind_storage decides it per database.
+        self._implicit_local_embeddings = (
+            not self._config.embeddings_enabled_explicit and bool(self._config.embeddings_enabled)
+        )
 
         db_path = self._resolve_db_path(hermes_home)
         self._bind_storage(db_path, hermes_home)
@@ -1640,6 +1644,14 @@ class LCMEngine(
         self._adaptive_retrieval = None
         self._assertion_extractor = None
         route_to_host_store(db_path, configured_store_backend(), hermes_home)  # LINA (lina#16)
+        # LINA (lina#704): the host store keeps one embedding model, 1024 wide, configured as the home's `embedding:`
+        # and written by `lina store reembed`, so the default local model (384 wide) can neither store a vector there
+        # nor query the store's. Only an explicit LCM_EMBEDDINGS_ENABLED keeps LCM's own semantic arm on the store.
+        self._store_owns_embeddings = (
+            getattr(self, "_implicit_local_embeddings", False) and store_backend(db_path) is not None
+        )
+        if getattr(self, "_implicit_local_embeddings", False):
+            self._config.embeddings_enabled = not self._store_owns_embeddings
         try:
             self._store = MessageStore(
                 db_path,

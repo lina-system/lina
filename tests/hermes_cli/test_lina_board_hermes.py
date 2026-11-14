@@ -323,6 +323,7 @@ def test_every_read_goes_through_the_command_and_no_hermes_file_is_opened(hermes
     ("done", "/api/lina/work/items/hermes:T1/done", {}),
     ("comment", "/api/lina/work/items/hermes:G1/comments", {"text": "please go"}),
     ("quick add", "/api/lina/work/add", {"agent": "gamma", "text": "Call the bank"}),
+    ("owner to-do", "/api/lina/work/items", {"agent": "gamma", "text": "Call the bank"}),
 ], ids=lambda value: value if isinstance(value, str) and "/" not in value else None)
 def test_write_routes_refuse_hermes_items_with_409_and_change_nothing(hermes, client, work, method, path, body):
     hermes.on()
