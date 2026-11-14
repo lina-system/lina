@@ -46,9 +46,11 @@ lina migrate cron --from /path/to/old-home --source-profile <profile> --as <copy
   --work-dir /path/to/migration-work
 ```
 
-Run it after `migrate memory`, into the same agent. Every job lands paused with `deliver: local`. Scripts are not
-copied: the report (`cron-migration-report.json`) says which jobs have a script that does not resolve. Copy those
-scripts by hand into `$LINA_HOME/profiles/<copy name>/scripts/`; a job's script must be inside that folder. Details:
+Run it after `migrate memory`, into the same agent. Every job lands paused with `deliver: local`. The scripts the
+jobs name (`script`, `monitor_script`) are copied into `$LINA_HOME/profiles/<copy name>/scripts/` and never run; the
+report (`cron-migration-report.json`) says per job whether each was `copied`, `already_present`, `missing` in the old
+profile, `refused` or `kept_existing` (a different file already in the copy is not overwritten). Credentials do not
+travel: set up a script's keys in the copy by hand. Details:
 [store.md, Copying legacy cron jobs](store.md#copying-legacy-cron-jobs).
 
 ## 4. Model and embedding names
@@ -67,8 +69,11 @@ memory:
 On a node, magpie names a model in its catalog form `<remote>/<provider>/<id>` and refuses the bare id. The magpie
 key goes in the profile's `.env` as `MAGPIE_API_KEY`.
 
-Set `embedding:` in the new home's `config.yaml` with `embedding.model` in magpie's catalog form, and the same name
-as `EMBEDDING_MODEL_CONFIG__MODEL` in `store/honcho.env` ([store.md, Configuration](store.md#configuration)).
+Set `embedding:` in the new home's root `config.yaml` with `embedding.model` in magpie's catalog form. The model is
+the home's, not a profile's: every agent, `lina store reembed` and `lina doctor` read it from that one place.
+`store/honcho.env` takes it as the default of `EMBEDDING_MODEL_CONFIG__MODEL` when `lina store install` writes the
+file; a `honcho.env` written before keeps its own line, so edit it to match ([store.md,
+Configuration](store.md#configuration)).
 Then embed the copied memory in the order store.md gives (`lina store reembed --source memory`, then
 `--source agent`). Until it finishes, search over the copy is partial and `lina doctor` lists the pending
 conclusions under Memory Vectors.
@@ -123,7 +128,8 @@ Start a gateway from the copy's home (`lina gateway run`, or `lina gateway insta
 
    The end notice reaches the copy, not the real agent.
 4. **One dry-run cron.** `lina -p <copy name> cron list` for an id, then `lina -p <copy name> cron run <id> --dry-run`.
-   It resolves the job and runs, calls and sends nothing; `lina -p <copy name> cron runs <id>` shows it as a dry run.
+   It resolves the job and runs, calls and sends nothing, and it checks each delivery target against `outbound.allow`;
+   `lina -p <copy name> cron runs <id>` shows it as a dry run.
 5. **Restart.** `lina gateway restart` for a service, or stop and start `lina gateway run`. The earlier chat's
    history is still there and a new message is answered.
 
@@ -131,13 +137,12 @@ Start a gateway from the copy's home (`lina gateway run`, or `lina gateway insta
 
 ## 9. What a copy cannot do yet
 
-- **Cron scripts** are not copied with the jobs (step 3).
-- **The cron dry run does not check `outbound.allow`.** Its delivery part says `present but not wired into the dry
-  run`; the allowlist still holds when a job really runs.
 - **The model and memory provider** are not set by the migration (step 4).
-- **The embedding model is named in two places**, `embedding.model` and `honcho.env`, and both must match.
-- **`lina store reembed` does not retry on HTTP 429.** On a shared magpie a large `--source agent` run can stop
-  part way. Run it again later; it continues where it stopped (`--max-batches` keeps one run short).
+- **`honcho.env` keeps its own embedding model line.** Change `embedding.model` after the file was written and the
+  line there must be changed by hand.
+- **A long `lina store reembed` can still stop** when a shared magpie keeps answering 429 past
+  `embedding.max_retries`. It saves its progress and names the command that continues it; `--max-rate N` keeps a run
+  under a limit you share.
 - **One store per machine** (step 1).
 
 ## 10. Tearing it down
