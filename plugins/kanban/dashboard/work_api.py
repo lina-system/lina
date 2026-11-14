@@ -35,6 +35,8 @@ WORK_STATES = ("planned", "in_progress", "waiting", "stopped", "done")
 _PLANNED_STATUSES = {"triage", "todo", "scheduled", "ready"}
 # A run is alive while its claim holds or it beat within this window (the claim TTL default).
 LIVE_WINDOW_SECONDS = kanban_db.DEFAULT_CLAIM_TTL_SECONDS
+# The hub states of a worker run that is running work (``worker.board.work_state`` reads both as in progress).
+_LIVE_WORKER_STATES = ("placing", "running")
 NOW_LINE_CHARS = 120
 _BLOCK_EVENT_KINDS = ("blocked", "block_loop_detected")
 # The transitions that park a blocked card; ``gave_up`` is the failure breaker's block, which ends any earlier wait.
@@ -291,8 +293,8 @@ def card_stop(facts: CardFacts, now: int) -> dict[str, Optional[str]]:
 def work_state(facts: CardFacts, now: Optional[int] = None) -> tuple[str, Optional[str]]:
     """``(state, reason)`` for one card: the single source of the app's five states.
 
-    planned = triage/todo/scheduled/ready; in_progress = running with a live current run;
-    waiting = review, or running while the current run's latest gate exited 75; stopped = blocked
+    planned = triage/todo/scheduled/ready; in_progress = running with a live current run, or scheduled on a
+    worker that is running work (:func:`_park_worker`, lina#717); waiting = review, or running while the current run's latest gate exited 75; stopped = blocked
     (reason: :func:`_block_stop`) or running with no live run
     (``unresponsive``); done = done. The kanban goal loop turns a judge ``wait`` into
     ``continue`` and records nothing, so a judge wait has no board signal to read.
@@ -305,6 +307,8 @@ def work_state(facts: CardFacts, now: Optional[int] = None) -> tuple[str, Option
         return "waiting", "review"
     if status == "blocked":
         return "stopped", _block_stop(facts.task, facts.events)[0]
+    if status == "scheduled" and _park_worker(facts) is not None:
+        return "in_progress", None
     if status != "running":
         return "planned", status if status in _PLANNED_STATUSES else None
     if not _run_live(facts, _current_run(facts), now):
@@ -366,7 +370,14 @@ def _plain_line(text: str) -> str:
 
 
 def now_line(facts: CardFacts) -> Optional[str]:
-    """Latest comment or heartbeat note, plain and at most 120 chars."""
+    """Latest comment or heartbeat note, plain and at most 120 chars; on a card parked on a worker that is running
+    work, that worker's title (lina#717), never its id."""
+    worker = _park_worker(facts)
+    if worker:
+        from hermes_cli.worker.board import _title
+        title = _title(worker)
+        if title != worker.get("id"):
+            return _plain_line(title)
     notes = [(c.created_at, c.id, c.body) for c in facts.comments]
     notes += [(e.created_at, e.id, e.payload["note"]) for e in facts.events
               if e.kind == "heartbeat" and e.payload and e.payload.get("note")]
@@ -393,6 +404,22 @@ def runs_awaiting_verdict(facts: CardFacts) -> list[dict[str, Any]]:
     fallback = _implementer(facts)
     return [{"id": r["run_id"], "state": r["state"], "waitingOn": f"agent:{r['agent'] or fallback}"}
             for r in verdicts_of_events(facts.events) if not r["judged"] and (r["agent"] or fallback)]
+
+
+def _park_worker(facts: CardFacts) -> Optional[dict[str, Any]]:
+    """The hub record of the worker a scheduled card waits on while that worker is running work (lina#717): a run the
+    card started that awaits its verdict (:func:`runs_awaiting_verdict`; ``{}`` when the hub has no record of it), else
+    a run its latest schedule names, read as the run-end wakers read it, that the hub is placing or running (the
+    Hermes board writes no ``worker_run`` event). None on any other card, and on one parked on a time or a card."""
+    if facts.task.status != "scheduled":
+        return None
+    from hermes_cli.kanban_db_verdicts import _job, _named_runs
+    awaiting = runs_awaiting_verdict(facts)
+    if awaiting:
+        return _job(awaiting[0]["id"]) or {}
+    park = next(((e.payload or {}) for e in reversed(facts.events) if e.kind == "scheduled"), {})
+    jobs = (_job(run_id) for run_id in _named_runs(park))
+    return next((job for job in jobs if job and job.get("state") in _LIVE_WORKER_STATES), None)
 
 
 def open_questions(facts: CardFacts) -> list[kanban_db.Comment]:

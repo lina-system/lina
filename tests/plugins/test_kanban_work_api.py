@@ -498,3 +498,98 @@ def test_a_stopped_row_asks_the_owner_with_the_first_korean_sentence_of_its_bloc
     assert (rows[waits]["waitingOn"], rows[waits]["ask"]) == (None, None)
     for tid in [*ids.values(), waits]:
         assert _card_json(client, tid)["ask"] == rows[tid]["ask"]
+
+
+LIVE_RUN, DONE_RUN = "OT-SYN1115000001", "OT-SYN1115000002"
+
+
+def _hub_job(run_id: str, card: str, state: str, **fields) -> None:
+    """A run record in the scratch hub, the one ``lina worker`` writes and the verdict reader reads."""
+    import json
+
+    from hermes_cli.worker import settings
+    jobs = settings.hub_dir(settings.root()) / "jobs"
+    jobs.mkdir(parents=True, exist_ok=True)
+    job = {"id": run_id, "bot": AGENT, "state": state, "verdict": None, "card": {"task": card, "board": None},
+           "prompt": f"# Synthetic widget fix {run_id[-1]}\n\nbrief", **fields}
+    (jobs / f"{run_id}.json").write_text(json.dumps(job), encoding="utf-8")
+
+
+def _parked_on_run(conn, title: str, run_id: str, *, started_here: bool = True) -> str:
+    """A goal-mode card that handed out *run_id* (``started_here``: its ``worker_run`` event, LINA's board) and
+    parked itself on it the way the goal session does: a schedule whose reason names the run."""
+    from hermes_cli.worker import kanban_link
+    tid = _running(conn, _card(conn, title))
+    if started_here:
+        kanban_link.record_run({"task": tid, "board": None}, {"id": run_id, "runner": "fakecli"}, {"kind": "lina"})
+    kb.add_comment(conn, tid, AGENT, f"goal session note: parked until {run_id} ends")
+    assert kb.schedule_task(conn, tid, reason=f"waiting on lina worker {run_id}")
+    return tid
+
+
+def test_a_card_parked_on_a_live_worker_reads_in_progress_with_the_worker_as_now(client, conn, monkeypatch):
+    """lina#717: a card its goal session parked on a running worker is running work, not planned work: ``in_progress``
+    with the worker's brief title as ``now`` and no run id on screen, the same in the list, its ``in_progress``
+    filter, the detail and the goal's ``workCards``; it still advertises ``retry: scheduled``."""
+    monkeypatch.delenv("LINA_HOME", raising=False)
+    tid = _parked_on_run(conn, "parked on live", LIVE_RUN)
+    _hub_job(LIVE_RUN, tid, "running")
+    goal = _goal(conn, [tid])
+
+    row = next(c for c in _valid("WorkCardList", client.get(f"{WORK}/cards").json())["cards"] if c["id"] == tid)
+    assert (row["state"], row["reason"], row["retry"]) == ("in_progress", None, "scheduled")
+    assert row["now"] == "Synthetic widget fix 1" and LIVE_RUN not in row["now"]
+    running = _valid("WorkCardList", client.get(f"{WORK}/cards", params={"state": "in_progress"}).json())["cards"]
+    assert [c["id"] for c in running] == [tid]
+    detail = _card_json(client, tid)
+    assert {k: detail[k] for k in ("state", "reason", "now")} == {k: row[k] for k in ("state", "reason", "now")}
+    goal_row = _valid("WorkGoal", client.get(f"{WORK}/goals/{goal}").json())["workCards"][0]
+    assert (goal_row["state"], goal_row["now"]) == ("in_progress", row["now"])
+
+
+def test_a_hermes_card_parked_on_a_live_worker_reads_in_progress(client, monkeypatch):
+    """lina#717 on the Hermes board, where the hub writes no ``worker_run`` event: the waker is the run the card's
+    latest ``scheduled`` event names, and it counts while the hub has it running."""
+    from plugins.kanban.dashboard import work_api_hermes
+    monkeypatch.delenv("LINA_HOME", raising=False)
+    now = int(time.time())
+
+    def show(task_id, run_id):
+        task = {"id": task_id, "title": task_id, "body": "", "assignee": AGENT, "status": "scheduled",
+                "created_at": now - 9000, "started_at": now - 7200}
+        events = [{"kind": "scheduled", "created_at": now - 600, "run_id": 1,
+                   "payload": {"reason": f"waiting · WAIT_EVENT=run:{run_id} GOAL_ACTION=a1"}}]
+        comments = [{"author": AGENT, "body": "[goal session state] parked", "created_at": now - 500}]
+        return {"task": task, "parents": [], "children": [], "comments": comments, "events": events, "runs": []}
+
+    _hub_job(LIVE_RUN, "t_live", "running")
+    _hub_job(DONE_RUN, "t_done", "done")
+    shows = [show("t_live", LIVE_RUN), show("t_done", DONE_RUN)]
+    rows = {c["id"]: c for c in _valid("WorkCardList", work_api_hermes.cards(shows, now, None, None))["cards"]}
+    assert {i: (r["state"], r["reason"], r["now"]) for i, r in rows.items()} == {
+        "hermes:t_live": ("in_progress", None, "Synthetic widget fix 1"),
+        "hermes:t_done": ("planned", "scheduled", "[goal session state] parked")}
+
+
+def test_a_card_parked_on_a_finished_worker_a_time_or_a_card_stays_planned(client, conn, monkeypatch):
+    """lina#717: only a live worker or a run still awaiting its verdict makes a parked card running work. A worker that
+    ended with its verdict, a time and another card leave it ``planned`` / ``scheduled`` with ``retry: scheduled``;
+    a run that ended without its verdict keeps it running work (the woken card judges it)."""
+    monkeypatch.delenv("LINA_HOME", raising=False)
+    finished = _parked_on_run(conn, "parked on finished", DONE_RUN)
+    _hub_job(DONE_RUN, finished, "done", verdict="accepted")
+    unjudged = _parked_on_run(conn, "parked on unjudged", "OT-SYN1115000003")
+    _hub_job("OT-SYN1115000003", unjudged, "done")
+    on_time = _running(conn, _card(conn, "parked on time"))
+    assert kb.schedule_task(conn, on_time, reason="try again in an hour",
+                            wait_for={"kind": "until", "at": int(time.time()) + 3600})
+    on_card = _running(conn, _card(conn, "parked on card"))
+    assert kb.schedule_task(conn, on_card, reason="after the import", wait_for={"kind": "card", "task_id": finished})
+
+    rows = {c["id"]: c for c in _valid("WorkCardList", client.get(f"{WORK}/cards").json())["cards"]}
+    for tid in (finished, on_time, on_card):
+        assert (rows[tid]["state"], rows[tid]["reason"], rows[tid]["retry"]) == ("planned", "scheduled", "scheduled")
+        assert _card_json(client, tid)["state"] == "planned"
+    assert (rows[unjudged]["state"], rows[unjudged]["now"]) == ("in_progress", "Synthetic widget fix 3")
+    running = _valid("WorkCardList", client.get(f"{WORK}/cards", params={"state": "in_progress"}).json())["cards"]
+    assert [c["id"] for c in running] == [unjudged]
