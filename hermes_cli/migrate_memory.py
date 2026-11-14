@@ -40,6 +40,21 @@ def _paths(args) -> tuple[Path, Path, Path]:
     return source, home, work
 
 
+def _publish_config(copied: Path | None, destination: Path, *, lcm_store: bool) -> None:
+    """The copy's config.yaml: the copied memory settings, LCM on the store when its history moved there, and a
+    terminal scoped to the copy (lina#706). Without the scope its terminal starts in the host user's real home
+    with that user's HOME and shell profile, where the original runtime's files are one command away."""
+    from hermes_cli.config import atomic_config_write
+
+    config = json.loads(copied.read_text()) if copied is not None else {}
+    if lcm_store:
+        config.update(context={"engine": "lcm-x"}, lcm={"store_backend": "postgres"})
+    # home_mode "profile" points HOME at <copy>/home only when that directory exists.
+    _safe(destination / "home").mkdir(exist_ok=True)
+    config["terminal"] = {"cwd": str(destination), "home_mode": "profile", "auto_source_bashrc": False}
+    atomic_config_write(_safe(destination / "config.yaml"), config)
+
+
 def _publish_files(copied: Path, destination: Path, *, lcm_store: bool = False) -> list[str]:
     files = []
     for path in sorted(copied.rglob("*")):
@@ -47,11 +62,8 @@ def _publish_files(copied: Path, destination: Path, *, lcm_store: bool = False) 
             continue
         relative = path.relative_to(copied)
         target = _safe(destination / relative)
-        if relative == Path("config.yaml") and lcm_store:
-            from hermes_cli.config import atomic_config_write
-            config = json.loads(path.read_text())
-            config.update(context={"engine": "lcm-x"}, lcm={"store_backend": "postgres"})
-            atomic_config_write(target, config)
+        if relative == Path("config.yaml"):
+            _publish_config(path, destination, lcm_store=lcm_store)
             files.append(str(relative))
             continue
         if target.exists():
@@ -65,16 +77,30 @@ def _publish_files(copied: Path, destination: Path, *, lcm_store: bool = False) 
     return files
 
 
-def _publish_honcho_config(selection: Path, destination: Path, profile: str, agent: str, store: Path) -> None:
-    """Publish new transport settings, never the source endpoint or credentials."""
+def _publish_honcho_config(selection: Path, destination: Path, profile: str, agent: str, store: Path,
+                           owner_ids: list[str] | tuple[str, ...] = ()) -> None:
+    """Publish new transport settings, never the source endpoint or credentials.
+
+    The owner is recognised as in the source: its ``userPeerAliases`` and ``pinUserPeer`` carry over, and each
+    *owner_ids* entry (the owner's runtime id on a platform the copy is reached by) becomes an alias to
+    ``peerName``. Honcho imports the owner's memory files only for a session whose peer is ``peerName``."""
     from hermes_cli.store import DEFAULTS, read_env
     from plugins.memory.honcho.client import profile_host_key
 
     block = json.loads(selection.read_text(encoding="utf-8"))["hosts"][profile_host_key(profile)]
     port = int(read_env(store / "store.env").get("LINA_HONCHO_PORT", DEFAULTS["LINA_HONCHO_PORT"]))
+    host = {"workspace": agent, "aiPeer": agent, "peerName": block["peerName"],
+            "observationMode": block["observationMode"]}
+    aliases = dict(block.get("userPeerAliases", {}))
+    for owner_id in owner_ids:
+        if aliases.setdefault(owner_id, block["peerName"]) != block["peerName"]:
+            raise ValueError(f"--owner-id {owner_id} is aliased to another peer in the source Honcho configuration")
+    if aliases:
+        host["userPeerAliases"] = aliases
+    if block.get("pinUserPeer"):
+        host["pinUserPeer"] = True
     config = {"hosts": {profile_host_key(agent): {
-        "workspace": agent, "aiPeer": agent, "peerName": block["peerName"],
-        "observationMode": block["observationMode"], "baseUrl": f"http://127.0.0.1:{port}", "enabled": True}}}
+        **host, "baseUrl": f"http://127.0.0.1:{port}", "enabled": True}}}
     target = _safe(destination / "honcho.json")
     if target.exists() and json.loads(target.read_text(encoding="utf-8")) != config:
         raise ValueError("destination Honcho configuration differs from this import")
@@ -92,6 +118,8 @@ def _profile(args) -> dict:
                       spool=spool, work_db=Path(args.work_db).expanduser() if args.work_db else None)
     if copied.honcho_dump is not None and not (copied.root / "external/honcho-config.json").is_file():
         raise ValueError("Honcho dump requires the selected source profile's honcho.json host configuration")
+    if args.owner_ids and copied.honcho_dump is None:
+        raise ValueError("--owner-id names the owner's Honcho peer and requires --honcho-dump")
     if copied.work_db is not None:
         from hermes_cli.migrate_memory_work import register_profiles
         register_profiles(home, {args.profile: args.agent})
@@ -132,13 +160,12 @@ def _profile(args) -> dict:
         work_report["counted"] = True
     files = _publish_files(copied.profile_dir, destination, lcm_store=copied.lcm_db is not None)
     provision(destination, args.agent, home)
-    if copied.lcm_db is not None and "config.yaml" not in files:
-        from hermes_cli.config import atomic_config_write
-        atomic_config_write(destination / "config.yaml", {"context": {"engine": "lcm-x"}, "lcm": {"store_backend": "postgres"}})
+    if "config.yaml" not in files:
+        _publish_config(None, destination, lcm_store=copied.lcm_db is not None)
         files.append("config.yaml")
     if copied.honcho_dump is not None:
         _publish_honcho_config(copied.root / "external/honcho-config.json", destination,
-                               args.profile, args.agent, home / "store")
+                               args.profile, args.agent, home / "store", args.owner_ids)
         files.append("honcho.json")
     duplicates = duplicate_report(args.agent)
     steps = {"identity": {"counted": True, "ok": agent.ok}, "agent": {"counted": True, "ok": agent.ok},

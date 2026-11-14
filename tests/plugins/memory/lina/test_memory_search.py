@@ -164,6 +164,61 @@ def test_the_vector_leg_finds_an_embedded_row_without_the_query_words(seeded, me
     assert [hit["ref"] for hit in found["results"]] == [f"msg:{uid}"]
 
 
+def _open_all(agent, ref: str) -> tuple[list[dict], str]:
+    """Every page of *ref* by next_offset, and the raw size of the largest tool result."""
+    pages, offset, largest = [], 0, 0
+    while offset is not None:
+        raw = agent._memory_manager.handle_tool_call("memory_open", {"ref": ref, "offset": offset}, session_id=SESSION)
+        largest = max(largest, len(raw))
+        page = json.loads(raw)
+        assert page["offset"] == offset
+        pages.append(page)
+        offset = page["next_offset"]
+    return pages, largest
+
+
+def test_a_huge_message_opens_in_capped_pages_that_join_to_the_whole_text(seeded, memory_store_sql):
+    from plugins.memory.lina.search import OPEN_TEXT_CHARS
+    from tools.budget_config import DEFAULT_RESULT_SIZE_CHARS
+
+    line = 'depth-5 summary: "orchid" 회의록 — \\ tab\there\n'
+    huge = (line * (256_159 // len(line) + 1))[:256_159]
+    _insert(memory_store_sql, uid="agent:default:huge-1", source="agent", agent_id="default", scope="agent",
+            role="assistant", content=huge)
+
+    pages, largest = _open_all(seeded.agent, "msg:agent:default:huge-1")
+
+    assert len(pages) == -(-len(huge) // OPEN_TEXT_CHARS)
+    assert all(len(p["text"]) <= OPEN_TEXT_CHARS and p["text_chars"] == len(huge) for p in pages)
+    assert [p["truncated"] for p in pages] == [True] * (len(pages) - 1) + [False]
+    assert "".join(p["text"] for p in pages) == huge
+    assert largest < DEFAULT_RESULT_SIZE_CHARS
+    assert "past the end" in _call(seeded.agent, "memory_open", ref="msg:agent:default:huge-1",
+                                   offset=len(huge) + 1)["error"]
+    assert "0 or more" in _call(seeded.agent, "memory_open", ref="msg:agent:default:huge-1", offset=-1)["error"]
+
+
+def test_a_long_summary_pages_and_a_short_one_opens_whole(seeded):
+    from importlib import import_module
+
+    from plugins.memory.lina.search import OPEN_TEXT_CHARS
+    SummaryNode = import_module("plugins.context_engine.lcm-x.dag").SummaryNode
+    long_summary = "".join(f"Day {i}: the orchid delivery moved again.\n" for i in range(1_500))
+    node_id = seeded.agent.context_compressor._dag.add_node(SummaryNode(
+        session_id=SESSION, depth=5, summary=long_summary, token_count=15_000, source_token_count=90_000,
+        source_ids=[seeded.node_id], source_type="nodes", expand_hint="orchid", earliest_at=1793520000.0,
+        latest_at=1793520060.0))
+
+    pages, _ = _open_all(seeded.agent, f"ctx:{node_id}:{SESSION}")
+    short = _call(seeded.agent, "memory_open", ref=f"ctx:{seeded.node_id}:{SESSION}")
+
+    assert len(long_summary) > 2 * OPEN_TEXT_CHARS and len(pages) == 3
+    assert pages[0]["summary_truncated"] is False
+    assert "".join(p["text"] for p in pages) == long_summary
+    assert short["text"] == "Summary: the orchid delivery was arranged for tomorrow."
+    assert short["truncated"] is False and short["next_offset"] is None and short["text_chars"] == len(short["text"])
+
+
 def test_the_memory_tools_sit_beside_the_existing_ones(seeded):
     names = seeded.agent._memory_manager.get_all_tool_names()
 

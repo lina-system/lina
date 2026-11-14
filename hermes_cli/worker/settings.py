@@ -18,6 +18,9 @@ worker:
   models: {...}                    # see models.py
   proxy: {remote_id: hub}          # this node's magpie and its link to the hub: proxy.py, docs/worker-proxy-switch.md
   runners: {...}                   # see runners/__init__.py
+  board_lines_profile: default     # the profile whose auxiliary.board_lines model writes the board's card lines
+                                   # (lina_board_plain.py); unset: the writing process's own profile, none on a
+                                   # multiplexed gateway (no lines, one log line naming this key)
 ```
 
 Every value has a working default except the device list: without ``devices.workers`` nothing is bid on.

@@ -164,9 +164,8 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         self._reasoning_heuristic: bool = True  # scale base level by query length
         self._reasoning_level_cap: str = "high"  # ceiling for auto-selected level
         self._last_context_turn = self._last_dialectic_turn = -999
-        # Liveness: monotonic start of the current prefetch thread, the turn the pending
-        # result was fired at, and consecutive empty dialectic returns (drives backoff).
-        self._prefetch_thread_started_at: float = 0.0
+        # Liveness: the turn the pending result was fired at, and consecutive empty
+        # dialectic returns (drives backoff).
         self._prefetch_result_fired_at: int = -999
         self._dialectic_empty_streak: int = 0
         # The turn this process's first on_turn_start saw (above 1 for a resumed session), whether its
@@ -791,7 +790,7 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
             except Exception as e:
                 logger.debug("Honcho context prefetch failed: %s", e, exc_info=True)
 
-        # Dialectic layer: a hung call older than timeout × multiplier counts as dead.
+        # Dialectic layer: a run still in flight is never fired again beside itself.
         if self._thread_is_live():
             logger.debug("Honcho dialectic prefetch skipped: prior thread still running")
             return

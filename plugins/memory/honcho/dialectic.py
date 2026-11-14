@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 import re
 import threading
-import time
 
 from .client import spawn_context_thread
 
@@ -26,9 +25,6 @@ class DialecticMixin:
     _LEVEL_ORDER = ("minimal", "low", "medium", "high", "max")
     # Char-count thresholds for the query-length reasoning heuristic.
     _HEURISTIC_LENGTH_MEDIUM, _HEURISTIC_LENGTH_HIGH = 120, 400
-    # A thread older than timeout × multiplier is treated as dead so a hung Honcho call
-    # can't block future fires indefinitely.
-    _STALE_THREAD_MULTIPLIER = 2.0
     # A pending result fired more than cadence × multiplier turns ago is discarded on read,
     # so a stale conversational pivot isn't injected after trivial-prompt turns.
     _STALE_RESULT_MULTIPLIER = 2
@@ -37,18 +33,15 @@ class DialecticMixin:
     _FIRST_TURN_BASE_TIMEOUT, _FIRST_TURN_DIALECTIC_CAP = 3.0, 2.0
     # Identifies the newest dialectic thread; only it may publish a result.
     _dialectic_token: object | None = None
+    # (session_key, query) of the newest dialectic thread, so an identical fire reuses it.
+    _dialectic_key: tuple[str | None, str] | None = None
 
     def _thread_is_live(self) -> bool:
-        """Thread-alive guard that treats threads past the stale threshold as dead."""
-        if not self._prefetch_thread or not self._prefetch_thread.is_alive():
-            return False
-        timeout = self._config.timeout if self._config and self._config.timeout else 8.0
-        stale_after = timeout * self._STALE_THREAD_MULTIPLIER
-        age = time.monotonic() - self._prefetch_thread_started_at
-        if age > stale_after:
-            logger.debug("Honcho prefetch thread age %.1fs exceeds stale threshold %.1fs — treating as dead", age, stale_after)
-            return False
-        return True
+        """True while the newest dialectic thread runs. Every Honcho call carries an HTTP timeout
+        (client_cache._DEFAULT_HTTP_TIMEOUT when unconfigured), so the thread always ends; firing
+        another beside it would only start a second backend dialectic, which keeps running even
+        after the client gives up on the first."""
+        return bool(self._prefetch_thread and self._prefetch_thread.is_alive())
 
     def _effective_cadence(self) -> int:
         """Cadence plus empty-streak backoff, capped at _BACKOFF_MAX × base."""
@@ -69,10 +62,9 @@ class DialecticMixin:
     ) -> threading.Thread:
         """Start a background dialectic run that publishes into the pending-result slot, unless a
         newer run has started since. Only a non-empty result advances ``_last_dialectic_turn`` (so
-        empty returns retry next turn) and resets the empty streak; failures widen the backoff."""
+        empty returns retry next turn) and resets the empty streak; failures widen the backoff.
+        A run still in flight for the same session and query is returned instead of a new one."""
         token = object()
-        with self._prefetch_lock:
-            self._dialectic_token = token
 
         def _superseded() -> bool:
             if token is self._dialectic_token:
@@ -101,10 +93,15 @@ class DialecticMixin:
                 else:
                     self._dialectic_empty_streak += 1
 
-        self._prefetch_thread_started_at = time.monotonic()
-        thread = spawn_context_thread(_run, name=thread_name, owner=self)
-        thread.start()
-        self._prefetch_thread = thread
+        key = (self._session_key, query)
+        with self._prefetch_lock:
+            if self._dialectic_key == key and self._thread_is_live():
+                logger.debug("Honcho %s reuses the in-flight dialectic for the same query", log_label)
+                return self._prefetch_thread
+            self._dialectic_token, self._dialectic_key = token, key
+            thread = spawn_context_thread(_run, name=thread_name, owner=self)
+            thread.start()
+            self._prefetch_thread = thread
         return thread
 
     def _consume_pending_dialectic(self) -> str:
@@ -125,8 +122,9 @@ class DialecticMixin:
             return base
         n = len(query)
         bump = 0 if n < self._HEURISTIC_LENGTH_MEDIUM else 1 if n < self._HEURISTIC_LENGTH_HIGH else 2
-        cap_idx = self._LEVEL_ORDER.index(self._reasoning_level_cap)
-        return self._LEVEL_ORDER[min(self._LEVEL_ORDER.index(base) + bump, cap_idx)]
+        base_idx, cap_idx = self._LEVEL_ORDER.index(base), self._LEVEL_ORDER.index(self._reasoning_level_cap)
+        # The cap bounds the bump only: a configured base above the cap is sent as configured.
+        return self._LEVEL_ORDER[max(base_idx, min(base_idx + bump, cap_idx))]
 
     def _resolve_pass_level(self, pass_idx: int, query: str = "") -> str:
         """Reasoning level for a pass: explicit dialecticDepthLevels win, then the
