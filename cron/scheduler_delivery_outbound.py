@@ -11,7 +11,7 @@ from agent.outbound_lock import check_outbound, target_label
 logger = logging.getLogger(__name__)
 
 
-def target_refusal(target: dict) -> Optional[str]:
+def target_refusal(target: dict, *, door: str = "cron delivery") -> Optional[str]:
     """The refusal for one resolved delivery target (home channel already resolved), or None. The
     job's own local chat and own Bot Chat (``bot-chat``, or ``bot-chat:<name>`` naming this profile's
     home) stay on this agent and are never refused."""
@@ -21,8 +21,8 @@ def target_refusal(target: dict) -> Optional[str]:
     if platform == "local" or (platform == BOT_CHAT_PLATFORM and (not chat_id or profile_matches_home(chat_id))):
         return None
     if platform == BOT_CHAT_PLATFORM:
-        return check_outbound("agent", chat_id, door="cron delivery")
-    return check_outbound(platform, chat_id, target.get("thread_id"), door="cron delivery")
+        return check_outbound("agent", chat_id, door=door)
+    return check_outbound(platform, chat_id, target.get("thread_id"), door=door)
 
 
 def refused_label(target: dict) -> str:

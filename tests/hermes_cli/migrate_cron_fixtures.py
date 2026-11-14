@@ -38,7 +38,7 @@ def legacy_cron_jobs() -> list[dict]:
         _job("b2c3d4e5f6a1", "reply where asked", "every 2h", deliver="origin", origin=origin),
         _job("c3d4e5f6a1b2", "paused notes", "every 1d", enabled=False, deliver="local"),
         _job("d4e5f6a1b2c3", "disk report", "30m", script="disk_report.py", no_agent=True, prompt="",
-             deliver="bot-chat"),
+             deliver="bot-chat", monitor_script="disk_watch.sh"),
         _job("e5f6a1b2c3d4", "gone script", "every 6h", script="legacy_only.sh", no_agent=True, prompt="",
              deliver="telegram"),
         _job("f6a1b2c3d4e5", "feed digest", "every 3h", script="collect_feeds.py", deliver="bot-chat:beta",
@@ -54,10 +54,22 @@ def legacy_cron_jobs() -> list[dict]:
     ]
 
 
+# The legacy scripts folder: disk_report.py differs from the new agent's own copy, and the monitor
+# script disk_watch.sh is missing.
+LEGACY_SCRIPTS = {
+    "legacy_only.sh": "#!/bin/sh\necho legacy\n",
+    "collect_feeds.py": "print('feeds')\n",
+    "disk_report.py": "print('legacy disk')\n",
+}
+
+
 def legacy_cron_home(root: Path, profile: str = "alpha") -> Path:
-    """Write the ten jobs into ``root``'s ``profile`` (``default`` is the root profile)."""
+    """Write the ten jobs and their scripts into ``root``'s ``profile`` (``default`` is the root profile)."""
     profile_dir = root if profile == "default" else root / "profiles" / profile
     (profile_dir / "cron").mkdir(parents=True, exist_ok=True)
+    (profile_dir / "scripts").mkdir(exist_ok=True)
+    for name, text in LEGACY_SCRIPTS.items():
+        (profile_dir / "scripts" / name).write_text(text, encoding="utf-8")
     (profile_dir / "config.yaml").write_text("model: legacy\n", encoding="utf-8")
     (profile_dir / "cron" / "jobs.json").write_text(
         json.dumps({"jobs": legacy_cron_jobs(), "updated_at": "2026-11-01T00:00:00+00:00"}, indent=2) + "\n",
