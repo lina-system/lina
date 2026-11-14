@@ -42,8 +42,8 @@ def test_agent_init_on_the_store_does_not_turn_on_or_warn_about_the_local_model(
     from hermes_cli.plugins import _reset_plugin_managers_for_tests
     from run_agent import AIAgent
 
-    assert _lcm("embedding_provider").probe_provider_availability(
-        _lcm("config").LCMConfig.from_env())["available"] is False, "FastEmbed is installed: this test proves nothing"
+    if _lcm("embedding_provider").probe_provider_availability(_lcm("config").LCMConfig.from_env())["available"]:
+        pytest.skip("FastEmbed is installed: the load-time warning cannot fire, so this test proves nothing")
     _reset_plugin_managers_for_tests()
     try:
         with (
