@@ -42,8 +42,6 @@ def test_agent_init_on_the_store_does_not_turn_on_or_warn_about_the_local_model(
     from hermes_cli.plugins import _reset_plugin_managers_for_tests
     from run_agent import AIAgent
 
-    if _lcm("embedding_provider").probe_provider_availability(_lcm("config").LCMConfig.from_env())["available"]:
-        pytest.skip("FastEmbed is installed: the load-time warning cannot fire, so this test proves nothing")
     _reset_plugin_managers_for_tests()
     try:
         with (
@@ -51,6 +49,11 @@ def test_agent_init_on_the_store_does_not_turn_on_or_warn_about_the_local_model(
             patch("model_tools.get_tool_definitions", return_value=[]),
             patch("model_tools.check_toolset_requirements", return_value={}),
             patch("agent.process_bootstrap.OpenAI"),
+            # Whether FastEmbed is installed varies by host; the contract is that the store home never warns even when
+            # the local provider is unavailable, so force that.
+            patch.object(_lcm("embedding_provider"), "probe_provider_availability",
+                         return_value={"available": False, "detail": "fastembed missing", "provider": "fastembed",
+                                       "model": "BAAI/bge-small-en-v1.5"}),
         ):
             agent = AIAgent(api_key="test-key-1234567890", base_url="https://openrouter.ai/api/v1", quiet_mode=True,
                             skip_context_files=True, skip_memory=True, session_id="s1")
