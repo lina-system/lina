@@ -42,6 +42,16 @@ def _write_batch(conn: Connection, agent: str, model: str, identity: str,
             (progress, model, rows[-1][0]))
 
 
+def summaries_left(conn: Connection, model: str) -> int:
+    """LCM summary nodes after each agent's saved cursor."""
+    if conn.execute("SELECT to_regclass('ctx.summary_nodes') IS NULL").fetchone()[0]:
+        return 0
+    agents = conn.execute("SELECT DISTINCT agent_id FROM ctx.summary_nodes").fetchall()
+    return sum(int(conn.execute("SELECT count(*) FROM ctx.summary_nodes WHERE agent_id = %s AND node_id > %s",
+                                (agent, _progress(conn, f"memory:lcm:{agent}", model))).fetchone()[0])
+               for (agent,) in agents)
+
+
 def reembed_summaries(conn: Connection, embed: Callable[[list[str]], list[list[float]]], counts: SourceCounts,
                       *, model: str, batch_size: int, from_start: bool, max_chars: int,
                       max_batches: int | None, out: Callable[[str], None]) -> None:

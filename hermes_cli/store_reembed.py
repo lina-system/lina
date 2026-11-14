@@ -14,6 +14,9 @@ agent reads through migration 0009's policies. An external message that a chunk 
 ``vec.reembed_progress`` records the last id of each committed batch, so a stopped run continues where it
 stopped; ``--from-start`` forgets that and goes through everything again. It runs as the store owner, which
 row-level security does not limit, so it covers every agent's rows.
+
+The client retries a rate-limited batch (lina#652); when it gives up, the run stops with one line of the rows left per
+source and the command that continues it. ``--max-rate`` caps the requests per second.
 """
 
 from __future__ import annotations
@@ -22,6 +25,7 @@ from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from agent.embedding_client import EmbeddingRetriesExhausted
 from hermes_state_store import SHARED_VECTOR_OWNER
 
 SOURCES = ("agent", "messages", "memory")
@@ -55,10 +59,12 @@ class SourceCounts:
     covered: int = 0
     batches: int = 0
     last_item_id: int = 0
+    left: int = 0
     notes: list[str] = field(default_factory=list)
 
     def line(self) -> str:
-        text = (f"{self.source}: {self.embedded} embedded, {self.skipped} skipped (no text), {self.batches} batches, "
+        done = self.embedded + self.skipped + self.covered
+        text = (f"{self.source}: {done} rows done, {self.left} left; {self.embedded} embedded, {self.skipped} skipped (no text), {self.batches} batches, "
                 f"resumed after id {self.resumed_after}, last id {self.last_item_id}")
         if self.source == "messages":
             text += f", {self.covered} covered by imported collector chunks"
@@ -99,14 +105,33 @@ def _progress(conn, source: str, model: str) -> int:
     return int(row[0]) if row else 0
 
 
+def _message_filter(source: str) -> str:
+    return "AND role IN ('user', 'assistant') AND forgotten_at IS NULL" if source == "agent" \
+        else "AND forgotten_at IS NULL"
+
+
+def rows_left(conn, source: str, model: str) -> int:
+    """Rows of *source* after its saved progress: what a rerun still goes through (Honcho conclusions and LCM summaries
+    for ``memory``)."""
+    after = _progress(conn, source, model)
+    if source != "memory":
+        return int(conn.execute(f"SELECT count(*) FROM memory.messages WHERE source = %s AND message_id > %s "
+                                f"{_message_filter(source)}", (source, after)).fetchone()[0])
+    from hermes_cli.store_reembed_lcm import summaries_left
+    left = summaries_left(conn, model)
+    if not conn.execute("SELECT to_regclass('ltm.documents') IS NULL").fetchone()[0]:
+        left += int(conn.execute("SELECT count(*) FROM ltm.documents WHERE vec_id > %s AND deleted_at IS NULL",
+                                 (after,)).fetchone()[0])
+    return left
+
+
 def _items(conn, source: str, model: str, after: int, limit: int, max_chars: int) -> list[_Item]:
     if source == "memory":
         if conn.execute("SELECT to_regclass('ltm.documents') IS NULL").fetchone()[0]:
             return []
         rows = conn.execute(_DOCUMENT_ROWS, {"after": after, "limit": limit}).fetchall()
     else:
-        roles = "AND role IN ('user', 'assistant') AND forgotten_at IS NULL" if source == "agent" \
-            else "AND forgotten_at IS NULL"
+        roles = _message_filter(source)
         covered = _COVERED if source == "messages" else "false"
         rows = conn.execute(_MESSAGE_ROWS.format(roles=roles, covered=covered),
                             {"source": source, "after": after, "limit": limit, "model": model,
@@ -178,15 +203,22 @@ def reembed(connect: Callable[[], Any], client: Any, sources: Sequence[str], *, 
             raise ReembedError(f"vec.embeddings holds {width}-wide vectors but embedding.dimensions is "
                                f"{client.dimensions}")
         results = []
-        for source in sources:
-            counts = reembed_source(conn, client.embed, source=source, model=client.model, batch_size=batch_size,
-                                    from_start=from_start, max_chars=max_chars, max_batches=max_batches, out=out)
-            if source == "memory":
-                from hermes_cli.store_reembed_lcm import reembed_summaries
-                reembed_summaries(conn, client.embed, counts, model=client.model, batch_size=batch_size,
-                                  from_start=from_start, max_chars=max_chars, max_batches=max_batches, out=out)
-            out(counts.line())
-            results.append(counts)
+        try:
+            for source in sources:
+                counts = reembed_source(conn, client.embed, source=source, model=client.model, batch_size=batch_size,
+                                        from_start=from_start, max_chars=max_chars, max_batches=max_batches, out=out)
+                if source == "memory":
+                    from hermes_cli.store_reembed_lcm import reembed_summaries
+                    reembed_summaries(conn, client.embed, counts, model=client.model, batch_size=batch_size,
+                                      from_start=from_start, max_chars=max_chars, max_batches=max_batches, out=out)
+                counts.left = rows_left(conn, source, client.model)
+                out(counts.line())
+                results.append(counts)
+        except EmbeddingRetriesExhausted as exc:
+            left = ", ".join(f"{source} {rows_left(conn, source, client.model)}" for source in sources)
+            again = "all" if tuple(sources) == SOURCES else ",".join(sources)
+            raise ReembedError(f"{exc}; stopped with the progress saved, rows left: {left}; run "
+                               f"`lina store reembed --source {again}` again to continue") from exc
         return results
 
 
@@ -212,7 +244,7 @@ def run(args) -> int:
     try:
         settings = EmbeddingSettings.from_config(config)
         max_chars = int((config.get("embedding") or {}).get("max_chars") or DEFAULT_MAX_CHARS)
-        with EmbeddingClient(settings) as client:
+        with EmbeddingClient(settings, max_rate=args.max_rate) as client:
             reembed(_owner_connect, client, expand_sources(args.source),
                     batch_size=args.batch_size or settings.batch_size, from_start=args.from_start,
                     max_chars=max_chars, max_batches=args.max_batches)
