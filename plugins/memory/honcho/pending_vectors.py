@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Optional
+from typing import Optional
+
+from agent.embedding_client import home_model
 
 logger = logging.getLogger(__name__)
 
@@ -24,15 +26,6 @@ _PENDING = """
       AND NOT EXISTS (SELECT 1 FROM vec.embeddings e
                       WHERE e.kind = 'document' AND e.item_id = d.vec_id AND e.model = %(model)s)
     GROUP BY d.workspace_name ORDER BY d.workspace_name"""
-
-
-def configured_model(config: Optional[dict[str, Any]] = None) -> str:
-    """``embedding.model`` of config.yaml, the model reembed writes and searches read; the default when unset."""
-    from agent.embedding_client import DEFAULT_MODEL
-    if config is None:
-        from hermes_cli.config import load_config
-        config = load_config()
-    return str((config.get("embedding") or {}).get("model") or DEFAULT_MODEL)
 
 
 def pending_counts(model: str, workspace: Optional[str] = None) -> dict[str, int]:
@@ -57,7 +50,7 @@ class PendingNote:
     """The partial-search note for one workspace, counted at most every ``CHECK_EVERY_S`` seconds; "" when every
     conclusion has a vector or the count cannot be read (a Honcho outside the LINA store has nothing to count)."""
 
-    def __init__(self, workspace: str, model_of=configured_model) -> None:
+    def __init__(self, workspace: str, model_of=home_model) -> None:
         self._workspace = workspace
         self._model_of = model_of
         self._note = ""

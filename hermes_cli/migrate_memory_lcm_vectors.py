@@ -6,10 +6,9 @@ from hermes_cli.migrate_memory_lcm_rows import source_rows, digest
 
 
 def transfer_vectors(conn, source, tables, receipt, ledger, replay, left_chunks=frozenset()) -> tuple[dict, list]:
-    from agent.embedding_client import DEFAULT_MODEL
-    from hermes_cli.config import load_config
+    from agent.embedding_client import home_model
 
-    model = (load_config().get("embedding") or {}).get("model") or DEFAULT_MODEL
+    model = home_model()
     profiles = {row["identity_hash"]: row for _, row in source_rows(source, "lcm_embedding_profile")} \
         if "lcm_embedding_profile" in tables else {}
     counts, skipped = {}, []

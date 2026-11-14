@@ -515,6 +515,13 @@ drops `documents.embedding` and `message_embeddings.embedding`. At start Honcho 
 
 ### Configuration
 
+The store's embedding model is a setting of the home, not of a profile: `embedding.model` in the root
+`config.yaml` (the home's, beside `profiles/`) is the model every agent embeds its queries with and `lina store
+reembed` writes, whichever profile runs them, and `lina doctor` counts pending vectors of it. A profile may not
+differ: its own `embedding.model` is not read, and `lina doctor` names each profile that sets another one.
+`agent/embedding_client.py::home_model` is the one place the name is read. The other `embedding:` keys (endpoint,
+key, width) stay per `config.yaml`.
+
 LINA's side reads `embedding:` in `config.yaml`; the key is a secret in `.env` (default name
 `LINA_EMBEDDING_API_KEY`, another one through `api_key_env`):
 

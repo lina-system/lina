@@ -22,7 +22,7 @@ from importlib.resources import files
 from pathlib import Path
 from typing import Callable
 
-from agent.embedding_client import DEFAULT_DIMENSIONS, DEFAULT_MODEL
+from agent.embedding_client import DEFAULT_DIMENSIONS, home_model
 
 # compose.yaml and initdb/ are package data of services.store (lina#145). Honcho's build context is compose.yaml's
 # ../honcho, a source tree a wheel does not carry: preflight says so.
@@ -38,9 +38,9 @@ DEFAULTS = {"LINA_STORE_PORT": "54320", "LINA_HONCHO_PORT": "8000", "LINA_STORE_
 ROLE_PASSWORDS = {"LINA_STORE_PASSWORD": "lina", "LINA_APP_PASSWORD": "lina_app", "HONCHO_DB_PASSWORD": "honcho"}
 # Honcho's embedding settings: LINA's model at the width of vec.embeddings (migration 0003; the two widths are
 # compared in tests/hermes_cli/test_store_honcho_env.py). Honcho's own default (1536) makes it refuse to start.
-# ensure_env adds the keys honcho.env does not set; what the person set there stays.
-HONCHO_DEFAULTS = {"EMBEDDING_MODEL_CONFIG__TRANSPORT": "openai", "EMBEDDING_MODEL_CONFIG__MODEL": DEFAULT_MODEL,
-                   "EMBEDDING_VECTOR_DIMENSIONS": str(DEFAULT_DIMENSIONS),
+# ensure_env adds the keys honcho.env does not set, the model being the home's (home_model); what the person set
+# there stays.
+HONCHO_DEFAULTS = {"EMBEDDING_MODEL_CONFIG__TRANSPORT": "openai", "EMBEDDING_VECTOR_DIMENSIONS": str(DEFAULT_DIMENSIONS),
                    "EMBEDDING_MODEL_CONFIG__DIMENSIONS_MODE": "always"}
 HONCHO_ENV_HEADER = "# Honcho settings (LLM_*, EMBEDDING_*, AUTH_*), one KEY=value per line. See services/honcho.\n"
 # Honcho's model callers (services/honcho/src/config.py): caller -> (settings prefix, the switch that turns it off).
@@ -105,7 +105,8 @@ def write_env(path: Path, values: dict[str, str]) -> None:
 def ensure_honcho_env(path: Path) -> None:
     """Create ``honcho.env`` and append the HONCHO_DEFAULTS it does not set, after the person's own lines."""
     text = path.read_text(encoding="utf-8-sig") if path.exists() else HONCHO_ENV_HEADER
-    missing = {key: value for key, value in HONCHO_DEFAULTS.items() if key not in read_env(path)}
+    defaults = {**HONCHO_DEFAULTS, "EMBEDDING_MODEL_CONFIG__MODEL": home_model()}
+    missing = {key: value for key, value in defaults.items() if key not in read_env(path)}
     if not missing and path.exists():
         return
     if text and not text.endswith("\n"):

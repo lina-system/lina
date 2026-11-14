@@ -11,6 +11,10 @@ settings are ``embedding:`` in config.yaml and the key is a secret in ``.env`` (
       dimensions: 1024
       api_key_env: LINA_EMBEDDING_API_KEY
 
+The model is a setting of the home, not of a profile: ``embedding.model`` in the root ``config.yaml``, read through
+``home_model`` by every agent, ``lina store reembed`` and ``lina doctor`` alike (lina#651). A profile's own
+``embedding.model`` is not read; ``differing_profiles`` names the profiles that set another one, for the doctor.
+
 The model string is part of every stored vector's key, so a renamed model is a new set of vectors. magpie names
 a model ``<remote>/<provider>/<id>`` as ``GET {base_url}/models`` lists it and refuses the bare id; the first
 request turns that refusal into one line naming ``embedding.model``, the endpoint and the closest embedding model
@@ -27,6 +31,7 @@ import difflib
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Optional
 
 DEFAULT_MODEL = "qwen3-embedding-8b"
@@ -42,6 +47,36 @@ class EmbeddingError(RuntimeError):
 
 class EmbeddingModelMismatch(ValueError):
     """A stored vector came from another model; cutting it would mix two vector spaces in one index."""
+
+
+def _configured_model(config_path: Path) -> str:
+    from hermes_cli.config_effective import load_user_config_effective
+    return str((load_user_config_effective(config_path).get("embedding") or {}).get("model") or "").strip()
+
+
+def _home_root() -> Path:
+    from hermes_constants import get_default_hermes_root, get_hermes_home
+    return get_default_hermes_root(home=get_hermes_home())
+
+
+def home_model() -> str:
+    """The store's embedding model: ``embedding.model`` of the home's root config.yaml, the default when unset.
+    The one place the model name is read; the same string whichever profile asks."""
+    return _configured_model(_home_root() / "config.yaml") or DEFAULT_MODEL
+
+
+def differing_profiles() -> dict[str, str]:
+    """Profile name -> the ``embedding.model`` its own config.yaml sets where that differs from ``home_model``."""
+    from hermes_constants import named_profile_is_live
+    home, profiles = home_model(), _home_root() / "profiles"
+    found = {}
+    for profile in sorted(profiles.iterdir()) if profiles.is_dir() else ():
+        if not named_profile_is_live(profile):
+            continue
+        model = _configured_model(profile / "config.yaml")
+        if model and model != home:
+            found[profile.name] = model
+    return found
 
 
 def normalize(values: Sequence[float]) -> list[float]:
@@ -80,8 +115,8 @@ class EmbeddingSettings:
 
     @classmethod
     def from_config(cls, config: Optional[Mapping[str, Any]] = None) -> EmbeddingSettings:
-        """``embedding:`` from config.yaml (the loaded config when *config* is None); the key from the
-        environment or ``.env`` under the name ``api_key_env`` gives."""
+        """``embedding:`` from config.yaml (the loaded config when *config* is None), the model from the home
+        (``home_model``); the key from the environment or ``.env`` under the name ``api_key_env`` gives."""
         if config is None:
             from hermes_cli.config import load_config
             config = load_config()
@@ -93,7 +128,7 @@ class EmbeddingSettings:
         key_env = str(section.get("api_key_env") or DEFAULT_KEY_ENV)
         return cls(
             base_url=base_url.rstrip("/"),
-            model=str(section.get("model") or DEFAULT_MODEL),
+            model=home_model(),
             dimensions=int(section.get("dimensions") or DEFAULT_DIMENSIONS),
             api_key=(get_env_value(key_env) or None),
             batch_size=max(1, int(section.get("batch_size") or DEFAULT_BATCH_SIZE)),
