@@ -140,8 +140,8 @@ def _config_bytes(home: Path) -> bytes:
 
 
 def _honcho_identity_bytes(path: Path, profile: str) -> bytes:
-    """Retain source selection, not transport credentials or another profile's host."""
-    from plugins.memory.honcho.client import _OBSERVATION_MODES, _normalize_choice, profile_host_key
+    """Retain source selection and who the owner is, not transport credentials or another profile's host."""
+    from plugins.memory.honcho.client import _OBSERVATION_MODES, _HostLookup, _normalize_choice, profile_host_key
 
     raw = json.loads(path.read_text(encoding="utf-8-sig"))
     host = profile_host_key(profile)
@@ -154,6 +154,13 @@ def _honcho_identity_bytes(path: Path, profile: str) -> bytes:
     mode = _normalize_choice(block.get("observationMode") or raw.get("observationMode") or "unified",
                              _OBSERVATION_MODES)
     identity["observationMode"] = mode
+    # The runtime ids the source maps to peers (the owner's messenger, CLI and API ids onto peerName) decide
+    # whose sessions may import the owner's memory files; without them the copy recognises nobody.
+    look = _HostLookup(block, raw)
+    if aliases := look.string_map("userPeerAliases"):
+        identity["userPeerAliases"] = aliases
+    if look.flag("pinUserPeer", "pinPeerName", default=False):
+        identity["pinUserPeer"] = True
     return (json.dumps({"hosts": {host: identity}}, sort_keys=True, indent=2) + "\n").encode()
 
 

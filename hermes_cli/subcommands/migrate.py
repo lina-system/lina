@@ -57,6 +57,9 @@ def _build_memory_parser(subparsers) -> None:
     parser.add_argument("--honcho-dump", help="Logical dump of old Honcho; never a live service")
     parser.add_argument("--honcho-workspace", help="Assert the workspace selected by the copied profile's honcho.json")
     parser.add_argument("--honcho-python", help="Override the installed store image with an explicit Honcho interpreter")
+    parser.add_argument("--owner-id", dest="owner_ids", action="append", default=[],
+                        help="The owner's runtime id on a platform the new agent is reached by (messenger user id, "
+                             "uid-<n> for the CLI); repeatable. Written as a Honcho userPeerAliases entry to peerName")
     parser.add_argument("--spool", help="Copied collector input, events.jsonl or its directory")
     parser.add_argument("--work-db", help="Old work-ledger work.db to copy and filter")
     parser.set_defaults(func=_cmd_migrate_memory)
