@@ -69,7 +69,7 @@ def test_the_gateway_s_board_lines_writer_never_holds_the_profile_lock(tmp_path,
     from hermes_cli import lina_board_plain
     WorkEnv(tmp_path, monkeypatch)
     in_pass, release = threading.Event(), threading.Event()
-    monkeypatch.setattr(lina_board_plain, "write_board", lambda: (in_pass.set(), release.wait(20)))
+    monkeypatch.setattr(lina_board_plain, "write_board", lambda **_: (in_pass.set(), release.wait(20)))
     home = tmp_path / "profile"
     stop = threading.Event()
     thread = _start_board_lines_writer(stop)
