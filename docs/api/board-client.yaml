@@ -1,7 +1,7 @@
 # Board endpoints the app reads beyond docs/api/work-client.yaml (lina#112): the owner's to-dos, decisions and due
 # groups from the work record, `lina worker` runs that are not kanban work cards, devices, quota and the inbox
 # notices; each agent's goals and to-dos (lina#166); one worker run's record, round by round (lina#201); the owner's
-# writes and read marks (lina#149); the
+# writes and read marks (lina#149) and own to-dos (lina#693); the
 # change stream's messages (lina#150, a WebSocket: see ChangeMessage). Served by hermes_cli/web_routers/lina_board.py
 # behind the dashboard auth gate (session token).
 # tests/hermes_cli/test_lina_board_api.py validates served JSON against it, so a shape change here and in the code
@@ -269,6 +269,49 @@ paths:
                 $ref: "#/components/schemas/ItemList"
         "304":
           description: Unchanged since the ETag sent.
+    post:
+      operationId: addOwnerTodo
+      summary: "The owner writes a to-do of their own (lina#693; add 할 일 --by <owner> --from <agent>)."
+      description: >
+        Made by the path `work add` takes for the owner's to-dos: one record line, a `work` event (`created`) on the
+        change stream, no notice to the agent. The text is the to-do's title and the owner's words; its why and done
+        condition are fixed lines in the record's locale. `agent` is the agent the to-do is held for (the
+        record's first agent when unset); an agent only the read-only `hermes` source knows is refused with 409.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [text]
+              properties:
+                text:
+                  type: string
+                  minLength: 1
+                  maxLength: 50
+                  description: One line, 1-25 characters after trimming (50 under the en locale; the to-do title limit).
+                due:
+                  type: string
+                  nullable: true
+                  description: YYYY-MM-DD.
+                agent:
+                  type: string
+                  nullable: true
+                  description: The agent the to-do is held for; the record's first agent when unset.
+      responses:
+        "200":
+          description: "Done: the new to-do as a row of the list above (mine: true)."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ItemSummary"
+        "400":
+          $ref: "#/components/responses/Refused"
+        "409":
+          $ref: "#/components/responses/Refused"
+        "429":
+          $ref: "#/components/responses/Refused"
   /work/items/{id}:
     get:
       operationId: getWorkItem

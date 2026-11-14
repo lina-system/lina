@@ -1,8 +1,8 @@
 """The owner's writes and read marks through the client API (lina#149).
 
 Each write runs the ``lina work`` command the CLI runs (``owner-done``, ``owner-undo``, ``comment``, ``comment
---answer``, ``add 메모 --via``) through ``work.execute``, the CLI's own path (resume hand-offs, run, recompute, close),
-with ``via="app"``: the rules, the record line and the notice to the owning agent are the command's own. A command
+--answer``, ``add 메모 --via``, ``add 할 일 --by <owner>``) through ``work.execute``, the CLI's own path (resume
+hand-offs, run, recompute, close), with ``via="app"`` where the command takes it: the rules, the record line and the notice to the owning agent are the command's own. A command
 that refuses (``die``) writes nothing; its one line becomes the 4xx detail. Read marks on the board's notices are kept
 per owner in ``$LINA_HOME/board/read.json`` (``{owner id: {notice key: marked at}}``), so every device reads the same;
 the keys of the replies Web Push sends (lina#244, ``lina_push_watch.reply_keys``) are accepted and kept the same way.
@@ -27,6 +27,8 @@ TEXT_LIMIT = 2000
 WRITES_PER_MINUTE = 30
 KINDS = ("목표", TODO)
 RETRY_TEXT = "다시 해 달라: 앞서 한 것을 이어서 하고 결과를 남겨 줘"
+OWNER_WHY = "주인이 직접 적은 일을 잊지 않게"
+OWNER_DONE = "주인이 마쳤다고 표시한다"
 _HITS: dict[str, collections.deque] = {}
 _HITS_LOCK = threading.Lock()
 _MARKS_LOCK = threading.Lock()
@@ -124,8 +126,17 @@ def _result(i: str, cid: str | None = None) -> dict:
     return {"ok": True, "id": i, "state": state, "reason": reason, "cid": cid, "undoUntil": undo}
 
 
-def _write(root: Path, item_id: str | None, act: Callable[[str | None], tuple[str, str | None]]) -> dict:
-    """Under the work lock with the record bound: check the item, run the command, read its state back. An item of the
+def _row(i: str, _cid: str | None = None) -> dict:
+    """The item as a row of ``GET /api/lina/work/items``."""
+    from hermes_cli.lina_board_items import _Record, _store
+    from hermes_cli.work import env, ledger
+    recs, order = ledger.read_all()
+    return _Record(recs, order, _store(ledger.db()), env.current()).summary(i)
+
+
+def _write(root: Path, item_id: str | None, act: Callable[[str | None], tuple[str, str | None]],
+           read: Callable[[str, str | None], dict] = _result) -> dict:
+    """Under the work lock with the record bound: check the item, run the command, read it back. An item of the
     ``hermes`` source is read only (lina#481) and refused before anything is opened."""
     from hermes_cli.lina_board_hermes import READ_ONLY, is_hermes
     from hermes_cli.work import env, ledger
@@ -137,7 +148,7 @@ def _write(root: Path, item_id: str | None, act: Callable[[str | None], tuple[st
             if item_id is not None:
                 _item(item_id)
             i, cid = act(item_id)
-            return _result(i, cid)
+            return read(i, cid)
         finally:
             ledger.close()
             env.reset()
@@ -204,6 +215,41 @@ def quick_add(body) -> dict:
                   note=None, why=None)
         return _execute(a, 400).split()[0], None
     return _write(_root(), None, act)
+
+
+def owner_todo(body) -> dict:
+    """The owner's own to-do (lina#693): ``work add 할 일 --by <owner> --from <agent> --title <text> --basis <text> [--due]``,
+    the path ``work add`` takes for the owner. ``agent`` is the agent it is for (the record's first when unset); the why
+    and done condition the record requires are fixed lines in its locale. Answers with the item's list row."""
+    from hermes_cli.lina_board_hermes import READ_ONLY, only_hermes_agent
+    from hermes_cli.work.cmd_add import cmd_add
+    body = _body(body, {"text": str, "due": str, "agent": str}, required=("text",))
+    text = _text(body["text"])
+    if body.get("agent") and only_hermes_agent(body["agent"], _root()):
+        raise Refused(409, READ_ONLY)
+
+    def act(_):
+        from hermes_cli.work.env import current
+        from hermes_cli.work.locale import t
+        from hermes_cli.work.writing import field_by
+        limit = field_by("할 일 제목")["max"]  # the text is the title, so the record's title limit is the text's
+        if "\n" in text:
+            raise Refused(400, "text is one line")
+        if len(text) > limit:
+            raise Refused(400, f"text must be 1-{limit} characters after trimming")
+        agents = current().agents
+        agent = body.get("agent") or next(iter(agents), None)
+        if agent is None:
+            raise Refused(409, "the work record has no agent to hold the to-do for")
+        if agent not in agents:
+            raise Refused(400, f"unknown agent {agent}")
+        # Built here, not with _args: `work add` refuses --via on the owner's own to-dos.
+        a = argparse.Namespace(
+            fn=cmd_add, via=None, kind=TODO, by=current().owner, from_=agent, title=text, basis=[text],
+            why=t(OWNER_WHY), done=t(OWNER_DONE), due=body.get("due"), area=None, project=None, goal=None, check=None,
+            parent=None, session=None, omo=None, link=None, promise=False, said=None, every=None, stall=None, note=None)
+        return _execute(a, 400).split()[0], None
+    return _write(_root(), None, act, _row)
 
 
 # ---------------------------------------------------------------- read marks

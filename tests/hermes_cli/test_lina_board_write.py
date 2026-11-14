@@ -141,6 +141,27 @@ def test_quick_add_hands_one_line_to_the_chosen_agent(work, client):
     assert added["id"] in work.notices("beta")
 
 
+def test_an_owner_s_to_do_from_the_app_is_work_add_s_own_and_comes_back_as_a_list_row(work, client):
+    before = _lines(work)
+    response = client.post("/api/lina/work/items", json={"text": "  회의 자료 보기  ", "due": None})
+    assert response.status_code == 200, response.text
+    row = _valid("ItemSummary", response.json())
+    assert (row["kind"], row["title"], row["mine"], row["agent"], row["due"], row["state"]) == (
+        "todo", "회의 자료 보기", True, "alpha", None, "planned")
+    assert _lines(work) == before + 1
+    todo = _record(work, row["id"])
+    assert (todo["kind"], todo["by"], todo["from"], todo["title"]) == ("할 일", "owner", "alpha", "회의 자료 보기")
+    assert [b["text"] for b in todo["basis"]] == ["회의 자료 보기"] and todo["why"] and todo["done"]
+    listed = client.get("/api/lina/work/items").json()["items"]
+    assert [r for r in listed if r["id"] == row["id"]] == [row]
+    assert work.notices("alpha") == work.notices("beta") == ""
+
+    dated = _valid("ItemSummary", client.post("/api/lina/work/items", json={
+        "text": "보험 서류 내기", "due": "2027-01-20", "agent": "beta"}).json())
+    assert (dated["due"], dated["agent"], dated["mine"]) == ("2027-01-20", "beta", True)
+    assert _record(work, dated["id"])["due"] == "2027-01-20"
+
+
 @pytest.mark.parametrize(("path", "body", "status"), [
     ("/api/lina/work/items/T99/done", {}, 404),
     ("/api/lina/work/items/A1/comments", {"text": "x"}, 404),
@@ -158,6 +179,15 @@ def test_quick_add_hands_one_line_to_the_chosen_agent(work, client):
     ("/api/lina/work/add", {"agent": None, "text": "x"}, 400),
     ("/api/lina/work/add", {"agent": "beta", "text": 7}, 400),
     ("/api/lina/work/add", {"agent": "beta", "text": ["x"]}, 400),
+    ("/api/lina/work/items", {"text": "   "}, 400),
+    ("/api/lina/work/items", {"text": "자료" * 13}, 400),
+    ("/api/lina/work/items", {"text": "회의 자료\n보기"}, 400),
+    ("/api/lina/work/items", {"text": "회의 자료 보기", "due": "next week"}, 400),
+    ("/api/lina/work/items", {"text": "회의 자료 보기", "due": "2027-02-30"}, 400),
+    ("/api/lina/work/items", {"text": "회의 자료 보기", "agent": "nobody"}, 400),
+    ("/api/lina/work/items", {"text": "회의 자료 보기", "why": "x"}, 400),
+    ("/api/lina/work/items", {"text": None}, 400),
+    ("/api/lina/work/items", {}, 400),
 ])
 def test_bad_input_is_refused_with_one_line_and_writes_nothing(work, client, path, body, status):
     before = _lines(work)

@@ -120,6 +120,14 @@ def test_the_first_message_is_the_tail_and_a_write_through_lina_work_arrives_wit
         assert _events(api) == [("work", "comment", "T2")] and api["cursor"] != cli["cursor"]
 
 
+def test_an_owner_s_to_do_made_through_the_app_arrives_as_a_work_event(work, client, pool):
+    with client.websocket_connect(_url()) as ws:
+        assert _next(ws, pool)["events"] == []
+        response = client.post("/api/lina/work/items", json={"text": "회의 자료 보기"})
+        assert response.status_code == 200, response.text
+        assert _events(_next(ws, pool)) == [("work", "created", response.json()["id"])]
+
+
 def test_worker_run_state_changes_and_kanban_task_events_arrive_on_the_same_socket(work, client, pool):
     with client.websocket_connect(_url()) as ws:
         _next(ws, pool)

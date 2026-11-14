@@ -7,7 +7,7 @@ and ``/api/lina/work/items/{id}`` (lina#166) serve the goals and to-dos with the
 ``/api/lina/work/runs/{id}/record`` (lina#201) one worker run's record, round by round; ``/api/lina/status/checks``
 (lina#233) the hub's own health checks from ``<LINA root>/status/*.json`` (``lina_status.py``). ``POST
 /api/lina/devices/{name}/restart`` and ``…/sign-in`` (lina#234) are the owner's device actions, behind the work
-settings' owner-device gate. Like
+settings' owner-device gate. ``POST /api/lina/work/items`` (lina#693) makes the owner's own to-do. Like
 ``lina_models.py`` every response carries an ``ETag`` and a matching ``If-None-Match`` answers 304; the tag leaves out
 the snapshot time ``at``, so it changes only when the data does. Mounted through ``lina_models.router``, so the
 dashboard's auth gate applies the same way.
@@ -93,6 +93,12 @@ async def _act(request: Request, write: Callable[[object], dict]) -> dict:
         return await run_in_threadpool(write, body)
     except Refused as exc:
         raise HTTPException(status_code=exc.status, detail=exc.detail) from exc
+
+
+@router.post("/api/lina/work/items")
+async def lina_work_item_add(request: Request):
+    from hermes_cli.lina_board_write import owner_todo
+    return await _act(request, owner_todo)
 
 
 @router.post("/api/lina/work/items/{item_id}/done")
