@@ -131,7 +131,7 @@ def test_agent_turns_embed_in_batches_and_a_second_run_continues_after_the_last_
     assert [r[0] for r in rows] == [[i] for i in ids]
     assert {(r[2], r[3], r[4]) for r in rows} == {("default", 1024, "qwen3-embedding-8b")}
     assert all(r[0] != [tool_id] for r in rows)
-    assert any(line.startswith("agent: 3 embedded") for line in lines)
+    assert any(line.startswith("agent: 3 rows done, 0 left; 3 embedded") for line in lines)
 
 
 def test_from_start_goes_through_every_row_again(_memory_store, memory_store_sql):
@@ -201,7 +201,7 @@ def test_reembed_on_magpie_with_the_bare_model_stops_with_its_catalog_name_and_w
 
 def test_a_persistent_429_stops_with_the_progress_saved_and_the_rows_left(_memory_store, memory_store_sql):
     ids = [_message(memory_store_sql, f"m{n}", "agent", "user", f"turn {n}") for n in range(5)]
-    endpoint, sleeps = _Endpoint((200, {}), (429, {})), []
+    endpoint, sleeps = _Endpoint((200, {}), (429, {}), width=1024), []
     settings = EmbeddingSettings(base_url="http://127.0.0.1:9/v1", max_retries=2)
     with EmbeddingClient(settings, transport=httpx.MockTransport(endpoint), sleep=sleeps.append) as client:
         with pytest.raises(ReembedError) as stopped:

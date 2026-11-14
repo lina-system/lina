@@ -13,8 +13,9 @@ from agent.embedding_client import EmbeddingClient, EmbeddingRetriesExhausted, E
 class _Endpoint:
     """Answers each POST with the next of *answers* (status, headers), the last one for every request after."""
 
-    def __init__(self, *answers: tuple[int, dict[str, str]]) -> None:
+    def __init__(self, *answers: tuple[int, dict[str, str]], width: int = 8) -> None:
         self.answers = list(answers)
+        self.width = width
         self.inputs: list[list[str]] = []
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
@@ -23,7 +24,7 @@ class _Endpoint:
         status, headers = self.answers.pop(0) if len(self.answers) > 1 else self.answers[0]
         if status != 200:
             return httpx.Response(status, headers=headers, json={"error": "rate limited"})
-        return httpx.Response(200, json={"data": [{"index": i, "embedding": [1.0] * 8} for i in range(len(texts))]})
+        return httpx.Response(200, json={"data": [{"index": i, "embedding": [1.0] * self.width} for i in range(len(texts))]})
 
 
 def _client(endpoint: _Endpoint, sleeps: list[float], **settings) -> EmbeddingClient:
