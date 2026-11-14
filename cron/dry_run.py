@@ -1,14 +1,14 @@
 """``hermes cron run <id> --dry-run``: resolve a job the way a tick would and execute nothing (lina#639).
 
 No script runs, no model is called and nothing is sent. Delivery targets are classified from the
-job record alone: no code in ``cron/scheduler_delivery*.py`` runs. Skills are only located and their
+job record; when ``outbound.allow`` is set they are also resolved by the real delivery's resolver
+(home channels included, no send) and checked against it (lina#648). Skills are only located and their
 frontmatter read: no preprocessing, no dependency install (``skill_view`` would ``pm.ensure`` them),
 no usage bump. A pre-run script's output is replaced by a placeholder.
 """
 
 from __future__ import annotations
 
-import importlib.util
 import json
 from typing import Any
 
@@ -195,12 +195,25 @@ def _delivery(job: dict[str, Any], problems: list[str], warnings: list[str]) -> 
     value = ",".join(str(p).strip() for p in raw) if isinstance(raw, (list, tuple)) else str(raw or "")
     parts = [part.strip() for part in value.split(",") if part.strip()] or ["local"]
     targets = [_target(job, part, problems, warnings) for part in parts]
-    # HOOK(lina#638): the outbound lock lives in agent/outbound_lock.py, which this base does not
-    # have. When it lands, pass each non-local target through its check here and add its refusals
-    # to ``problems``, so a dry run reports the target after the lock.
-    lock = ("present but not wired into the dry run" if importlib.util.find_spec("agent.outbound_lock")
-            else "not available on this build (lina#638)")
-    return {"targets": targets, "outbound_lock": lock}
+    return {"targets": targets, "outbound_allow": _outbound_allow(job, problems)}
+
+
+def _outbound_allow(job: dict[str, Any], problems: list[str]) -> dict[str, Any]:
+    """Each target the delivery would resolve, through the check delivery runs before it sends."""
+    from agent.outbound_lock import CONFIG_KEY, allow_entries
+    from cron.scheduler_delivery import _resolve_delivery_targets
+    from cron.scheduler_delivery_outbound import refused_label, target_refusal
+
+    entries = allow_entries()
+    if entries is None:
+        return {"allowlist": f"unrestricted: no {CONFIG_KEY} configured", "checked": []}
+    checked = []
+    for target in _resolve_delivery_targets(job):
+        refusal = target_refusal(target, door="cron dry run")
+        checked.append({"target": refused_label(target), "allowed": refusal is None})
+        if refusal:
+            problems.append(f"a run would not deliver: {refusal}")
+    return {"allowlist": f"{CONFIG_KEY}: {len(entries)} entries", "checked": checked}
 
 
 def dry_run(job: dict[str, Any]) -> dict[str, Any]:
