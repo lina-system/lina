@@ -261,7 +261,7 @@ def tick(root, monkeypatch):
 
     def at(now: float) -> bool:
         return lina_runner_sync_daily.maybe_start(root / "worker", now=now,
-                                                  spawn=lambda base, only=None: starts.append(only) or _Ended(),
+                                                  spawn=lambda base, only, run: starts.append(only) or _Ended(),
                                                   person_spawn=lambda base: checks.append(base) or _Ended())
     return at, starts, checks
 
@@ -271,8 +271,8 @@ def test_the_days_first_sync_starts_the_person_check_and_the_retry_does_not(root
     _devices(root, {"mac": {"host": "mac-alias", "role": "person"}})
 
     assert at(_local(0, 4)) is True
-    state.write_json(state.last_path(root), {**state.last(root), "finished": _local(0, 4), "retry": True,
-                                             "busy": ["grok"]})
+    state.write_json(state.daily_path(root), {**state.daily(root), "finished": _local(0, 4), "retry": True,
+                                              "busy": ["grok"]})
     assert at(_local(0, 4, 31)) is True
 
     assert starts == [None, ["grok"]] and checks == [root]

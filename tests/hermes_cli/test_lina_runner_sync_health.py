@@ -22,7 +22,7 @@ def tick(tmp_path, monkeypatch):
     monkeypatch.setattr(lina_runner_sync_daily, "_child", None)
 
     def run(now: float) -> list[dict]:
-        lina_runner_sync_daily.maybe_start(root / "worker", now=now, spawn=lambda base, only=None: _Ended())
+        lina_runner_sync_daily.maybe_start(root / "worker", now=now, spawn=lambda base, only, run: _Ended())
         return [row for row in lina_status_checks.checks(now)["checks"] if row["name"] == "runner-sync"]
     return root, run
 
@@ -30,7 +30,8 @@ def tick(tmp_path, monkeypatch):
 def test_issue_lines_are_a_failing_check_that_names_them(tick):
     root, run = tick
     state.add_hold(root, "grok", "build-a", "1.0.71", "install failed", "node")
-    state.write_json(state.last_path(root), {"started": 1.0, "finished": 1.0, "rc": 1, "error": "OSError: no fork"})
+    state.write_json(state.daily_path(root), {"started": 1.0, "finished": 1.0, "rc": 1,
+                                              "error": "could not start: OSError: no fork"})
 
     [row] = run(86400.0 * 400)
 

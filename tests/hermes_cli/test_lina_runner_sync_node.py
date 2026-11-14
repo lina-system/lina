@@ -244,7 +244,7 @@ def test_the_daily_sync_starts_once_a_day_after_its_time(tmp_path, zone, monkeyp
 
     def start(at):
         return lina_runner_sync_daily.maybe_start(base / "worker", now=at,
-                                                  spawn=lambda root, only: started.append(at) or _Ended())
+                                                  spawn=lambda root, only, run: started.append(at) or _Ended())
 
     assert start(_local(0, 3, 59)) is False
     assert start(_local(0, 4, 0)) is True
@@ -252,7 +252,7 @@ def test_the_daily_sync_starts_once_a_day_after_its_time(tmp_path, zone, monkeyp
     assert start(_local(0, 23, 59)) is False, "a restart does not start it twice on one day"
     assert start(_local(1, 4, 30)) is True
     assert started == [_local(0, 4, 0), _local(1, 4, 30)]
-    assert state.last(base)["started"] == _local(1, 4, 30)
+    assert state.daily(base)["started"] == _local(1, 4, 30)
 
 
 def test_a_daily_start_that_raises_stays_inside_the_tick_and_is_an_issue(tmp_path, zone):
@@ -262,15 +262,15 @@ def test_a_daily_start_that_raises_stays_inside_the_tick_and_is_an_issue(tmp_pat
     (base / "config.yaml").write_text('worker:\n  runner_sync: {at: "04:00"}\n', encoding="utf-8")
     calls: list[float] = []
 
-    def broken(root, only):
+    def broken(root, only, run):
         calls.append(1)
         raise OSError("no python here")
 
     assert lina_runner_sync_daily.maybe_start(base / "worker", now=_local(0, 5), spawn=broken) is False
     assert lina_runner_sync_daily.maybe_start(base / "worker", now=_local(0, 6), spawn=broken) is False
     assert calls == [1], "today's start is spent: not tried again the same day"
-    last = state.last(base)
-    assert (last["rc"], last["finished"], last["error"]) == (1, _local(0, 5), "OSError: no python here")
+    daily = state.daily(base)
+    assert (daily["rc"], daily["finished"], daily["error"]) == (1, _local(0, 5), "could not start: OSError: no python here")
     assert "could not start: OSError: no python here" in (state.sync_dir(base) / "sync.log").read_text()
     issues, _ = lina_runner_sync.issue_lines(base)
     assert issues == ["- daily: could not start: OSError: no python here"]
@@ -280,5 +280,5 @@ def test_the_daily_sync_is_off_without_its_setting(tmp_path):
     base = tmp_path / "lina"
     base.mkdir()
     assert lina_runner_sync_daily.maybe_start(base / "worker", now=_local(0, 12),
-                                              spawn=lambda root, only: pytest.fail("off by default")) is False
+                                              spawn=lambda root, only, run: pytest.fail("off by default")) is False
     assert not state.last_path(base).exists()

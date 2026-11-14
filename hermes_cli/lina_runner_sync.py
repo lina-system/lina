@@ -41,6 +41,7 @@ from pathlib import Path
 from typing import Callable
 
 from hermes_cli import lina_deps, lina_magpie_nodes, lina_runners
+from hermes_cli import lina_runner_sync_daily as daily_run
 from hermes_cli import lina_runner_sync_hub as hub_view
 from hermes_cli import lina_runner_sync_person as person_view
 from hermes_cli import lina_runner_sync_sources as sources
@@ -424,7 +425,9 @@ def notify(root: Path, text: str) -> str:
 
 
 def sync(root: Path | None = None, *, plan: bool = False, only: list[str] | None = None, as_json: bool = False,
-         env: Env | None = None, out=print) -> int:
+         env: Env | None = None, out=print, daily: float | None = None) -> int:
+    """One run; *daily* is the serve tick's start of the daily run this process is (``--daily-run``), so its end is
+    written into ``daily.json`` as well as ``last.json``."""
     root = root or lina_deps.lina_root()
     env = env or Env()
     if plan:
@@ -434,22 +437,28 @@ def sync(root: Path | None = None, *, plan: bool = False, only: list[str] | None
     try:
         with run_lock(root):
             started = env.clock()
-            state.write_json(state.last_path(root), {**hub_view.carried(state.last(root), started), "started": started,
-                                                     "finished": None, "rc": None})
-            rc, retry = 1, {}
+            state.write_json(state.last_path(root), {"started": started, "finished": None, "rc": None})
+            rc, busy, error = 1, [], None
             try:
                 record = execute(root, env, plan=False, only=only)
                 rc = 1 if any(e for e in record["events"] if ": held (" in e) else 0
-                retry = hub_view.retry_mark(record, state.last(root))
+                busy = hub_view.busy(record)
                 path = state.record_path(root, record["started"])
                 state.write_json(path, hub_view.day_record(path, record) if only else record)
                 if record["alerts"]:
                     record["notice"] = (env.notify or notify)(root, _notice_text(record))
                 _show(record, as_json, out)
+            except Exception as exc:
+                error = f"the run failed: {daily_run.error_line(exc)}"
+                raise
             finally:
-                last = state.last(root)
-                state.write_json(state.last_path(root), {**last, "finished": env.clock(), "rc": rc, **retry})
+                ended = env.clock()
+                state.write_json(state.last_path(root), {**state.last(root), "finished": ended, "rc": rc})
+                if daily is not None:
+                    daily_run.finish(root, daily, ended, rc, busy, error)
     except SyncBusy as exc:
+        if daily is not None:
+            daily_run.refused(root, daily, env.clock())
         out(str(exc))
         return 1
     return rc
@@ -507,8 +516,8 @@ def issue_lines(root: Path, now: float | None = None) -> tuple[list[str], list[s
     issues, notes = issues + person_issues, notes + person_notes
     for ask in record.get("questions") or []:
         issues.append(f"- sign-in: {ask['question']}")
-    if state.last(root).get("error"):
-        issues.append(f"- daily: could not start: {state.last(root)['error']}")
+    if state.daily(root).get("error"):
+        issues.append(f"- daily: {state.daily(root)['error']}")
     return [scrub(line) for line in issues], [scrub(line) for line in notes]
 
 
@@ -522,7 +531,8 @@ def status(root: Path | None = None, *, issues_only: bool = False, as_json: bool
     repo = lina_runners.pins(root=root, moved=False)
     table = [{"runner": name, "repo": repo[name].version, "hub": pin.version,
               "from": state.pin_from(root, name)} for name, pin in followed(root).items()]
-    data = {"pins": table, "holds": state.holds(root), "last": state.last(root), "issues": issues, "notes": notes}
+    data = {"pins": table, "holds": state.holds(root), "last": state.last(root), "daily": state.daily(root),
+            "issues": issues, "notes": notes}
     if as_json:
         out(json.dumps(data, indent=2, ensure_ascii=False))
         return 0
@@ -530,6 +540,9 @@ def status(root: Path | None = None, *, issues_only: bool = False, as_json: bool
         out(f"{row['runner']:<13} repo {row['repo']:<22} hub {row['hub']:<22} ({row['from']})")
     last = data["last"]
     out(f"last run: started {_when(last.get('started'))} · finished {_when(last.get('finished'))} · rc {last.get('rc')}")
+    daily = data["daily"]
+    out(f"daily run: started {_when(daily.get('started'))} · finished {_when(daily.get('finished'))} · rc "
+        f"{daily.get('rc')}" + (f" · retried {_when(daily.get('retry_started'))}" if daily.get("retried") else ""))
     out("issues:")
     for line in issues or ["- none"]:
         out(line)

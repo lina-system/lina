@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 
@@ -26,7 +27,7 @@ def _sync(args) -> int:
     if action == "clear":
         return lina_runner_sync.clear(args.runner, node=args.node, accept=args.accept)
     only = [name.strip() for name in (args.only or "").split(",") if name.strip()] or None
-    return lina_runner_sync.sync(plan=args.plan, only=only, as_json=args.json)
+    return lina_runner_sync.sync(plan=args.plan, only=only, as_json=args.json, daily=args.daily_run)
 
 
 def _run(args) -> int:
@@ -78,6 +79,7 @@ def build_runners_parser(subparsers) -> None:
     sync.add_argument("--plan", action="store_true", help="only show what a run would do; install and write nothing")
     sync.add_argument("--only", help="comma-separated runners (default: every followed runner)")
     sync.add_argument("--json", action="store_true", help="the run's record as JSON")
+    sync.add_argument("--daily-run", type=float, help=argparse.SUPPRESS)  # the serve tick's daily start (lina#238)
     sync_sub = sync.add_subparsers(dest="sync_action")
     sync_status = sync_sub.add_parser("status", help="the hub's pins, holds, the last run, issues and notes")
     sync_status.add_argument("--issues", action="store_true", help="only the issue lines (`- none` when there are none)")

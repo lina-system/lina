@@ -95,9 +95,9 @@ def daily(hub, zone):
     hub["env"].clock = lambda: clock["now"]
     starts: list[list[str] | None] = []
 
-    def spawn(base, only=None):
+    def spawn(base, only, run):
         starts.append(only)
-        lina_runner_sync.sync(base, only=only or ["grok"], env=hub["env"], out=lambda line: None)
+        lina_runner_sync.sync(base, only=only or ["grok"], env=hub["env"], out=lambda line: None, daily=run)
         return _Ended()
 
     def tick(at: float) -> bool:
@@ -111,8 +111,8 @@ def test_a_busy_hub_is_tried_once_more_after_30_minutes_for_those_runners(daily)
     slot = _hold_a_hub_slot(root)
 
     assert tick(_local(0, 4, 0)) is True
-    last = state.last(root)
-    assert (last["retry"], last["busy"]) == (True, ["grok"])
+    daily = state.daily(root)
+    assert (daily["retry"], daily["busy"]) == (True, ["grok"])
     assert tick(_local(0, 4, 29)) is False, "not before 30 minutes"
 
     shutil.rmtree(slot)
@@ -120,7 +120,7 @@ def test_a_busy_hub_is_tried_once_more_after_30_minutes_for_those_runners(daily)
     assert starts == [None, ["grok"]]
     assert current(root) == "1.0.71"
     assert _record(root)["runners"]["grok"]["hub"]["state"] == "moved"
-    assert "retry" not in state.last(root)
+    assert (state.daily(root)["retried"], state.daily(root)["retry_rc"]) == (True, 0)
 
 
 def test_a_hub_still_busy_on_the_retry_is_left_for_the_next_day(daily):
@@ -129,7 +129,7 @@ def test_a_hub_still_busy_on_the_retry_is_left_for_the_next_day(daily):
 
     assert tick(_local(0, 4, 0)) is True
     assert tick(_local(0, 4, 30)) is True
-    assert state.last(root).get("retry") is None and state.last(root)["retried"] is True
+    assert state.daily(root)["retried"] is True and state.daily(root)["retry_finished"] == _local(0, 4, 30)
     for later in (_local(0, 5, 0), _local(0, 6, 0), _local(0, 23, 59)):
         assert tick(later) is False
     assert starts == [None, ["grok"]], "never a third run on one day"
@@ -140,7 +140,7 @@ def test_a_day_without_a_busy_hub_has_no_retry(daily):
     root, tick, starts = daily
 
     assert tick(_local(0, 4, 0)) is True
-    assert "retry" not in state.last(root)
+    assert "retry" not in state.daily(root)
     assert tick(_local(0, 4, 30)) is False and tick(_local(0, 6, 0)) is False
     assert starts == [None]
 
@@ -154,4 +154,4 @@ def test_a_retry_left_over_from_yesterday_does_not_run_today(daily):
     assert tick(_local(1, 0, 10)) is False, "a new day: yesterday's retry is gone"
     assert tick(_local(1, 4, 0)) is True
     assert starts == [None, None]
-    assert "retry" not in state.last(root) and current(root) == "1.0.71"
+    assert "retry" not in state.daily(root) and current(root) == "1.0.71"

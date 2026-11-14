@@ -6,7 +6,12 @@
 * ``runner-sync/holds.json``: runners (or one runner on one node) a person has to clear, and the major versions a
   person accepted.
 * ``runner-sync/lag.json``: since when a node's runner differs from the hub's pin.
-* ``runner-sync/last.json``: the last run (``started``, ``finished``, ``rc``); ``runner-sync/YYYYMMDD.json`` its record.
+* ``runner-sync/last.json``: the last run, by a person or by the serve tick (``started``, ``finished``, ``rc``);
+  ``runner-sync/YYYYMMDD.json`` its record.
+* ``runner-sync/daily.json``: the serve tick's own daily run (``lina_runner_sync_daily``), which a person's run never
+  writes: ``started``, ``finished``, ``rc``, the busy runners (``retry``, ``busy``), the one retry (``retried``,
+  ``only``, ``retry_started``, ``retry_finished``, ``retry_rc``), ``error`` when a start or the run failed, and
+  ``person_started`` when the day's person-device check started.
 """
 
 from __future__ import annotations
@@ -199,6 +204,31 @@ def last_path(root: Path) -> Path:
 
 def last(root: Path) -> dict:
     return read_json(last_path(root), {})
+
+
+def daily_path(root: Path) -> Path:
+    return sync_dir(root) / "daily.json"
+
+
+_LEGACY_DAILY = ("started", "finished", "rc", "error", "retry", "busy", "retried", "only")
+
+
+def daily(root: Path) -> dict:
+    """The serve tick's daily run. Before ``daily.json`` existed the tick kept it in ``last.json`` marked ``by:
+    serve``; such a record becomes ``daily.json`` once (``from: last.json``, ``last.json`` untouched), so a person's
+    later run cannot erase it. A ``last.json`` without that mark was a person's run and is not a daily run. Its
+    ``error`` was only ever a start that raised, so it keeps that meaning (``could not start: ...``)."""
+    path = daily_path(root)
+    if path.exists():
+        return read_json(path, {})
+    legacy = last(root)
+    if legacy.get("by") != "serve" or not isinstance(legacy.get("started"), (int, float)):
+        return {}
+    kept = {key: legacy[key] for key in _LEGACY_DAILY if key in legacy} | {"from": "last.json"}
+    if kept.get("error"):
+        kept["error"] = f"could not start: {kept['error']}"
+    write_json(path, kept)
+    return kept
 
 
 def day(now: float) -> str:
