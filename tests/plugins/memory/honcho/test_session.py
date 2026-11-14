@@ -472,7 +472,6 @@ def _settle_prewarm(provider):
         provider._prefetch_result = ""
         provider._prefetch_result_fired_at = -999
     provider._prefetch_thread = None
-    provider._prefetch_thread_started_at = 0.0
     provider._last_dialectic_turn = -999
     provider._dialectic_empty_streak = 0
     if getattr(provider, "_manager", None) is not None:
@@ -605,7 +604,6 @@ class TestBaseContextSummary:
             target=lambda: release.wait(timeout=5), daemon=True
         )
         provider._prefetch_thread.start()
-        provider._prefetch_thread_started_at = time.monotonic()
 
         try:
             started = time.perf_counter()
@@ -827,13 +825,12 @@ class TestDialecticCadenceAdvancesOnSuccess:
 
     def test_in_flight_thread_is_not_stacked(self):
         import threading as _threading
-        import time as _time
         provider = self._make_provider()
         provider._session_key = "test"
         provider._turn_count = 10
         provider._last_dialectic_turn = 0
 
-        # Simulate a prior thread still running (fresh, not stale)
+        # Simulate a prior thread still running
         hold = _threading.Event()
 
         def _block():
@@ -842,7 +839,6 @@ class TestDialecticCadenceAdvancesOnSuccess:
         fresh = _threading.Thread(target=_block, daemon=True)
         fresh.start()
         provider._prefetch_thread = fresh
-        provider._prefetch_thread_started_at = _time.monotonic()  # fresh start
 
         provider.queue_prefetch("what changed in the repo today")
         # Should have short-circuited — no new dialectic call
@@ -933,29 +929,22 @@ class TestDialecticLiveness:
         _settle_prewarm(provider)
         return provider
 
-    def test_stale_thread_is_treated_as_dead(self):
-        """A thread older than timeout × multiplier no longer blocks new fires."""
+    def test_old_live_thread_is_not_refired(self):
+        """A thread still running is never fired again beside itself, however long it has run."""
         import threading as _threading
         p = self._make_provider()
         p._session_key = "test"
         p._turn_count = 10
         p._last_dialectic_turn = 0
-        p._manager.dialectic_query.return_value = "fresh synthesis"
 
-        # Plant an alive thread with an old timestamp (stale)
         hold = _threading.Event()
         stuck = _threading.Thread(target=lambda: hold.wait(timeout=10.0), daemon=True)
         stuck.start()
         p._prefetch_thread = stuck
-        # timeout=2.0, multiplier=2.0, so anything older than 4s is stale
-        p._prefetch_thread_started_at = 0.0  # very old (1970 monotonic baseline)
 
         p.queue_prefetch("what changed in the repo today")
-        # New thread should have been spawned since stuck one is stale
-        assert p._prefetch_thread is not stuck, "stale thread must be recycled"
-        if p._prefetch_thread:
-            p._prefetch_thread.join(timeout=2.0)
-        assert p._manager.dialectic_query.call_count == 1
+        assert p._prefetch_thread is stuck, "a running dialectic must not be re-fired"
+        assert p._manager.dialectic_query.call_count == 0
         hold.set()
         stuck.join(timeout=2.0)
 
