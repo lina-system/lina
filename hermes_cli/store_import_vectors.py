@@ -208,7 +208,7 @@ def import_index(conn, path: Path, *, model: str, dimensions: int, batch_size: i
 def run(args, config: dict) -> int:
     """``lina store reembed --source messages --from-index <db>``: needs ``embedding.model`` and ``dimensions``,
     not the endpoint, since nothing is embedded."""
-    from agent.embedding_client import DEFAULT_DIMENSIONS, DEFAULT_MODEL
+    from agent.embedding_client import DEFAULT_DIMENSIONS, home_model
     from hermes_cli.store_reembed import _owner_connect
     from hermes_state_store import StoreUnavailableError
     section = config.get("embedding") or {}
@@ -216,7 +216,7 @@ def run(args, config: dict) -> int:
         if args.source != "messages":
             raise ReembedError("--from-index imports external-message vectors: use it with --source messages")
         with _owner_connect() as conn:
-            import_index(conn, Path(args.from_index), model=str(section.get("model") or DEFAULT_MODEL),
+            import_index(conn, Path(args.from_index), model=home_model(),
                          dimensions=int(section.get("dimensions") or DEFAULT_DIMENSIONS),
                          batch_size=args.batch_size or 500)
     except (ReembedError, StoreUnavailableError) as exc:

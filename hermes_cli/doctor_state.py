@@ -648,6 +648,21 @@ def _check_memory_provider(should_fix: bool, f: Finding) -> None:
         check_warn(f"{label} check failed", str(_e))
 
 
+@doctor_check("Embedding model", "(could not read: {e})")
+def _check_embedding_model(should_fix: bool, f: Finding) -> None:
+    """The embedding model is the home's (root config.yaml); a profile that sets another one is not read (lina#651)."""
+    from agent.embedding_client import differing_profiles, home_model
+    differing = differing_profiles()
+    if not differing:
+        return
+    home = home_model()
+    _section("Embedding Model")
+    for profile, model in differing.items():
+        check_warn(f"Profile {profile} sets embedding.model {model!r}", f"(the home's {home!r} is used)")
+        f.manual_issues.append(f"Profile '{profile}' sets embedding.model '{model}', but the store's model is the "
+                               f"home's '{home}': remove it from that profile's config.yaml (docs/store.md)")
+
+
 @doctor_check("Memory vectors", "(could not count: {e})")
 def _check_memory_vectors(should_fix: bool, f: Finding) -> None:
     """Honcho conclusions per workspace that still wait for a vector of the configured model, as `lina migrate
@@ -655,9 +670,10 @@ def _check_memory_vectors(should_fix: bool, f: Finding) -> None:
     from hermes_cli.store import read_env, store_dir
     if not read_env(store_dir() / "store.env").get("LINA_STORE_PASSWORD"):
         return  # no LINA store on this machine
+    from agent.embedding_client import home_model
     from plugins.memory import import_provider_module
     pending_vectors = import_provider_module("honcho", "pending_vectors")
-    model = pending_vectors.configured_model()
+    model = home_model()
     counts = pending_vectors.pending_counts(model)
     _section("Memory Vectors")
     if not counts:
