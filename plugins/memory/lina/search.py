@@ -13,6 +13,10 @@ Each source ranks its own hits; the lists are merged by reciprocal rank fusion. 
 out and named in ``skipped``: the search never fails because one source did. Every hit carries an opaque ``ref`` that
 ``memory_open`` resolves: ``msg:<memory.messages uid>``, ``ltm:m:<message id>:<Honcho session>``, ``ltm:c:<conclusion
 id>``, ``ctx:<summary node id>:<LCM session>``.
+
+An original can be far larger than one tool result should be (a deep LCM summary stored as a message ran to 250 KB,
+lina#705), so ``memory_open`` returns at most ``OPEN_TEXT_CHARS`` of its text per call and the rest by ``offset``, the
+way ``lcm_expand`` pages with ``content_offset``.
 """
 
 from __future__ import annotations
@@ -25,6 +29,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Optional
 
+from tools.budget_config import DEFAULT_RESULT_SIZE_CHARS
+
 logger = logging.getLogger(__name__)
 
 SOURCES = ("agent", "messages", "honcho", "lcm")
@@ -35,6 +41,9 @@ DEFAULT_LIMIT = 10
 MAX_LIMIT = 50
 SEARCH_TOOL = "memory_search"
 OPEN_TOOL = "memory_open"
+# A quarter of the result size the tool-result storage spills to a file: JSON escaping can double the text (newlines,
+# quotes), and a turn that opens a few refs still stays under the per-turn budget.
+OPEN_TEXT_CHARS = DEFAULT_RESULT_SIZE_CHARS // 4
 TOOL_NAMES = frozenset({SEARCH_TOOL, OPEN_TOOL})
 
 SEARCH_SCHEMA = {
@@ -60,10 +69,20 @@ SEARCH_SCHEMA = {
 
 OPEN_SCHEMA = {
     "name": OPEN_TOOL,
-    "description": "Open the original of a memory_search hit by its ref: the full message, conclusion or summary.",
+    "description": (
+        "Open the original of a memory_search hit by its ref: the full message, conclusion or summary. "
+        f"Returns at most {OPEN_TEXT_CHARS:,} characters of text per call; 'text_chars' is the whole length. When "
+        "'truncated' is true, call again with offset=next_offset for the next part; the parts joined in order are "
+        "the whole text."
+    ),
     "parameters": {
         "type": "object",
-        "properties": {"ref": {"type": "string", "description": "The ref of a memory_search hit."}},
+        "properties": {
+            "ref": {"type": "string", "description": "The ref of a memory_search hit."},
+            "offset": {"type": "integer", "minimum": 0,
+                       "description": "Character offset to start the text at (default 0); pass next_offset from "
+                                      "the previous call to continue."},
+        },
         "required": ["ref"],
     },
 }
@@ -242,13 +261,15 @@ class MemorySearch:
 
     # ── memory_open ──
 
-    def open(self, ref: str) -> dict[str, Any]:
+    def open(self, ref: str, offset: int = 0) -> dict[str, Any]:
         ref = (ref or "").strip()
         kind, _, rest = ref.partition(":")
         opener = {"msg": self._open_message, "ltm": self._open_honcho, "ctx": self._open_summary}.get(kind)
         if opener is None or not rest:
             raise RefError(f"malformed ref {ref!r}: expected msg:…, ltm:… or ctx:… from memory_search")
-        return {"ref": ref, **opener(ref, rest)}
+        if offset < 0:
+            raise ValueError("offset must be 0 or more")
+        return _page({"ref": ref, **opener(ref, rest)}, offset)
 
     def _open_message(self, ref: str, uid: str) -> dict[str, Any]:
         row = self._readers.store().open_memory(uid)
@@ -296,9 +317,22 @@ class MemorySearch:
         sources = [item for item in expanded.get("expanded") or () if isinstance(item, dict)]
         key = "store_id" if expanded.get("source_type") == "messages" else "node_id"
         return {"source": "lcm", "kind": "summary", "text": summary.get("summary"),
-                "truncated": bool(summary.get("summary_truncated")), "session_id": session_id,
+                "summary_truncated": bool(summary.get("summary_truncated")), "session_id": session_id,
                 "depth": expanded.get("depth"), "source_type": expanded.get("source_type"),
                 "source_ids": [item.get(key) for item in sources if item.get(key) is not None]}
+
+
+def _page(opened: dict[str, Any], offset: int) -> dict[str, Any]:
+    """*opened* with at most ``OPEN_TEXT_CHARS`` of its text from *offset*, and where the next part starts."""
+    text = opened.get("text")
+    if not isinstance(text, str):
+        return opened
+    if offset > len(text):
+        raise ValueError(f"offset {offset} is past the end of the text ({len(text)} characters)")
+    end = min(len(text), offset + OPEN_TEXT_CHARS)
+    truncated = end < len(text)
+    return {**opened, "text": text[offset:end], "text_chars": len(text), "offset": offset, "truncated": truncated,
+            "next_offset": end if truncated else None}
 
 
 def _summary_block(evidence: Any, node_id: int) -> Optional[dict[str, Any]]:
@@ -328,7 +362,7 @@ def handle_tool_call(search: MemorySearch, name: str, args: dict[str, Any]) -> s
                 return tool_error("sources must be a list of source names")
             result = search.search(str(args.get("query") or ""), sources=sources, limit=args.get("limit"))
         else:
-            result = search.open(str(args.get("ref") or ""))
+            result = search.open(str(args.get("ref") or ""), offset=int(args.get("offset") or 0))
     except (ValueError, TypeError, SourceOff) as exc:
         return tool_error(str(exc))
     except Exception as exc:  # health: allow BLE001 -- the source's failure is the tool's answer
