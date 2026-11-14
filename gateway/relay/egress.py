@@ -93,6 +93,9 @@ def declined_send(result: Any) -> bool:
     futile retries rather than leaked content. This helper makes the gateway
     lanes agree with the wire.
     """
+    from agent.outbound_lock import is_outbound_refusal
+    if is_outbound_refusal(result):
+        return True  # outbound.allow refused the destination before it left the process
     raw = getattr(result, "raw_response", None)
     if isinstance(raw, dict):
         return is_egress_decline(raw)

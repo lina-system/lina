@@ -483,6 +483,22 @@ def _check_cron_store(should_fix: bool, f: Finding) -> None:
 
 
 @doctor_check()
+def _check_outbound_lock(should_fix: bool, f: Finding) -> None:
+    """``outbound.allow`` (agent/outbound_lock.py): how many destinations it allows and the sends it refused."""
+    from hermes_cli.doctor import HERMES_HOME
+    from agent.outbound_lock import CONFIG_KEY, allow_entries, read_refusals
+    entries, refusals = allow_entries(), read_refusals(HERMES_HOME)
+    if entries is None and not refusals["total"]:
+        return
+    if entries is not None:
+        check_ok(f"{CONFIG_KEY}: messages may leave only to {len(entries)} destination(s)")
+    if refusals["total"]:
+        target, row = max(refusals["targets"].items(), key=lambda kv: kv[1].get("last_at") or 0)
+        check_warn(f"{CONFIG_KEY} refused {refusals['total']} send(s) to {len(refusals['targets'])} target(s); "
+                   f"last: {target} ({row.get('door')})")
+
+
+@doctor_check()
 def _check_checkpoint_store(should_fix: bool, f: Finding) -> None:
     """/rollback store footprint: warn when checkpoints are on and the store sits above its cap."""
     from tools.checkpoint_maintenance import checkpoint_footprint_notice

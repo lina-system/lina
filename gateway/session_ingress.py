@@ -478,9 +478,12 @@ async def dispatch_shared_busy(adapter, event, session_key, *, durable=False):
             await adapter._release_turn_marker(delivery_event)
             await adapter._release_turn_marker(event)
 
+    from agent.outbound_lock import delivering_for
+
     token, commit_token = busy_acceptance.set(accepted), busy_commit.set(committed)
     try:
-        task = asyncio.create_task(observe())
+        with delivering_for(event.source):  # the reply's outbound.allow: the profile the handler routed to
+            task = asyncio.create_task(observe())
     finally:
         busy_acceptance.reset(token)
         busy_commit.reset(commit_token)
