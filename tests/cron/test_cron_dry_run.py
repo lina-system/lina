@@ -21,6 +21,10 @@ import cron.dry_run
 import cron.scheduler
 
 _FORBIDDEN = ("scheduler_delivery", "run_agent.py", "send_message")
+# With outbound.allow set the dry run resolves targets in scheduler_delivery; these are the frames that send.
+_SENDS = {"_deliver_result", "_deliver_standalone", "_deliver_to_bot_chat", "_deliver_via_live_adapter",
+          "_standalone_send", "_live_send_text", "_live_send_media", "_send_media_via_adapter",
+          "send_message_tool", "_handle_send"}
 
 
 @pytest.fixture
@@ -115,6 +119,46 @@ def test_a_skill_with_an_uninstalled_dependency_is_reported_never_installed(home
     assert ensured == [] and nothing_runs == []
     out = capsys.readouterr().out
     assert '"found": true' in out and "lina-639-absent-tool" in out
+
+
+def _sent(reached: list[str]) -> list[str]:
+    return [frame for frame in reached if frame.rsplit(":", 1)[1] in _SENDS or "run_agent.py" in frame]
+
+
+def _report(capsys) -> dict:
+    import json
+
+    return json.loads(capsys.readouterr().out)
+
+
+def test_without_outbound_allow_the_report_says_unrestricted(home, nothing_runs, capsys):
+    job = jobs.create_job(prompt="post it", schedule="every 1h", deliver="telegram:222")
+
+    assert _dry_run(job["id"]) == 0
+
+    assert _report(capsys)["delivery"]["outbound_allow"]["allowlist"] == "unrestricted: no outbound.allow configured"
+    assert nothing_runs == []
+
+
+def test_outbound_allow_passes_an_allowed_chat_and_refuses_another(home, nothing_runs, monkeypatch, capsys):
+    (home / "config.yaml").write_text("outbound:\n  allow:\n    - telegram:111\n")
+    monkeypatch.setenv("TELEGRAM_HOME_CHANNEL", "222")
+    allowed = jobs.create_job(prompt="post it", schedule="every 1h", deliver="telegram:111")
+    # The bare platform is the home-channel alias: it resolves to 222, which the list does not hold.
+    refused = jobs.create_job(prompt="post it", schedule="every 1h", deliver="telegram:111,telegram")
+
+    assert _dry_run(allowed["id"]) == 0
+    report = _report(capsys)
+    assert report["delivery"]["outbound_allow"]["checked"] == [{"target": "telegram:111", "allowed": True}]
+
+    assert _dry_run(refused["id"]) == 1
+    report = _report(capsys)
+    assert report["delivery"]["outbound_allow"]["checked"] == [
+        {"target": "telegram:111", "allowed": True}, {"target": "telegram:222", "allowed": False}]
+    [problem] = report["problems"]
+    assert "outbound.allow" in problem and "telegram:222" in problem
+    assert "outbound.allow" in list_executions(job_id=refused["id"])[0]["error"]
+    assert _sent(nothing_runs) == []
 
 
 def test_a_ledger_from_before_dry_runs_is_widened_without_losing_rows(home):

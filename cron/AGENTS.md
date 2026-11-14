@@ -114,7 +114,8 @@ Hardening invariants — each guards a real failure; don't weaken without answer
 - Background `delegate_task` is process-local; work that must survive restarts is a cron job or a
   `terminal(background=True, notify_on_complete=True)` process.
 - **`cron run <id> --dry-run` (`cron/dry_run.py`) executes nothing:** no script, model or send, no
-  frame in `scheduler_delivery*.py` (targets are classified from the job record), skills are looked
+  send frame in `scheduler_delivery*.py` (targets are classified from the job record; with
+  `outbound.allow` set, `_resolve_delivery_targets` + `target_refusal` check them), skills are looked
   up without inline-shell preprocessing. It books a `dry_run` ledger row, which is not an attempt:
   it stays out of `_TERMINAL_STATES` and every latest-attempt read, or it could release a live claim.
   `lina migrate cron` imports legacy jobs paused with `deliver: local` (`docs/store.md`).

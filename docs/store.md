@@ -340,8 +340,13 @@ copy`) whatever its old state. `deliver` becomes `local`; the old `deliver`, `fa
 `interpreter` are not carried and are kept as text in the job's `notes`, so a copied chat id is never live.
 A rerun finds the ids already present and changes nothing, including edits made to the copy since. The JSON
 report (also `--work-dir/cron-migration-report.json`) lists per job its kind, schedule, old `deliver`,
-whether its script and workdir resolve in the new home, and what was left out. Scripts are not copied:
-check each job with `lina -p alpha-copy cron run <id> --dry-run` before resuming it.
+whether its script and workdir resolve in the new home, and what was left out. Scripts travel with the
+jobs: each script a job names (`script`, `monitor_script`) is read from the old profile's `scripts/` into
+the snapshot (sha256 receipt, symlinks refused) and copied into the agent's `scripts/`, never run; the
+report says per job whether it was `copied`, `already_present`, `missing` in the old profile, `refused`,
+or `kept_existing` (a different file is already there and is not overwritten). Credentials do not
+travel: a script's keys and environment are set up in the new agent by hand. Check each job with
+`lina -p alpha-copy cron run <id> --dry-run` before resuming it.
 
 ### Migration identity and reference inventory
 
