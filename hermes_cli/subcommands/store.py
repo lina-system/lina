@@ -102,6 +102,8 @@ def build_store_parser(subparsers) -> None:
     reembed.add_argument("--from-start", action="store_true",
                          help="ignore where the last run stopped and go through every row again")
     reembed.add_argument("--max-batches", type=int, default=None, help="stop after this many batches per source")
+    reembed.add_argument("--max-rate", type=float, default=None, metavar="N",
+                         help="at most N embedding requests per second, to stay under a provider's limit (default: no cap)")
     reembed.add_argument("--from-index", metavar="DB", default=None,
                          help="with --source messages: import the message collector's stored chunk vectors from its "
                               "SQLite index (read-only) instead of embedding; the rest is left for reembed")

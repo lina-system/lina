@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 
+import httpx
 import psycopg
 import pytest
 
@@ -16,6 +17,7 @@ from hermes_cli.store_migrations import MIGRATIONS_DIR
 from hermes_cli.store_reembed import ReembedError, expand_sources, reembed
 from hermes_state_store import MessageStore
 from tests.agent.test_embedding_client import magpie_transport
+from tests.agent.test_embedding_client_retry import _Endpoint
 
 
 class _Client:
@@ -129,7 +131,7 @@ def test_agent_turns_embed_in_batches_and_a_second_run_continues_after_the_last_
     assert [r[0] for r in rows] == [[i] for i in ids]
     assert {(r[2], r[3], r[4]) for r in rows} == {("default", 1024, "qwen3-embedding-8b")}
     assert all(r[0] != [tool_id] for r in rows)
-    assert any(line.startswith("agent: 3 embedded") for line in lines)
+    assert any(line.startswith("agent: 3 rows done, 0 left; 3 embedded") for line in lines)
 
 
 def test_from_start_goes_through_every_row_again(_memory_store, memory_store_sql):
@@ -195,6 +197,31 @@ def test_reembed_on_magpie_with_the_bare_model_stops_with_its_catalog_name_and_w
             reembed(_connect(_memory_store), client, ["agent"], batch_size=5)
     assert memory_store_sql("SELECT count(*) FROM vec.embeddings")[0][0] == 0
     assert memory_store_sql("SELECT count(*) FROM vec.reembed_progress")[0][0] == 0
+
+
+def test_a_persistent_429_stops_with_the_progress_saved_and_the_rows_left(_memory_store, memory_store_sql):
+    ids = [_message(memory_store_sql, f"m{n}", "agent", "user", f"turn {n}") for n in range(5)]
+    endpoint, sleeps = _Endpoint((200, {}), (429, {}), width=1024), []
+    settings = EmbeddingSettings(base_url="http://127.0.0.1:9/v1", max_retries=2)
+    with EmbeddingClient(settings, transport=httpx.MockTransport(endpoint), sleep=sleeps.append) as client:
+        with pytest.raises(ReembedError) as stopped:
+            reembed(_connect(_memory_store), client, ["agent"], batch_size=2, out=lambda line: None)
+    assert "rows left: agent 3" in str(stopped.value)
+    assert "`lina store reembed --source agent` again to continue" in str(stopped.value)
+    assert sleeps == [1.0, 2.0]
+    assert memory_store_sql("SELECT last_item_id FROM vec.reembed_progress WHERE source = 'agent'") == [(ids[1],)]
+    assert memory_store_sql("SELECT count(*) FROM vec.embeddings")[0][0] == 2
+
+
+def test_the_end_line_gives_rows_done_and_rows_left(_memory_store, memory_store_sql):
+    for n in range(3):
+        _message(memory_store_sql, f"m{n}", "agent", "user", f"turn {n}")
+    lines: list[str] = []
+    reembed(_connect(_memory_store), _Client(), ["agent"], batch_size=2, max_batches=1, out=lines.append)
+    assert lines[-1].startswith("agent: 2 rows done, 1 left;")
+    lines.clear()
+    reembed(_connect(_memory_store), _Client(), ["agent"], batch_size=2, out=lines.append)
+    assert lines[-1].startswith("agent: 1 rows done, 0 left;")
 
 
 def test_unknown_sources_are_refused():

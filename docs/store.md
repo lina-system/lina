@@ -520,6 +520,13 @@ drops `documents.embedding` and `message_embeddings.embedding`. At start Honcho 
 
 ### Configuration
 
+The store's embedding model is a setting of the home, not of a profile: `embedding.model` in the root
+`config.yaml` (the home's, beside `profiles/`) is the model every agent embeds its queries with and `lina store
+reembed` writes, whichever profile runs them, and `lina doctor` counts pending vectors of it. A profile may not
+differ: its own `embedding.model` is not read, and `lina doctor` names each profile that sets another one.
+`agent/embedding_client.py::home_model` is the one place the name is read. The other `embedding:` keys (endpoint,
+key, width) stay per `config.yaml`.
+
 LINA's side reads `embedding:` in `config.yaml`; the key is a secret in `.env` (default name
 `LINA_EMBEDDING_API_KEY`, another one through `api_key_env`):
 
@@ -528,7 +535,7 @@ embedding:
   base_url: <OpenAI-compatible endpoint ending in /v1>
   model: qwen3-embedding-8b   # through magpie: hub/nous/qwen/qwen3-embedding-8b, as GET <base_url>/models lists it
   dimensions: 1024
-  # api_key_env: LINA_EMBEDDING_API_KEY   batch_size: 64   timeout: 60   max_chars: 8000
+  # api_key_env: LINA_EMBEDDING_API_KEY   batch_size: 64   timeout: 60   max_chars: 8000   max_retries: 8
 ```
 
 The default `qwen3-embedding-8b` is the bare model id an OpenAI-compatible provider takes. A node whose models come
@@ -616,16 +623,23 @@ such as `Honcho cannot reach EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL (172.18
 ### Re-embedding and the quality check
 
 ```sh
-lina store reembed --source agent|messages|memory|all   # default all
+lina store reembed --source agent|messages|memory|all [--max-rate N]   # default all
 lina memory eval-search --questions <file.jsonl> [--honcho-url http://127.0.0.1:8000] [--json out.json]
 ```
 
 `reembed` runs as the store owner, goes through `memory.messages` (`agent`: roles user and assistant;
 `messages`: external messages, whose vectors take the shared owner `*`) and Honcho's conclusions in id order, a batch per transaction (`--batch-size`,
 default `embedding.batch_size`), and records the last id of each batch, so a stopped run continues where it
-stopped (`--from-start` starts over). It prints a line per batch and the counts per source. Renaming a profile moves its
+stopped (`--from-start` starts over). It prints a line per batch and, per source, the rows done and the rows left. Renaming a profile moves its
 `vec.chunks` rows and their `chunk` vectors to the new agent with its messages, in the same transaction (and back
 when the rename fails); `hermes profile migrate-identity` moves any a rename left behind.
+
+An answer of 429 (rate limited) or 5xx is not the end of a run: the client waits for the server's `Retry-After`, or
+otherwise 1 s doubling up to 60 s, and sends the same batch again, up to `embedding.max_retries` times in a row
+(default 8; a success starts the count over). When the last retry fails too, `reembed` stops with the batches done so
+far saved and one line giving the rows left per source and the command that continues the run. `--max-rate N` keeps
+the run under N requests per second, so a long run leaves room under a provider limit it shares with other agents
+(default: no cap). An agent's own search does not retry: a search inside a turn fails at once instead of waiting.
 
 `eval-search` scores the top-5 hit rate per source: today's search of each source (the store's full-text search
 for `agent` and `messages`, Honcho's conclusion search for `memory`) against one vector search over all of the

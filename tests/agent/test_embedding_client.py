@@ -94,7 +94,7 @@ def test_client_cuts_full_width_answers_to_unit_prefixes_in_input_order_and_batc
 
 def test_client_reports_an_error_status_as_embedding_error():
     with _FakeEmbeddings(status=503) as fake:
-        with EmbeddingClient(EmbeddingSettings(base_url=fake.base_url)) as client:
+        with EmbeddingClient(EmbeddingSettings(base_url=fake.base_url, max_retries=0)) as client:
             with pytest.raises(EmbeddingError, match="503"):
                 client.embed(["hello"])
 
