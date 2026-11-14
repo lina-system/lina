@@ -15,6 +15,7 @@ import os
 import secrets
 import subprocess
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from importlib.resources import files
@@ -42,6 +43,32 @@ HONCHO_DEFAULTS = {"EMBEDDING_MODEL_CONFIG__TRANSPORT": "openai", "EMBEDDING_MOD
                    "EMBEDDING_VECTOR_DIMENSIONS": str(DEFAULT_DIMENSIONS),
                    "EMBEDDING_MODEL_CONFIG__DIMENSIONS_MODE": "always"}
 HONCHO_ENV_HEADER = "# Honcho settings (LLM_*, EMBEDDING_*, AUTH_*), one KEY=value per line. See services/honcho.\n"
+# Honcho's model callers (services/honcho/src/config.py): caller -> (settings prefix, the switch that turns it off).
+# Each takes its key from <prefix>__OVERRIDES__API_KEY or the variable <prefix>__OVERRIDES__API_KEY_ENV names, else
+# LLM_<TRANSPORT>_API_KEY, and its address from <prefix>__OVERRIDES__BASE_URL, else (an LLM caller without its own key)
+# LLM_<TRANSPORT>_BASE_URL. A partial <prefix>__* override keeps the default transport, openai, for every caller.
+HONCHO_MODEL_CALLERS = {
+    "embedding": ("EMBEDDING_MODEL_CONFIG", None), "deriver": ("DERIVER_MODEL_CONFIG", "DERIVER_ENABLED"),
+    "summary": ("SUMMARY_MODEL_CONFIG", "SUMMARY_ENABLED"),
+    "dream deduction": ("DREAM_DEDUCTION_MODEL_CONFIG", "DREAM_ENABLED"),
+    "dream induction": ("DREAM_INDUCTION_MODEL_CONFIG", "DREAM_ENABLED"),
+    **{f"dialectic {level}": (f"DIALECTIC_LEVELS__{level.upper()}__MODEL_CONFIG", None)
+       for level in ("minimal", "low", "medium", "high", "max")},
+}
+_OFF = {"0", "false", "f", "no", "n", "off"}
+# Run inside the api container: one GET <base>/models per argument, one JSON line each ("" = an HTTP answer came back,
+# whatever its status; else why none did). No key is sent, so 401 counts as reached.
+MODELS_PROBE = """import json, sys, urllib.error, urllib.request
+for url in sys.argv[1:]:
+    try:
+        urllib.request.urlopen(url, timeout=5).close()
+        answer = ""
+    except urllib.error.HTTPError:
+        answer = ""
+    except Exception as exc:
+        answer = str(getattr(exc, "reason", exc)) or type(exc).__name__
+    print(json.dumps(answer))
+"""
 
 
 class StoreError(Exception):
@@ -98,6 +125,37 @@ def ensure_env(directory: Path) -> dict[str, str]:
         values = {**wanted, **values}
         write_env(directory / "store.env", values)
     return values
+
+
+def honcho_model_settings(env: dict[str, str]) -> tuple[list[str], dict[str, str]]:
+    """From ``honcho.env``: one line per missing key variable (with the callers that need it), and the base URL
+    variables the callers use (name -> value). Key values are only tested for being set."""
+    env = {key.upper(): value for key, value in env.items() if value}
+    missing: dict[str, list[str]] = {}
+    urls: dict[str, str] = {}
+    for caller, (prefix, switch) in HONCHO_MODEL_CALLERS.items():
+        if switch and env.get(switch, "").lower() in _OFF:
+            continue
+        transport = env.get(f"{prefix}__TRANSPORT", "openai").upper()
+        key_env = env.get(f"{prefix}__OVERRIDES__API_KEY_ENV", "")
+        own_key = f"{prefix}__OVERRIDES__API_KEY" in env or key_env.upper() in env
+        if not own_key and f"LLM_{transport}_API_KEY" not in env:
+            name = f"LLM_{transport}_API_KEY" + (f" (or {key_env}, named by {prefix}__OVERRIDES__API_KEY_ENV)"
+                                                 if key_env else "")
+            missing.setdefault(name, []).append(caller)
+        url_var = f"{prefix}__OVERRIDES__BASE_URL"
+        if url_var not in env and caller != "embedding" and not own_key:
+            url_var = f"LLM_{transport}_BASE_URL"
+        if url_var in env:
+            urls[url_var] = env[url_var]
+    return [f"{name} is not set in honcho.env ({', '.join(callers)} cannot call a model)"
+            for name, callers in missing.items()], urls
+
+
+def _address(url: str) -> str:
+    """``host:port/path`` of a URL without any user:password part."""
+    parts = urllib.parse.urlsplit(url)
+    return f"{parts.hostname}{f':{parts.port}' if parts.port else ''}{parts.path}"
 
 
 DOCKER_MISSING = ("Docker is not running or not installed. Install Docker (Docker Desktop on a Mac), start it, then "
@@ -221,6 +279,34 @@ class Store:
             raise StoreError("smoke test: ltm.alembic_version is empty")
         self.out(f"Smoke test passed (Honcho revision {revision.strip()}).")
 
+    def model_problems(self) -> list[str]:
+        """What keeps Honcho from its models: missing key variables, and every base URL the api container cannot
+        reach (one ``exec`` asking each ``<base>/models``), one line each naming the variable (lina#650)."""
+        env = read_env(Path(self.values().get("LINA_HONCHO_ENV") or self.directory / "honcho.env"))
+        problems, urls = honcho_model_settings(env)
+        if not urls:
+            return problems
+        names = sorted(urls)
+        probes = [urls[name].rstrip("/") + "/models" for name in names]
+        try:
+            answers = self.compose("exec", "-T", "honcho-api", "/app/.venv/bin/python", "-c", MODELS_PROBE, *probes,
+                                   what="asking the model endpoints from the Honcho api container",
+                                   capture=True).stdout.splitlines()
+        except StoreError as exc:
+            return [*problems, str(exc)]
+        if len(answers) != len(probes):
+            return [*problems, f"the endpoint probe in the Honcho api container answered {len(answers)} of "
+                               f"{len(probes)} lines"]
+        return problems + [f"Honcho cannot reach {name} ({_address(url)}: {json.loads(answer)})"
+                           for name, url, answer in zip(names, probes, answers) if json.loads(answer)]
+
+    def report_models(self) -> None:
+        problems = self.model_problems()
+        for line in problems:
+            self.out(f"Model endpoints: {line}")
+        if not problems:
+            self.out("Model endpoints: Honcho has its keys and reaches every *_BASE_URL in honcho.env.")
+
 
 def preflight(store: Store) -> None:
     if store.run(["docker", "info", "--format", "{{.ServerVersion}}"], capture=True).returncode != 0:
@@ -249,6 +335,7 @@ def install(store: Store) -> None:
     store.smoke()
     store.out(f"The store is running: Postgres on 127.0.0.1:{values['LINA_STORE_PORT']}, Honcho on "
               f"127.0.0.1:{values['LINA_HONCHO_PORT']}. Settings: {store.directory}.")
+    store.report_models()
 
 
 def status(store: Store) -> int:

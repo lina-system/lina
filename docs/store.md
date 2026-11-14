@@ -568,6 +568,46 @@ not start.
 The model name must be the same string on both sides: it is part of every row's key, and searches only read
 rows of the configured model.
 
+### Reaching models from Honcho
+
+Honcho's api and deriver run in containers, so `127.0.0.1` in `honcho.env` is the container itself, not the
+node. A node's magpie listens on `127.0.0.1:3425` only, and a host firewall with INPUT policy DROP also drops
+traffic from containers to the host. Point Honcho at one of:
+
+- **The hub's magpie**: an address of the hub's magpie that this node can reach, such as its tailnet name.
+- **This node's magpie through the bridge address**: the gateway of the store's compose network, read with
+  `docker network inspect lina-store_default --format '{{(index .IPAM.Config 0).Gateway}}'` (for example
+  `172.18.0.1`). Magpie (or a forwarder in front of it) must listen on that address, and the firewall must let
+  the containers in: `iptables -I INPUT -i br-<first 12 characters of the network id> -p tcp --dport 3425 -j
+  ACCEPT` (the id from `docker network inspect lina-store_default --format '{{.Id}}'`).
+
+Then in `store/honcho.env`, with `<address>` one of the two:
+
+```sh
+# The LLM callers: deriver, summary, dream and the five dialectic levels (transport openai by default)
+LLM_OPENAI_BASE_URL=http://<address>:3425/v1
+LLM_OPENAI_API_KEY=<the key magpie takes>
+DERIVER_MODEL_CONFIG__MODEL=<a chat model as GET /v1/models lists it>
+SUMMARY_MODEL_CONFIG__MODEL=<the same or another>
+DREAM_DEDUCTION_MODEL_CONFIG__MODEL=<...>
+DREAM_INDUCTION_MODEL_CONFIG__MODEL=<...>
+# and DIALECTIC_LEVELS__<MINIMAL|LOW|MEDIUM|HIGH|MAX>__MODEL_CONFIG__MODEL=<...> for each level
+# Embeddings: the model is embedding.model in config.yaml, in magpie's catalog form
+EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL=http://<address>:3425/v1
+EMBEDDING_MODEL_CONFIG__MODEL=<embedding.model, e.g. hub/nous/qwen/qwen3-embedding-8b>
+```
+
+Each caller can also take its own address and key (`<CALLER>_MODEL_CONFIG__OVERRIDES__BASE_URL`,
+`..._API_KEY` or `..._API_KEY_ENV`); without a key of its own it uses `LLM_<TRANSPORT>_API_KEY` and
+`LLM_<TRANSPORT>_BASE_URL`, and the embedding client uses its own `BASE_URL` override only.
+
+`lina store install` and `lina store upgrade` end with a check of this, and `lina doctor` shows it for a
+running store (section Memory Store): a key a caller needs and `honcho.env` does not set is named with the
+callers that need it, and one `exec` in the api container asks each `*_BASE_URL` it uses for `<base>/models`.
+An HTTP answer of any status counts as reached (no key is sent); each address that gives none is one line,
+such as `Honcho cannot reach EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL (172.18.0.1:3425/v1/models: [Errno
+111] Connection refused)`. The check only warns: the store is installed either way.
+
 ### Re-embedding and the quality check
 
 ```sh
