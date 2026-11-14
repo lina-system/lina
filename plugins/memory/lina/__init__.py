@@ -224,11 +224,14 @@ class LinaMemoryProvider(MemoryProvider):
         return value
 
     def _embedder(self):
-        """The embedding client of ``embedding:`` in config.yaml, or None when no endpoint is configured."""
+        """The embedding client of ``embedding:`` in config.yaml, or None when no endpoint is configured. It does not
+        retry a rate-limited answer: a search inside a turn fails at once rather than wait out a backoff."""
         if self._embedding is None:
+            from dataclasses import replace
+
             from agent.embedding_client import EmbeddingClient, EmbeddingError, EmbeddingSettings
             try:
-                self._embedding = EmbeddingClient(EmbeddingSettings.from_config())
+                self._embedding = EmbeddingClient(replace(EmbeddingSettings.from_config(), max_retries=0))
             except EmbeddingError:
                 self._embedding = False
         return self._embedding or None

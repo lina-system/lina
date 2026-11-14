@@ -47,7 +47,8 @@ def test_the_agent_reembed_and_doctor_use_the_home_model_when_the_profile_sets_n
     from hermes_cli import store_reembed
     reembedded = []
     monkeypatch.setattr(store_reembed, "reembed", lambda connect, client, *a, **k: reembedded.append(client.model))
-    args = argparse.Namespace(from_index=None, source="memory", batch_size=None, from_start=False, max_batches=None)
+    args = argparse.Namespace(from_index=None, source="memory", batch_size=None, from_start=False, max_batches=None,
+                              max_rate=None)
     assert store_reembed.run(args) == 0
 
     from hermes_cli.doctor_state import _check_memory_vectors

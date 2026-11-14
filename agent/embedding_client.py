@@ -20,6 +20,10 @@ a model ``<remote>/<provider>/<id>`` as ``GET {base_url}/models`` lists it and r
 request turns that refusal into one line naming ``embedding.model``, the endpoint and the closest embedding model
 the endpoint lists (``_unknown_model``).
 
+An answer of 429 or 5xx is retried after a pause (the server's ``Retry-After``, otherwise 1 s doubling up to
+60 s), up to ``embedding.max_retries`` times in a row (lina#652); then ``EmbeddingRetriesExhausted``. ``max_rate`` keeps
+requests under a number per second.
+
 The vectors are Matryoshka prefixes: the first ``dimensions`` values of the model's vector, L2-normalised
 again. A server that ignores the ``dimensions`` request field and answers at full width is cut the same way,
 and so is a full-width vector stored earlier by the same model (``truncate_stored``).
@@ -28,7 +32,9 @@ and so is a full-width vector stored earlier by the same model (``truncate_store
 from __future__ import annotations
 
 import difflib
+import email.utils
 import math
+import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -39,10 +45,17 @@ DEFAULT_DIMENSIONS = 1024
 DEFAULT_KEY_ENV = "LINA_EMBEDDING_API_KEY"
 DEFAULT_BATCH_SIZE = 64
 DEFAULT_TIMEOUT = 60.0
+DEFAULT_MAX_RETRIES = 8
+BACKOFF_FIRST_S = 1.0
+BACKOFF_CAP_S = 60.0
 
 
 class EmbeddingError(RuntimeError):
     """The embedding endpoint could not be used: not configured, unreachable, or an answer that is not vectors."""
+
+
+class EmbeddingRetriesExhausted(EmbeddingError):
+    """The endpoint kept answering 429 or 5xx through every retry."""
 
 
 class EmbeddingModelMismatch(ValueError):
@@ -112,6 +125,7 @@ class EmbeddingSettings:
     batch_size: int = DEFAULT_BATCH_SIZE
     timeout: float = DEFAULT_TIMEOUT
     send_dimensions: bool = True
+    max_retries: int = DEFAULT_MAX_RETRIES
 
     @classmethod
     def from_config(cls, config: Optional[Mapping[str, Any]] = None) -> EmbeddingSettings:
@@ -134,15 +148,20 @@ class EmbeddingSettings:
             batch_size=max(1, int(section.get("batch_size") or DEFAULT_BATCH_SIZE)),
             timeout=float(section.get("timeout") or DEFAULT_TIMEOUT),
             send_dimensions=bool(section.get("send_dimensions", True)),
+            max_retries=max(0, int(section.get("max_retries", DEFAULT_MAX_RETRIES))),
         )
 
 
 class EmbeddingClient:
     """Embeds text with the configured model, *dimensions* wide and unit length."""
 
-    def __init__(self, settings: EmbeddingSettings, *, transport: Any = None) -> None:
+    def __init__(self, settings: EmbeddingSettings, *, transport: Any = None, max_rate: Optional[float] = None,
+                 sleep=time.sleep, clock=time.monotonic) -> None:
         import httpx
         self.settings = settings
+        self._interval = 1.0 / max_rate if max_rate else 0.0
+        self._sleep, self._clock = sleep, clock
+        self._next_request = 0.0
         headers = {"Authorization": f"Bearer {settings.api_key}"} if settings.api_key else {}
         self._http = httpx.Client(base_url=settings.base_url, headers=headers, timeout=settings.timeout,
                                   transport=transport)
@@ -179,10 +198,7 @@ class EmbeddingClient:
         body: dict[str, Any] = {"model": self.settings.model, "input": texts, "encoding_format": "float"}
         if self.settings.send_dimensions:
             body["dimensions"] = self.settings.dimensions
-        try:
-            response = self._http.post("/embeddings", json=body)
-        except httpx.HTTPError as exc:
-            raise EmbeddingError(f"embedding request to {self.settings.base_url} failed: {exc}") from exc
+        response = self._post_retrying(body)
         if response.status_code == 404 and "knows no model" in response.text:
             raise EmbeddingError(self._unknown_model())
         if response.status_code != 200:
@@ -199,6 +215,30 @@ class EmbeddingClient:
             return [matryoshka(vector, self.settings.dimensions) for vector in raw]
         except (ValueError, TypeError) as exc:
             raise EmbeddingError(f"embedding endpoint returned an unusable vector: {exc}") from exc
+
+    def _post_retrying(self, body: dict[str, Any]) -> Any:
+        """POST the batch, pausing and sending it again on 429 or 5xx up to ``max_retries`` times in a row."""
+        import httpx
+        failures = 0
+        while True:
+            if self._interval:
+                wait = self._next_request - self._clock()
+                if wait > 0:
+                    self._sleep(wait)
+                self._next_request = self._clock() + self._interval
+            try:
+                response = self._http.post("/embeddings", json=body)
+            except httpx.HTTPError as exc:
+                raise EmbeddingError(f"embedding request to {self.settings.base_url} failed: {exc}") from exc
+            if response.status_code != 429 and response.status_code < 500:
+                return response
+            failures += 1
+            if failures > self.settings.max_retries:
+                raise EmbeddingRetriesExhausted(
+                    f"embedding endpoint answered {response.status_code} {failures} times in a row "
+                    f"(embedding.max_retries {self.settings.max_retries}): {response.text[:300]}")
+            self._sleep(_retry_after(response.headers.get("retry-after"))
+                        or min(BACKOFF_CAP_S, BACKOFF_FIRST_S * 2 ** (failures - 1)))
 
     def _unknown_model(self) -> str:
         """The one line for magpie's "knows no model": the setting, the endpoint and the closest embedding model
@@ -217,3 +257,18 @@ class EmbeddingClient:
             return f"{head}; GET {base_url}/models lists no embedding model"
         return (f"{head}; the closest embedding model GET {base_url}/models lists is {closest[0]!r}: "
                 f"set embedding.model to it (the name keys every stored vector)")
+
+
+def _retry_after(value: Optional[str]) -> Optional[float]:
+    """Seconds a ``Retry-After`` header asks for (a number or an HTTP date); None when absent or unreadable."""
+    if not value:
+        return None
+    try:
+        return max(0.0, float(value))
+    except ValueError:
+        pass
+    try:
+        when = email.utils.parsedate_to_datetime(value)
+    except (TypeError, ValueError):
+        return None
+    return max(0.0, when.timestamp() - time.time())
