@@ -4680,6 +4680,16 @@ def _embedding_provider_health_check(engine: "LCMEngine") -> dict[str, Any]:
     profile_active = _active_embedding_profile_exists(engine)
 
     if not enabled:
+        if getattr(engine, "_store_owns_embeddings", False):  # LINA (lina#704)
+            return {
+                "check": "embedding_provider_health",
+                "status": "pass",
+                "detail": (
+                    "LCM's local semantic embeddings are off on the host store: its vectors are the home's "
+                    "`embedding:` model, kept by `lina store reembed`; full-text recall is active "
+                    "(LCM_EMBEDDINGS_ENABLED=true turns LCM's own provider on)"
+                ),
+            }
         if profile_active:
             return {
                 "check": "embedding_provider_health",
