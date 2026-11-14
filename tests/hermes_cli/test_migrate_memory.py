@@ -52,6 +52,39 @@ def test_real_cli_migrates_one_profile_and_replays_without_inserts(tmp_path, _me
     assert json.loads((tmp_path / "copy/migration-report.json").read_text()) == second
 
 
+def test_real_cli_copy_terminal_is_scoped_to_the_copy(tmp_path, _memory_store):
+    # Given a source profile with its own terminal settings (lina#706).
+    command = _command(tmp_path, _memory_store)
+    source_config = tmp_path / "hermes/profiles/alpha/config.yaml"
+    source_config.write_text("memory:\n  memory_enabled: true\nterminal:\n  cwd: /srv/original\n")
+    before = source_config.read_bytes()
+
+    done = _run(command, tmp_path)
+
+    # Then the copy's terminal starts in, and keeps HOME inside, the copy; the original config is unchanged.
+    assert done.returncode == 0, done.stdout + done.stderr
+    from hermes_cli.config_backend import FileBackend
+    copy = tmp_path / "lina/profiles/alpha-copy"
+    config = FileBackend().read_user_doc(copy)
+    assert config["terminal"] == {"cwd": str(copy), "home_mode": "profile", "auto_source_bashrc": False}
+    assert config["memory"] == {"memory_enabled": True}
+    assert (copy / "home").is_dir()
+    assert source_config.read_bytes() == before
+    again = _run(command, tmp_path)
+    assert again.returncode == 0, again.stdout + again.stderr
+
+
+def test_real_cli_owner_id_without_honcho_dump_is_refused(tmp_path, _memory_store, memory_store_sql):
+    command = _command(tmp_path, _memory_store)
+    command.extend(["--owner-id", "7000001"])
+
+    done = _run(command, tmp_path)
+
+    assert done.returncode != 0
+    assert "--owner-id" in json.loads(done.stdout)["error"]
+    assert memory_store_sql("SELECT count(*) FROM memory.messages") == [(0,)]
+
+
 def test_real_cli_skips_symlinked_skill_and_reports_it(tmp_path, _memory_store):
     # Given a source profile with one shared skill linked into skills/.
     command = _command(tmp_path, _memory_store)

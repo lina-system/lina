@@ -690,24 +690,37 @@ def _conversation_store_key(conn: sqlite3.Connection) -> str:
     return str(row[2]) if row and row[2] else f"memory:{id(conn)}"
 
 
+# The characters Python's str.strip() removes (str.isspace(); none lies above U+3000): trim(x, these) = x.strip().
+_STRIP_CHARACTERS = "".join(c for c in map(chr, range(0x3001)) if c.isspace())
+
+# lina#703: the store runs MIN(conversation_id) > ? as a scan, so one seek per id is one scan per id there.
+_UNNORMALIZED_IDS_SCAN = ("SELECT DISTINCT conversation_id FROM messages "
+                          "WHERE conversation_id IS NULL OR conversation_id <> trim(conversation_id, ?)")
+# SQLite: the same index seeks per distinct id, run inside one statement.
+_UNNORMALIZED_IDS_SEEK = (
+    "WITH RECURSIVE ids(value) AS ("
+    "SELECT MIN(conversation_id) FROM messages WHERE conversation_id IS NOT NULL "
+    "UNION ALL SELECT (SELECT MIN(conversation_id) FROM messages WHERE conversation_id > ids.value) "
+    "FROM ids WHERE ids.value IS NOT NULL) "
+    "SELECT value FROM ids WHERE value IS NOT NULL AND value <> trim(value, ?) "
+    "UNION ALL SELECT NULL WHERE EXISTS (SELECT 1 FROM messages WHERE conversation_id IS NULL)")
+
+
 def _stored_conversation_ids(conn: sqlite3.Connection) -> list:
-    """The distinct stored conversation ids (None for NULL): one index seek each when the conversation
-    index exists (``MIN(conversation_id) > previous``), else one DISTINCT scan."""
-    if not conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'index' "
-                        "AND name = 'idx_msg_conversation_session'").fetchone():
-        return [row[0] for row in conn.execute("SELECT DISTINCT conversation_id FROM messages")]
-    values: list = [None] if conn.execute(
-        "SELECT 1 FROM messages WHERE conversation_id IS NULL LIMIT 1").fetchone() else []
-    value = conn.execute("SELECT MIN(conversation_id) FROM messages WHERE conversation_id IS NOT NULL").fetchone()[0]
-    while value is not None:
-        values.append(value)
-        value = conn.execute("SELECT MIN(conversation_id) FROM messages WHERE conversation_id > ?", (value,)).fetchone()[0]
-    return values
+    """The distinct stored conversation ids not in their written form (None for NULL, or not equal to their
+    strip()), in one statement: on SQLite with the conversation index, one index seek per distinct id
+    (``MIN(conversation_id) > previous``) inside a recursive CTE; else (the store, or no index) one filtered
+    DISTINCT scan."""
+    if not is_store_connection(conn) and conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_msg_conversation_session'").fetchone():
+        return [row[0] for row in conn.execute(_UNNORMALIZED_IDS_SEEK, (_STRIP_CHARACTERS,))]
+    return [row[0] for row in conn.execute(_UNNORMALIZED_IDS_SCAN, (_STRIP_CHARACTERS,))]
 
 
 def refresh_legacy_conversation_ids(conn: sqlite3.Connection) -> dict[str, list] | None:
     """ONE probe per store (engine bind) over the distinct stored conversation ids (eva's 1.4 GB store:
-    261 ids by index seeks in ~7 ms; a DISTINCT scan takes ~1.4 s). None when the probe failed (a lock):
+    261 ids by index seeks in ~7 ms; a DISTINCT scan takes ~1.4 s; lina#703: on the store, 671 ids took one
+    statement each, ~60 s, so the probe is one statement). None when the probe failed (a lock):
     nothing is cached, so the next read probes again (R6-3: never "no legacy ids" by failure)."""
     legacy: dict[str, list] = {}
     try:

@@ -261,6 +261,18 @@ unrelated session participants, messages or private recall siblings.
 Source transport URLs and keys are not published into the new home; its Honcho config points to the
 destination store's local Honcho port.
 
+The new agent's config also carries who its owner is and where its tools run. The source host's `userPeerAliases`
+and `pinUserPeer` are copied, and each `--owner-id ID` (repeatable, needs `--honcho-dump`) adds the owner's runtime
+id on a platform the agent is reached by (a messenger user id, `uid-<n>` for the CLI, `api` for the API server) as
+an alias to `peerName`. Honcho imports the owner's `MEMORY.md`/`USER.md`/`SOUL.md` only into a session whose peer is
+`peerName`, so without an alias every messenger session logs `is not the declared owner` and skips them, and any
+other id still skips. An `--owner-id` the source aliases to another peer is refused. The config sets
+`terminal.cwd` to the agent's own profile directory, `terminal.home_mode: profile` with `<profile>/home` created, and
+`terminal.auto_source_bashrc: false`, so the copy's terminal does not start in the host user's home or source that
+user's shell profile (lina#706). Only the new agent's files are written; the source profile is never changed. A
+multiplexed gateway applies `terminal.cwd` per profile but not yet `home_mode`, which takes effect when the agent's
+own gateway runs it.
+
 Several source profiles may share one Honcho workspace. Each destination agent receives deterministic
 21-character text IDs derived from its name and the source identity; scoped session and ordinary peer names
 are preserved. Integer IDs use each destination table's own identity sequence, allocated in source timestamp

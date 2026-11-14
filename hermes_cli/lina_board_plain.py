@@ -5,7 +5,8 @@
 The writer runs on its own daemon thread, started once by the hub's worker service (``start_writer``), never in the
 service loop or the hub tick and never in a request: a slow model call holds back nothing but the next pass. For each (kind, id, field) it hashes the field's source text
 and calls the model only when that hash changed, through Hermes' auxiliary client (``call_llm``, task
-``board_lines``: LINA's model path). Every answer passes its field check before it is stored; a failed check is
+``board_lines``: LINA's model path), as the profile ``worker.board_lines_profile`` names (``_model_profile``).
+Every answer passes its field check before it is stored; a failed check is
 recorded with its reason and the field stays null, and the source text is never served in its place. Reads
 (``lookup``, ``writer_state``) only open the cache, ``$LINA_HOME/board/plain.db``.
 """
@@ -18,11 +19,13 @@ import re
 import sqlite3
 import threading
 import time
+from contextlib import contextmanager
 from contextvars import copy_context
 from pathlib import Path
-from typing import Callable, NamedTuple
+from typing import Callable, Iterator, NamedTuple
 
 TASK = "board_lines"
+PROFILE_SETTING = "worker.board_lines_profile"
 FIELDS = ("title", "now", "result")
 LIMITS = {"title": 25, "now": 60, "result": 80}
 EMPTY = dict.fromkeys(FIELDS)
@@ -265,10 +268,37 @@ def _key(s: Source) -> tuple[str, str, str, str]:
     return (s.kind, s.board, s.id, s.field)
 
 
-def write(sources: list[Source], root: Path | None = None, now: float | None = None) -> dict:
+# The last problem logged per topic ("setting": the profile setting, "call": a failing model call): a problem that
+# stays the same pass after pass is logged once, and again only when it changes.
+_said: dict[str, str | None] = {"setting": None, "call": None}
+
+
+def _say_setting(problem: str | None) -> None:
+    if problem == _said["setting"]:
+        return
+    if problem:
+        log.warning("board lines: %s; card lines stay empty until it is fixed", problem)
+    else:
+        log.info("board lines: %s works again", PROFILE_SETTING)
+    _said["setting"] = problem
+
+
+def _say_call_failed(s: Source, exc: Exception) -> None:
+    problem = f"{type(exc).__name__}: {exc}"
+    if problem == _said["call"]:
+        log.debug("board line %s %s %s: the call failed again: %s", s.kind, s.id, s.field, problem)
+        return
+    log.warning("board line %s %s %s: the call failed (auxiliary.board_lines of the profile in %s, else of this "
+                "process's own); the same failure is not logged again", s.kind, s.id, s.field, PROFILE_SETTING,
+                exc_info=exc)
+    _said["call"] = problem
+
+
+def write(sources: list[Source], root: Path | None = None, now: float | None = None, usable: bool = True) -> dict:
     """Write what changed: one call per field whose source hash moved (at most MAX_CALLS and PASS_S a run), the check's verdict
     stored either way; a field whose source is gone is cleared. A call that fails stores nothing and is tried again
-    next run. The due fields queue by how long they have waited: never attempted first, then the oldest last
+    next run; with no usable model setting (``usable`` False) nothing is called, the due fields stay pending and the
+    writer counts as stopped. The due fields queue by how long they have waited: never attempted first, then the oldest last
     attempt (a failed call counts as an attempt), so sources that change on every pass cannot keep a field waiting
     for more than a few passes. -> {called, failed, pending}."""
     now = int(time.time() if now is None else now)
@@ -287,7 +317,7 @@ def write(sources: list[Source], root: Path | None = None, now: float | None = N
         due = sorted((s for s in sources if s.text.strip() and cached.get(_key(s)) != _hash(s)),
                      key=lambda s: tried.get(_key(s), -1))  # stable: source order among equals
         calls, failed, deadline = [], 0, _clock() + PASS_S
-        for s in due[:MAX_CALLS]:
+        for s in due[:MAX_CALLS] if usable else ():
             if _clock() >= deadline:
                 break
             calls.append(s)
@@ -296,10 +326,11 @@ def write(sources: list[Source], root: Path | None = None, now: float | None = N
                            (*_key(s), now))
             try:
                 answer = ask(s.field, s.text.strip())
-            except Exception:  # any provider error; the field is tried again on the next run
-                log.warning("board line %s %s %s: the call failed", s.kind, s.id, s.field, exc_info=True)
+            except Exception as exc:  # health: allow BLE001 -- any provider error; logged once per distinct failure, the field is retried next pass
+                _say_call_failed(s, exc)
                 failed += 1
                 continue
+            _said["call"] = None
             reason = CHECKS[s.field](answer)
             if reason:
                 log.info("board line %s %s %s refused: %s", s.kind, s.id, s.field, reason)
@@ -319,6 +350,9 @@ def write(sources: list[Source], root: Path | None = None, now: float | None = N
                            (meta.get("stopped_since") or now,))
             elif not due:  # nothing left to write (a failing source went away): no line is missing, so not stopped
                 db.execute("DELETE FROM writer WHERE key = 'stopped_since'")
+            elif not usable:
+                db.execute("INSERT OR REPLACE INTO writer (key, value) VALUES ('stopped_since', ?)",
+                           (meta.get("stopped_since") or now,))
             db.execute("INSERT OR REPLACE INTO writer (key, value) VALUES ('pending', ?)", (pending,))
     finally:
         db.close()
@@ -440,20 +474,62 @@ def _board_cards(kanban_db, path: Path, board: str) -> list[Source]:
         conn.close()
 
 
-def write_board(root: Path | None = None, now: float | None = None, lives: dict[str, dict] | None = None) -> dict:
+def write_board(root: Path | None = None, now: float | None = None, lives: dict[str, dict] | None = None,
+                usable: bool = True) -> dict:
     """The background step: every run's and work card's sources, then ``write``."""
     root, now = _root(root), time.time() if now is None else now
-    return write(run_sources(root, now, lives) + card_sources(), root, now)
+    return write(run_sources(root, now, lives) + card_sources(), root, now, usable)
+
+
+@contextmanager
+def _model_profile(root: Path) -> Iterator[str | None]:
+    """Run the block as the profile whose ``auxiliary.board_lines`` model and secrets the writer calls with
+    (lina#702). The writer is host-wide, so the host picks that profile: ``worker.board_lines_profile`` in the LINA
+    root's config. It is bound the way a cron fire binds its owner: the profile's secret scope, its home for config
+    reads, and multiplex semantics when it is not this process's own profile. Unset, a single-profile process calls
+    as itself, as before; a multiplexed gateway has no profile of its own (``get_secret`` raises with no scope), so
+    nothing is called. Yields the setting's problem, None when the block may call the model."""
+    from agent.secret_scope import is_multiplex_active
+    from hermes_cli.worker import settings
+    name = settings.section(root).get("board_lines_profile")
+    if not name:
+        yield (f"{PROFILE_SETTING} is not set in the LINA root's config.yaml, and a multiplexed gateway has no "
+               "profile of its own to call the model as") if is_multiplex_active() else None
+        return
+    from hermes_cli.profiles import get_profile_dir, profile_exists
+    if not isinstance(name, str) or not profile_exists(name):
+        yield f"{PROFILE_SETTING} names {name!r}, which is not a profile on this host"
+        return
+    from agent.secret_scope import (reset_multiplex_context, reset_secret_scope, serves_routed_profile,
+                                    set_multiplex_context, set_secret_scope)
+    from hermes_cli.env_loader import hydrate_profile_secret_sources
+    from hermes_constants import reset_hermes_home_override, set_hermes_home_override
+    from tui_gateway.launch_profile_policy import owner_secret_scope
+    home = get_profile_dir(name)
+    hydrate_profile_secret_sources(home)  # before the scope is frozen, as the cron fire does
+    home_token = set_hermes_home_override(home)
+    scope_token = set_secret_scope(owner_secret_scope(home), profile_home=str(home))
+    context_token = set_multiplex_context(True) if serves_routed_profile() else None
+    try:
+        yield None
+    finally:
+        if context_token is not None:
+            reset_multiplex_context(context_token)
+        reset_secret_scope(scope_token)
+        reset_hermes_home_override(home_token)
 
 
 def _pass(worker_root: Path) -> None:
+    from hermes_cli.config_backend import ConfigBackendUnavailable
     from hermes_cli.worker.hub_store import Store
     with Store(worker_root).lock("plain", wait=False) as held:  # one writer at a time across processes
         if not held:
             return
         try:
-            write_board()
-        except Exception:  # a broken pass must not end the thread; the next one tries again
+            with _model_profile(_root(None)) as problem:
+                _say_setting(problem)
+                write_board(usable=problem is None)
+        except (Exception, ConfigBackendUnavailable):  # a broken pass must not end the thread; the next one retries
             log.exception("board lines writer failed")
 
 
