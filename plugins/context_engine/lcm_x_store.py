@@ -829,19 +829,36 @@ def _query_phrases(query: str) -> tuple[list[str], list[bool]]:
     return phrases, prefixes
 
 
+# Rows whose token counts give bm25's average row length. FTS5 keeps the table's token total; the store has only the
+# tsvector index, so a total over every row would tokenize the whole table on each ranked query (lina#704).
+_BM25_LENGTH_SAMPLE = 500
+
+
 def _bm25_sql(query: str, config: str, alias: str, table: str) -> tuple[str, list[Any]]:
-    """FTS5's rank (bm25, 0007's ctx.lcm_bm25) for *query*: the table's row and token totals and each phrase's row
-    count come from one scalar subquery, which Postgres evaluates once per statement."""
+    """FTS5's rank (bm25, 0007's ctx.lcm_bm25) for *query*. Its statistics are scalar subqueries, which Postgres
+    evaluates once per statement, each bounded: the row count reads no text, each phrase's row count is a
+    tsvector index lookup (``_fts_match``), and the token total is the newest ``_BM25_LENGTH_SAMPLE`` rows' average
+    times the row count, so it is FTS5's exact total up to that many rows and an estimate of it beyond."""
     phrases, prefixes = _query_phrases(query)
     counts, params = [], []
     for _op, term in fts_terms(query):
         tsq, tsq_params = tsquery_sql(term, config, (_FTS_COLUMNS.get(table, "content"),))
-        counts.append(f"count(*) FILTER (WHERE s.tsv @@ ({tsq}))::float8")
+        counts.append(f"(SELECT count(*)::float8 FROM {_fts_match(table, tsq)} AS s)")
         params.extend(tsq_params)
     cfg = f"'{config}'::regconfig"
-    stats = f"(SELECT ARRAY[count(*)::float8, sum(ctx.lcm_tsv_tokens(s.tsv))::float8{''.join(', ' + c for c in counts)}] FROM ctx.{table} AS s)"
+    rows = f"(SELECT count(*)::float8 FROM ctx.{table})"
+    tokens = (f"(SELECT coalesce(sum(ctx.lcm_tsv_tokens(s.tsv)), 0)::float8 * {rows} / greatest(count(*), 1) FROM "
+              f"(SELECT tsv FROM ctx.{table} ORDER BY rowid DESC LIMIT {_BM25_LENGTH_SAMPLE}) AS s)")
+    stats = f"ARRAY[{rows}, {tokens}{''.join(', ' + c for c in counts)}]"
     sql = f"ctx.lcm_bm25({alias}.tsv, {cfg}, %s::text[], %s::boolean[], {stats})"
     return sql, [phrases, prefixes, *params]
+
+
+def _fts_match(table: str, tsq: str) -> str:
+    """The rows of *table* matching the tsquery expression *tsq*, through 0011's ctx.lcm_fts_match: under row-level
+    security Postgres uses no index for ``tsv @@ query`` (the operator is not leakproof), so a plain MATCH on the view
+    tokenizes every row (lina#704)."""
+    return f"ctx.lcm_fts_match('{table}', {tsq})"
 
 
 def _fts_slot(slot: tuple, args: Sequence[Any]) -> tuple[str, list[Any]]:
@@ -851,7 +868,7 @@ def _fts_slot(slot: tuple, args: Sequence[Any]) -> tuple[str, list[Any]]:
     config = "ctx.lcm_porter" if table == "messages_fts_stem" else "simple"
     tsq, params = tsquery_sql(query, config, (_FTS_COLUMNS.get(table, "content"),))
     if kind == "match":
-        return f"({alias}.tsv @@ ({tsq}))", params
+        return f"({alias}.rowid IN (SELECT {_fts_match(table, tsq)}))", params
     if kind == "rank":
         return _bm25_sql(query, config, alias, table)
     column = _FTS_COLUMNS.get(table, "content")
