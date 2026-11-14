@@ -69,6 +69,10 @@ schema is `services/store/migrations/0007_ctx_lcm.sql`: LCM-X's tables under the
   under row-level security Postgres uses no index for `tsvector @@ tsquery` (the operator is not leakproof), so the
   function runs the lookup with its owner's rights and returns only the calling agent's rows. bm25's statistics come
   from that lookup, the row count and the newest 500 rows' token counts (FTS5's exact totals up to 500 rows).
+- Embeddings: on the store LCM-X's default local model (FastEmbed, used when `LCM_EMBEDDINGS_ENABLED` is unset) is
+  off and not warned about. The store holds one embedding model, the home's `embedding:`, which `lina store reembed`
+  writes for LCM-X's summaries too; `/lcm doctor` says so. An explicit `LCM_EMBEDDINGS_ENABLED=true` keeps LCM-X's own
+  provider on (lina#704).
 - Vectors live in `vec` (`0008_ctx_lcm_vectors.sql`), as views under LCM-X's names. A summary vector is a
   `vec.embeddings` row of kind `summary` (`item_id` = the node id, `model` = the model of LCM-X's embedding
   profile). A chunk (`<store_id>:<chunk_index>`, a span of one message) is a `vec.chunks` row (source `lcm-x`,
