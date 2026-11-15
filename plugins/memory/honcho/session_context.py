@@ -461,9 +461,9 @@ class SessionContextMixin:
         def _chat_once() -> str:
             # The AI peer observes others when allowed; otherwise each peer queries its own context.
             if self._ai_observes_others(session) and target_peer_id != session.assistant_peer_id:
-                observer = self._get_or_create_peer(session.assistant_peer_id)
+                observer = self._dialectic_peer(session.assistant_peer_id)
                 return observer.chat(query, target=target_peer_id, reasoning_level=level) or ""
-            return self._get_or_create_peer(target_peer_id).chat(query, reasoning_level=level) or ""
+            return self._dialectic_peer(target_peer_id).chat(query, reasoning_level=level) or ""
         try:
             result = self._authed_call("dialectic query", _chat_once)
             cap = self._dialectic_max_chars if apply_injection_cap else 0
@@ -471,7 +471,10 @@ class SessionContextMixin:
         except HonchoAuthError:
             raise
         except Exception as e:
-            logger.warning("Honcho dialectic query failed: %s", e)
+            if self._dialectic_closed:
+                logger.debug("Honcho dialectic query ended by shutdown: %s", e)
+            else:
+                logger.warning("Honcho dialectic query failed: %s", e)
             if raise_errors:
                 raise
             return ""
