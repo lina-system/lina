@@ -1254,15 +1254,19 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         return max(self._SHUTDOWN_JOIN_FLOOR, _resolve_timeout_from_sources(self._config))
 
     def shutdown(self) -> None:
-        """Join the write threads, flush and stop the manager, then join every other thread this provider or its
-        manager spawned, all within one budget. A daemon thread still blocked in httpx I/O at exit aborts the process."""
+        """Abort the dialectic queries in flight, join the write threads, flush and stop the manager, then join every
+        other thread this provider or its manager spawned, all within one budget. A daemon thread still blocked in
+        httpx I/O at exit aborts the process."""
         self._recall_generation = object()
+        manager = self._manager
+        if manager:
+            # A server-side dialectic outlives the 30 s join, and nothing reads its answer after shutdown.
+            manager.close_dialectic()
         budget = self._shutdown_join_budget()
         deadline = time.monotonic() + budget
         for t in (self._sync_thread, self._memwrite_thread):
             if t and t.is_alive():
                 t.join(timeout=max(0.0, deadline - time.monotonic()))
-        manager = self._manager
         if manager and not (self._init_thread and self._init_thread.is_alive() and not self._session_initialized):
             # saveMessages: false skips persistence, but the async-writer thread must still be joined.
             with contextlib.suppress(Exception):
