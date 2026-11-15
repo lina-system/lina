@@ -177,3 +177,10 @@ noise. Conversations are numbered; no id, endpoint or account from the input rea
 `memory.prefix_fingerprints: true` (off by default) appends one row per model request to
 `<home>/state/prefix-fingerprints.jsonl`: keyed hashes and byte lengths of the request's leading blocks (tools, then
 each message), never text; `--fingerprints` measures from it the exact common prefix of consecutive requests.
+
+## The owner's word list
+
+Every agent reads one shared list of words to avoid and the word to use instead, grown from the owner's corrections
+(`memory.word_list`, `lina words`, lina#378); the flagged and fixed sentence pairs kept with it are readable by the
+owner and the refiner only and never logged or exported. The scope, the writers and the privacy rule are in
+[korean.md](korean.md).

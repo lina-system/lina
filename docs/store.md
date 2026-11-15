@@ -42,6 +42,7 @@ its settings are under the LINA root, not a profile home, in `store/`:
 | --- | --- | --- |
 | `lina` | `lina store` (over the container's local socket) | everything (cluster superuser) |
 | `lina_app` | agents | read and write its agent's rows in `memory`, `ctx` and `vec`; also read shared `memory.messages` rows with `scope = 'agents'` and their `vec` chunks (owner `*`) |
+| `lina_refiner` | the refiner (lina#198), by `SET ROLE` | NOLOGIN; read, add and retire entries of the shared word list `memory.word_list` and add its pairs (`memory.word_pairs`), nothing else |
 | `honcho` | the Honcho server | own schema `ltm` and migrate it; SELECT and INSERT on `memory.messages`, REFERENCES on its `message_id`, and USAGE on schema `memory`; read and write its own vectors (kinds `message` and `document`) in `vec.embeddings`, nothing else in `vec` |
 
 Every table in `memory`, `ctx`, `ltm` or `vec` that has an `agent_id` column gets row-level
@@ -75,6 +76,10 @@ which is not a profile name, so no agent's `lina_agent_rows` matches it for a wr
 `lina_shared_chunks` (`vec.chunks`) and `lina_shared_chunk_vectors` (`vec.embeddings`, kind `chunk`) let every
 agent read rows with that owner, so an agent's vector search finds the shared external messages beside its own rows.
 The migration also gives that owner to such vectors written before it with the owner `'None'`.
+
+Migration 0016 adds the owner's word list ([korean.md](korean.md)): `memory.word_list` has no `agent_id`, a
+SELECT-only policy lets every agent read it, and `lina_app`'s write grants on it are revoked; only the owner (`lina`)
+and `lina_refiner` write it. Its sentence pairs, `memory.word_pairs`, have no `lina_app` grant at all.
 ## Migrations
 
 Honcho migrates `ltm` itself. Schemas `memory`, `ctx` and `vec` belong to LINA: each
