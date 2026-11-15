@@ -50,13 +50,26 @@ def version() -> str | None:
     return _versions[key]
 
 
+def canonical(name: str, owner) -> str:
+    """*name* as its model's canonical ``<owner>/<id>``. ``/v1/models`` lists a model under the caller key's alias
+    when the key has one (magpie caller-keys ``aliases``: ``qwen/x`` -> ``nous/qwen/x``), and the same model under
+    its own name for a key without it, so the lists of two keys differ though the models do not. ``owned_by`` is the
+    provider that owns the model, whatever it is listed as: every canonical id starts with it, an alias does not."""
+    if isinstance(owner, str) and owner and not name.startswith(f"{owner}/"):
+        return f"{owner}/{name}"
+    return name
+
+
 def names(proxy: proxies.Proxy) -> list[str] | None:
-    """The sorted model names *proxy*'s magpie lists, None when it does not answer."""
+    """The sorted model names *proxy*'s magpie lists, in canonical form (see :func:`canonical`); None when it does
+    not answer. A model one side lists and the other does not stays a difference."""
     try:
         data = lina_magpie.get(proxy, "/v1/models")
     except lina_magpie.MagpieError:
         return None
-    return sorted({row["id"] for row in lina_magpie.model_rows(data, proxy.remote_id)})
+    owners = {item.get("id"): item.get("owned_by") for item in lina_magpie._rows(data, "data")}
+    return sorted({canonical(row["id"], owners.get(row["raw"]))
+                   for row in lina_magpie.model_rows(data, proxy.remote_id)})
 
 
 def facts(proxy: proxies.Proxy, *, answered: bool) -> dict:
@@ -87,7 +100,8 @@ def node_result(hub: dict, reachable: bool, proxy) -> dict:
     if not isinstance(listed, list) or not isinstance(wanted, list):
         result["models"] = "unknown"
         result["models_why"] = "the hub's magpie gave no list" if not isinstance(wanted, list) \
-            else "the node's magpie gave no list"
+            else "the node's magpie gave no list" if "names" in proxy \
+            else "the node runs older LINA code (hello has no names)"
     else:
         missing, extra = sorted(set(wanted) - set(listed)), sorted(set(listed) - set(wanted))
         result["models"] = "differs" if missing or extra else "same"
