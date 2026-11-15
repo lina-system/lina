@@ -74,10 +74,11 @@ def _decision_text(item: dict) -> tuple[str, str]:
     return (owner_line, "act") if owner_line else ("", "")
 
 
-def _answered(item: dict) -> bool:
-    """The owner answered the decision and no agent replied yet: the row waits for the agent, not the owner."""
-    return any(c.get("kind") == "answer" and c.get("status") == "open" and not c.get("replies")
-               for c in item.get("comments") or [])
+def answer_of(item: dict) -> dict | None:
+    """The owner's latest answer to the decision while no agent replied yet: the row waits for the agent, not the
+    owner. None when the decision is unanswered."""
+    return next((c for c in reversed(item.get("comments") or [])
+                 if c.get("kind") == "answer" and c.get("status") == "open" and not c.get("replies")), None)
 
 
 def decision_of(item: dict) -> dict | None:
@@ -85,7 +86,7 @@ def decision_of(item: dict) -> dict | None:
     text, kind = _decision_text(item)
     if not text:
         return None
-    return {"text": text, "kind": kind, "at": int(item.get("created") or 0), "answered": _answered(item)}
+    return {"text": text, "kind": kind, "at": int(item.get("created") or 0), "answered": answer_of(item) is not None}
 
 
 def decisions(recs: dict, order: list[str]) -> list[dict]:
@@ -99,7 +100,7 @@ def decisions(recs: dict, order: list[str]) -> list[dict]:
         if not text:
             continue
         rows.append({"item": item, "agent": agent_of(item, recs), "kind": kind, "text": text,
-                     "at": int(item.get("created") or 0), "answered": _answered(item)})
+                     "at": int(item.get("created") or 0), "answered": answer_of(item) is not None})
     return sorted(rows, key=lambda row: (row["answered"], row["at"]))
 
 

@@ -123,7 +123,8 @@ def test_comments_answers_and_retries_are_the_cli_s_comments_from_the_app(work, 
     assert _lines(work) == before
     work.ok("wait", "T1", "--decide", "어느 기기부터 볼까?")
     answer = _act(client, "/api/lina/work/items/T1/comments", {"text": "1번", "answer": True})
-    assert (answer["cid"], answer["state"], answer["reason"]) == ("c2", "waiting", "decision")
+    # Answered: the to-do waits for its agent, not on the owner's decision (lina#720).
+    assert (answer["cid"], answer["state"], answer["reason"]) == ("c2", "planned", None)
     assert _record(work, "T1")["comments"][1]["kind"] == "answer"
 
     again = _act(client, "/api/lina/work/items/T2/retry")

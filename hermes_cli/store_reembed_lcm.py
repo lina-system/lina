@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 from collections.abc import Callable
+from datetime import UTC, datetime
 
 from psycopg import Connection
 
@@ -20,7 +21,12 @@ def _write_batch(conn: Connection, agent: str, model: str, identity: str,
         conn.execute(
             "INSERT INTO ctx.lcm_embedding_profile (identity_hash, provider, model_name, dim, task) "
             "VALUES (%s, 'openai-compatible', %s, 1024, 'summary') "
-            "ON CONFLICT (agent_id, identity_hash) DO NOTHING", (identity, model))
+            "ON CONFLICT (agent_id, identity_hash) DO UPDATE SET active = 1, archived_at = NULL", (identity, model))
+        # A migrated store keeps the source's active profile without its vectors; LCM must not pick it again.
+        conn.execute(
+            "UPDATE ctx.lcm_embedding_profile SET active = 0, archived_at = %s "
+            "WHERE identity_hash <> %s AND replace(task, '+prefix', '') = 'summary' "
+            "AND active = 1 AND archived_at IS NULL", (datetime.now(UTC).isoformat(), identity))
         for (node, text, tokens), vector in zip((r for r in rows if r[1]), vectors, strict=True):
             conn.execute(
                 "INSERT INTO ctx.lcm_embedding_vectors (embedded_id, identity_hash, vec) "
