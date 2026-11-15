@@ -204,7 +204,7 @@ Migration `services/store/migrations/0014_brain.sql`, schema `brain`:
 | `timeline` | one row per timeline entry: page, path and line, date, `grade` (`owner`/`agent`/`external`, default `external`), source ref, text | shared |
 | `atoms` | short claims a later cycle extracts from a page, with grade and source ref | shared |
 | `merges` | recorded merges, replayed by every import and reindex | shared |
-| `proposals` | changes an agent's cycle suggests (compiled-truth rewrite, merge, closing an edge, promotion, timeline line), `open`/`accepted`/`rejected` | **agent** (`agent_id`) |
+| `proposals` | changes an agent's cycle suggests, `proposed`/`accepted`/`rejected`/`applied` (columns: "The nightly cycle" below) | **agent** (`agent_id`) |
 
 The brain is one brain for every agent (lina#439, "one brain with trust grades"): there is no per-agent copy of a
 person. So the tables that hold knowledge carry no `agent_id`. `lina_app` may only SELECT them, and only the
@@ -235,8 +235,8 @@ agent read them. A page's vector is deleted when the page is deleted or its file
 - **PARA.** The owner does not classify (structure paper, 11-11). The brain is to link areas, projects and goals
   behind the scenes. This issue only maps folders to page types. It does not fold PARA folders into brain folders,
   move any file, write `RESOLVER.md` or per-folder `README.md` files, or link ledger goals to project pages.
-- **The nightly cycle** (lina#444): scheduling, atoms, proposals and LLM phases. Deterministic upkeep is available
-  separately (below). `atoms` and `proposals` exist but nothing writes them yet.
+- **The nightly cycle** (lina#444): described below. Accepted proposals of kinds that would rewrite a file (a new
+  page, an addition to compiled truth) are recorded, not carried out; no phase auto-applies yet.
 - **Grades** (lina#440): stored, defaulting to `external`. Injection and promotion do not read them yet.
 - **Honcho and person pages** (lina#445): which facts live in a person page and which in Honcho conclusions is
   still the owner's decision. Nothing here reads or writes Honcho.
@@ -292,3 +292,130 @@ well as conflict-copy files; `@eaDir`, `#recycle` and the other exclusions in th
 The JSON and text reports contain no timestamp or elapsed duration. On unchanged input a second run reports zero
 new links and zero fixed backlinks, with identical lint and orphan lines. Subsequent unchanged runs are byte-for-byte
 identical. The first report's change counters and added-edge lists naturally differ when it repaired the index.
+
+## The nightly cycle
+
+```sh
+lina brain dream --plan              # what would run and cost; no model call, nothing written
+lina brain dream                     # one cycle; prints one line and the path of the report page
+lina brain dream --phase drift       # one phase only (any of the eight below)
+lina brain dream --json              # the full report
+lina brain dream --metrics           # the counters of finished cycles
+lina brain proposals list [--status proposed|accepted|rejected|applied|all] [--phase P] [--json]
+lina brain proposals accept ID [--confirm-external] [--by WHO]
+lina brain proposals reject ID [--by WHO]
+lina brain proposals rates [--json]  # acceptance per phase
+```
+
+One cycle runs these phases in order (`hermes_cli/brain/dream/`, after GBrain's `runCycle`):
+
+| Phase | Model | Writes |
+| --- | --- | --- |
+| `upkeep` | no | missing link edges, as `lina brain upkeep` does for every imported root |
+| `orphans` | no | nothing; lists pages with no edge in or out |
+| `atoms` | yes | `brain.atoms`: one to three short claims per page, each citing the page text or timeline entries it rests on |
+| `patterns` | yes | proposals `new_page`: themes that recur across claims of at least two pages (claims of the last `pattern_days`) |
+| `concepts` | yes | proposals `new_page`: claims grouped by concept; a group of at least `concept_min_group` claims that names no page yet, with its size tier (10, 5, 2, 1) |
+| `consolidate` | yes | proposals `compiled_truth` (one claim for several, on pages with `consolidate_min_atoms` claims, the oldest at least `consolidate_min_age_hours` old) and `merge` (two pages of one directory that share a name and are about the same subject) |
+| `contradictions` | yes | proposals `contradiction` (claims and dated entries of one page that cannot all hold) and `close_edge` (open typed relations of one page and type that cannot all still hold; `mentions` edges are not relations) |
+| `drift` | yes | proposals `compiled_truth`: a statement of the compiled truth, quoted exactly, that later timeline entries show has changed, with the suggested statement |
+
+The deterministic phases take no model call and no cycle lock. The model phases run under one lock, a row of
+`brain.cycle_lock` that expires after `lock_ttl_minutes` and is renewed before every model call. When another
+cycle holds it, the model phases are skipped and the report says who holds it until when; a lock whose holder
+died is taken over once it has expired. No phase edits a page, a file or an edge.
+
+### The model sees data, and answers in a fixed shape
+
+A model phase gets a callable `complete(prompt) -> str` and nothing else: no tools. In production it is the
+auxiliary client's task `brain_dream` (`auxiliary.brain_dream` in config.yaml chooses the model, as for every
+auxiliary task); tests pass a fake. Every page text, timeline entry or claim enters the prompt as one numbered item
+of the quoted data block (`plugins/memory/lina/grade.py` `data_block`) with its source, date and grade, so text in
+a page can neither end the block nor pass for an instruction. The answer must be one JSON object of the phase's
+shape, citing items by number. An answer that is not JSON, has another shape, cites an item that is not there, or
+(`drift`) does not quote the compiled truth exactly is counted as invalid and writes nothing; its input is asked
+again on the next night.
+
+### Budgets
+
+Each model phase spends from its own budget, `brain.dream.budget.<phase>` in config.yaml (defaults in
+`hermes_cli/config_defaults.py`):
+
+```yaml
+brain:
+  dream:
+    budget:
+      atoms: {calls: 100, input_chars: 400000}
+      patterns: {calls: 1, input_chars: 60000}
+      drift: {calls: 20, input_chars: 100000}
+    report_dir: ""                 # "" = <HERMES_HOME>/brain/dream; never inside an imported wiki
+    lock_ttl_minutes: 30
+```
+
+A call is made only while it fits: the first request that would pass `calls` or `input_chars` stops the phase,
+and the line and the report say which budget stopped it. The next phase starts with its own budget. A subject a
+phase already answered with the same input (`brain.dream_inputs`, keyed by the prompt's SHA-256) is not sent
+again, so a night on an unchanged brain costs nothing. A model call that fails ends its phase, is reported, and
+makes the run exit 1; the other phases still run.
+
+### Proposals
+
+| Column | Holds |
+| --- | --- |
+| `proposal_id` | the id `accept` and `reject` take |
+| `agent_id` | the agent whose cycle made it (the profile); row-level security `lina_agent_rows` |
+| `phase` | the phase or other writer that made it |
+| `kind` | open text: `new_page`, `compiled_truth`, `merge`, `contradiction`, `close_edge`, and kinds later writers add (promotions, lina#441) |
+| `target` | the page slug it is about, or `from->to` for a relation |
+| `payload` | what the kind needs: the text to add or the suggested statement, the merge's `from`/`into`/`reason`, the edge, the cited atom ids |
+| `grade` | the lowest grade of the material it is built from (lina#440); a page's compiled truth is of unknown origin and so `external`; a timeline entry and an atom carry their own |
+| `source_refs` | the files, timeline entry sources and `atom:<id>` it cites |
+| `status` | `proposed`, then `accepted`, `applied` or `rejected` |
+| `cycle_id`, `fingerprint` | the cycle that made it; one fingerprint per agent, so a decided or open proposal is not made again |
+| `created_at`, `decided_at`, `decided_by` | when it was made and decided, and by whom (`--by`, default `owner`) |
+
+`accept` applies only what loses no text: a `merge` runs the recorded merge of `lina brain merge` (no file is
+changed) and a `close_edge` sets the edge's `valid_until` to today (the row stays); both become `applied`. Any
+other kind becomes `accepted` and is carried out by hand. A proposal graded `external` is refused unless
+`--confirm-external` says its source is confirmed. Only a `proposed` row can be decided.
+
+### Report and counters
+
+The one line gives new links, atoms, proposals by phase, contradictions, orphans of all pages and the spend (model
+calls and input characters), plus every phase a budget stopped, a failure, or a held lock. The report page,
+`<report_dir>/<date>-cycle-<id>.md`, adds a table per phase and the orphan list. The cycle refuses a
+`report_dir` inside an imported directory.
+
+Each finished cycle is a row of `brain.dream_cycles`. The view `brain.dream_metrics` gives per cycle: orphan
+rate, the share of pages first seen in that cycle (`brain.dream_pages_seen`) that had a link by its end, new
+links, calls, input and output characters, and proposals made. `brain.proposal_acceptance` gives per agent and
+phase the proposals, open, accepted (with applied), applied, rejected and the acceptance rate over decided ones.
+Both views are `security_invoker`, so an agent sees only its own rows. A phase moves to auto-apply only once its
+acceptance rate has been measured over two weeks; nothing auto-applies yet.
+
+### Scheduling
+
+Nothing installs a schedule. A user crontab line for 03:30 every night (cron mails the one line):
+
+```cron
+30 3 * * * lina brain dream
+```
+
+or a systemd user timer:
+
+```ini
+# ~/.config/systemd/user/lina-brain-dream.service
+[Service]
+Type=oneshot
+ExecStart=lina brain dream
+
+# ~/.config/systemd/user/lina-brain-dream.timer
+[Timer]
+OnCalendar=*-*-* 03:30
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+enabled with `systemctl --user enable --now lina-brain-dream.timer`.

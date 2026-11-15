@@ -191,5 +191,14 @@ def record_merge(conn, from_slug: str, into_slug: str, reason: str | None) -> tu
     return path, mapping_from(mapping)
 
 
+def merge_pages(conn, from_slug: str, into_slug: str, reason: str | None) -> Changes:
+    """Record the merge and sync its directory again, so it takes effect; no file is changed."""
+    from pathlib import Path
+
+    from hermes_cli.brain.scan import scan
+    root, mapping = record_merge(conn, from_slug, into_slug, reason)
+    return sync(conn, scan(Path(root), mapping, merges_of(conn, root_of(conn, root)[0])))
+
+
 def dumps(value: dict) -> str:
     return json.dumps(value, ensure_ascii=False, indent=2, default=str)

@@ -1,4 +1,5 @@
-"""``lina brain``: import a wiki directory into the brain, rebuild its index, merge two pages, print the mapping."""
+"""``lina brain``: import a wiki directory into the brain, rebuild its index, merge two pages, print the mapping,
+run upkeep and the nightly cycle, and decide the cycle's proposals."""
 
 from __future__ import annotations
 
@@ -38,6 +39,41 @@ def build(subparsers) -> None:
     upkeep.add_argument("--root", metavar="DIR", help="One imported directory; default: all imported directories")
     upkeep.add_argument("--json", action="store_true", help="Print the deterministic report as JSON")
     upkeep.set_defaults(brain_fn=run_upkeep)
+    _build_dream(subparsers)
+
+
+def _build_dream(subparsers) -> None:
+    from hermes_cli.brain.dream.config import PHASES
+    from hermes_cli.brain.dream.cycle import run as run_dream
+    from hermes_cli.brain.dream.proposals import run as run_proposals
+
+    dream = subparsers.add_parser(
+        "dream", help="Run one nightly cycle: upkeep, orphans, then the model phases within their budgets",
+        description="Deterministic phases (upkeep, orphans) first, then atoms, patterns, concepts, consolidate, "
+                    "contradictions and drift, each within brain.dream.budget.<phase>. Changes to compiled truth, "
+                    "merges and relation closes become proposals; no page file is written.")
+    dream.add_argument("--plan", action="store_true", help="Say what would run and cost; call no model, write nothing")
+    dream.add_argument("--phase", choices=PHASES, help="Run this one phase only")
+    dream.add_argument("--metrics", action="store_true",
+                       help="Print the counters of finished cycles (orphan rate, new pages linked, cost) instead")
+    dream.add_argument("--json", action="store_true", help="Print the full report as JSON")
+    dream.set_defaults(brain_fn=run_dream)
+    proposals = subparsers.add_parser("proposals", help="List, accept or reject the cycle's proposals")
+    actions = proposals.add_subparsers(dest="proposals_command", required=True)
+    listing = actions.add_parser("list", help="This agent's proposals, oldest first")
+    listing.add_argument("--status", default="proposed", choices=("proposed", "accepted", "rejected", "applied", "all"))
+    listing.add_argument("--phase")
+    listing.add_argument("--json", action="store_true")
+    rates = actions.add_parser("rates", help="Acceptance per phase")
+    rates.add_argument("--json", action="store_true")
+    accept = actions.add_parser("accept", help="Accept a proposal; a merge or a relation close is applied")
+    accept.add_argument("--confirm-external", action="store_true",
+                        help="Accept a proposal built from external material (its source is confirmed)")
+    reject = actions.add_parser("reject", help="Reject a proposal; the cycle does not propose it again")
+    for parser in (accept, reject):
+        parser.add_argument("id", type=int)
+        parser.add_argument("--by", default="owner", help="Who decided (default: owner)")
+    proposals.set_defaults(brain_fn=run_proposals)
 
 
 def execute(args: argparse.Namespace) -> int:
@@ -126,12 +162,10 @@ def run_import(args) -> int:
 
 def run_merge(args) -> int:
     from hermes_cli.brain.page import nfc
-    from hermes_cli.brain.scan import scan
-    from hermes_cli.brain.store import merges_of, owner_connection, record_merge, root_of, sync
+    from hermes_cli.brain.store import merge_pages, owner_connection
     from_slug, into_slug = nfc(args.from_slug), nfc(args.into_slug)
     with owner_connection() as conn:
-        root, mapping = record_merge(conn, from_slug, into_slug, args.reason)
-        changes = sync(conn, scan(Path(root), mapping, merges_of(conn, root_of(conn, root)[0])))
+        changes = merge_pages(conn, from_slug, into_slug, args.reason)
     print(f"Merged {from_slug} into {into_slug}. {_changes_line(changes)}")
     return 0
 
