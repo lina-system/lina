@@ -11,6 +11,7 @@ import importlib.util
 import json
 import logging
 import os
+import re
 import sys
 import time
 from datetime import datetime, timezone
@@ -44,6 +45,16 @@ def lcm_system_prompt_note(disabled: set[str]) -> str:
     if "lcm_expand" not in disabled:
         note += recovery
     return note.rstrip()
+
+
+_TOOL_NAME = re.compile(r"\blcm_[a-z_]+\b")
+
+
+def lcm_system_prompt_section(disabled: set[str], recall_policy: str) -> str:
+    """The tool note, then the recall policy's route order without the lines naming a disabled tool."""
+    policy = "\n".join(
+        line for line in recall_policy.splitlines() if disabled.isdisjoint(_TOOL_NAME.findall(line)))
+    return lcm_system_prompt_note(disabled) + "\n\n" + re.sub(r"\n{3,}", "\n\n", policy)
 
 
 # Hermes' plugin load deadline (plugins.load_timeout_seconds) covers import plus
@@ -601,7 +612,7 @@ def register(ctx):
         try:
             register_skill(
                 "hermes-lcm",
-                skill_root,
+                skill_root / "SKILL.md",
                 description=(
                     "Use, configure, diagnose, and recall exact evidence "
                     "with the Hermes-LCM lossless context plugin."
@@ -615,6 +626,9 @@ def register(ctx):
             )
 
     if active:
+        # Bound now: the callback runs after the host may evict this package.
+        from .guidance import get_recall_policy as recall_policy
+
         def _lcm_prompt_section(info):
             try:
                 session_id = str(info.get("session_id") or "")
@@ -625,7 +639,7 @@ def register(ctx):
                     session_id, platform=resolved._lcm_session_last_platform.get(session_id, ""),
                 ):
                     return ""
-                return lcm_system_prompt_note(_disabled_tool_names())
+                return lcm_system_prompt_section(_disabled_tool_names(), recall_policy())
             except Exception:
                 return ""
 

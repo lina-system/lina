@@ -60,7 +60,7 @@ def scoped(home: Path):
         reset_hermes_home_override(token)
 
 
-def _agent(session_id: str, engine_name: str = "lcm-x"):
+def _build_agent(session_id: str):
     from run_agent import AIAgent
 
     with (
@@ -70,6 +70,11 @@ def _agent(session_id: str, engine_name: str = "lcm-x"):
     ):
         agent = AIAgent(api_key="test-key-1234567890", base_url="https://openrouter.ai/api/v1", quiet_mode=True,
                         skip_context_files=True, skip_memory=True, session_id=session_id)
+    return agent
+
+
+def _agent(session_id: str, engine_name: str = "lcm-x"):
+    agent = _build_agent(session_id)
     assert type(agent.context_compressor).__module__ == "plugins.context_engine.lcm-x.engine"
     assert agent.context_compressor.name == engine_name
     return agent
@@ -430,3 +435,60 @@ def test_a_cached_lcm_x_agent_is_rebuilt_on_the_compressor_after_the_switch(home
     assert agent is not lcm_agent
     assert _stored(home, "sess-gateway") == [("user", "first question"), ("assistant", "first answer")]
     assert _plugin_surface() == NO_SURFACE
+
+# lina#727: the hermes-lcm skill and the recall policy reach an agent on LCM-X.
+ORDER = ("Recent or time-bounded history: use `lcm_recent` for its supported natural periods "
+         "or `lcm_grep` with explicit time bounds.")
+CUE = "Compacted summaries are recall cues, not proof of exact wording or values."
+NEWER = "If newer source-backed evidence conflicts with an older summary, prefer the newer evidence."
+
+
+def _lcm_x_section(prompt: str) -> str:
+    """The ``lcm-x`` frame as the core rendered it, header and length line included."""
+    match = re.search(r"## Plugin Context: lcm-x\n<!-- hermes-plugin-section-chars:(\d+) -->\n\n", prompt)
+    assert match, "the lcm-x section is missing from the assembled prompt"
+    return prompt[match.start():match.end() + int(match.group(1))]
+
+
+def _session_prompt(session_id: str) -> str:
+    from agent.system_prompt import build_system_prompt
+
+    agent = _agent(session_id)
+    agent.context_compressor.on_session_start(session_id, platform="cli")
+    return build_system_prompt(agent)
+
+
+def test_skill_view_loads_the_bundled_hermes_lcm_skill(home):
+    from tools.skills_tool import skill_view
+
+    _agent("sess-skill")
+    skill = json.loads(skill_view("hermes-lcm-x:hermes-lcm"))
+    assert skill["success"] is True, skill
+    assert skill["name"] == "hermes-lcm-x:hermes-lcm"
+    assert skill["content"].count("name: hermes-lcm") == 1
+
+    policy = json.loads(skill_view("hermes-lcm-x:hermes-lcm", file_path="references/recall-policy.md"))
+    assert policy["success"] is True, policy
+    assert ORDER in policy["content"]
+
+
+def test_assembled_session_prompt_carries_the_recall_order(home):
+    section = _lcm_x_section(_session_prompt("sess-order"))
+    assert "This conversation uses Lossless Context Management (LCM)." in section
+    for clause in (ORDER, CUE, NEWER):
+        assert clause in section
+    assert len(section.encode("utf-8")) <= 8 * 1024
+
+
+def test_two_session_builds_give_identical_section_bytes(home):
+    first = _lcm_x_section(_session_prompt("sess-first"))
+    second = _lcm_x_section(_session_prompt("sess-second"))
+    assert first.encode("utf-8") == second.encode("utf-8")
+
+
+def test_compressor_session_prompt_has_no_recall_policy(compressor_home):
+    from agent.system_prompt import build_system_prompt
+
+    prompt = build_system_prompt(_build_agent("sess-compressor"))
+    assert "Plugin Context: lcm-x" not in prompt
+    assert ORDER not in prompt
