@@ -100,13 +100,13 @@ def _inventory(profile_dir: Path) -> tuple[list[Path], list[str]]:
     read. The named files and the inventory directories themselves must not be links.
     """
     paths, skipped = [], []
-    for relative in ("SOUL.md", "persona.md", "MEMORY.md", "USER.md", "config.yaml"):
+    for relative in ("SOUL.md", "SOUL.self.md", "persona.md", "MEMORY.md", "USER.md", "config.yaml"):
         path = _safe(profile_dir / relative)
         if path.exists():
             if not path.is_file():
                 raise SnapshotError(path, "expected a regular file")
             paths.append(path)
-    for directory_name in ("skills", "memories", "memory", "personas"):
+    for directory_name in ("skills", "memories", "memory", "personas", "heart"):
         skills = _safe(profile_dir / directory_name)
         if not skills.exists():
             continue

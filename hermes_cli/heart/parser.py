@@ -6,6 +6,9 @@ import argparse
 import sqlite3
 import sys
 
+TARGET_KINDS = ("topic", "task_type", "tone", "tool", "method", "media", "other")
+ROUTES = ("reaction", "outcome", "exposure")
+
 
 def _fn(module: str, name: str):
     """``hermes_cli.heart.<module>.<name>``, imported when the command runs: building the parser must not import the
@@ -22,6 +25,10 @@ def build(subparsers) -> None:
         write.add_argument("--" + flag, required=True)
     write.add_argument("--strength", required=True, type=int, choices=(1, 2, 3))
     write.add_argument("--via", choices=("turn", "review"), default="turn")
+    write.add_argument("--pref-target", help="The taste this entry bears on (short, no names)")
+    write.add_argument("--pref-kind", choices=TARGET_KINDS)
+    write.add_argument("--pref-dir", choices=("like", "dislike"))
+    write.add_argument("--pref-route", choices=ROUTES, help="A reaction needs an owner message; the others do not")
     write.set_defaults(heart_fn=_fn("journal", "write"))
     listing = subparsers.add_parser("list", help="Read only this agent's journal")
     listing.add_argument("--since")
@@ -48,6 +55,10 @@ def build(subparsers) -> None:
     week.add_argument("--out-dir")
     week.add_argument("--insight-stats")
     week.set_defaults(heart_fn=_fn("weekly", "weekly"))
+    carry = subparsers.add_parser("import", help="Carry a Hermes agent's self note, trial files and journal here")
+    carry.add_argument("--from", dest="source", required=True, help="The Hermes home or profile directory")
+    carry.add_argument("--dry-run", action="store_true")
+    carry.set_defaults(heart_fn=_fn("carry", "command"))
 
 
 def parser() -> argparse.ArgumentParser:
@@ -61,10 +72,14 @@ def execute(args: argparse.Namespace) -> None:
 
     from hermes_cli.heart import storage
     from hermes_cli.heart.locale import text
+    from hermes_state_store import StoreUnavailableError
     try:
         args.heart_fn(args)
     except sqlite3.Error as error:
         print("heart: " + text("database", error=str(error)), file=sys.stderr)
+        raise SystemExit(2) from None
+    except StoreUnavailableError as error:
+        print("heart: " + text("store", error=str(error)), file=sys.stderr)
         raise SystemExit(2) from None
     except (storage.HeartError, OSError, ValidationError, ValueError) as error:
         print(f"heart: {error}", file=sys.stderr)

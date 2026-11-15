@@ -209,6 +209,36 @@ physical delete or a forget operation. Cursor/head tables are not accessible to 
 that needs current-only semantics must use this ordering rule rather than assume the greatest message_id wins.
 Transcript garbage collection considers only `source = 'agent'`, never these owner-level rows.
 
+### Heart journal rows
+
+`lina heart write` keeps each journal entry as one row (`hermes_cli/heart/rows.py`), written through
+`MessageStore.import_texts`, so a second write of the same entry keeps the row already there:
+
+| Column | What it holds |
+| --- | --- |
+| `uid` | `heart:<profile>:<16 hex>`: the first 16 hex of the SHA-256 of the entry's canonical JSON (an imported trial line: the line itself), so the same entry always has the same uid |
+| `source`, `scope` | `heart`, `agent` |
+| `agent_id` | the profile; row-level security (`lina_agent_rows`) makes the row readable and writable by its agent only |
+| `session_id`, `role`, `conversation_id` | NULL: an entry belongs to no session |
+| `content` | the one-line conclusion `lina heart write` prints: `[Journal] <event> \| reaction <feeling> <note> \| evidence <uids> \| strength <n>` |
+| `ts` | the entry's time |
+| `native` | `ts` (the exact string self-note citations name), `event`, `feeling`, `note`, `strength`, `via` (`turn` or `review`), `evidence` (the `memory.messages` uids it cites), `pref` when given (`target`, `kind`, `dir`, `route`), `unmapped_evidence` for an imported line whose cited LCM rows did not move, and `payload_sha256` |
+
+`--messages` takes `memory.messages` uids of the agent's own unforgotten turns (`source = 'agent'`); another
+agent's uid reads as unknown, because row-level security hides it. An entry with no `pref`, or with route
+`reaction`, must cite at least one owner message (a `user` turn of a session whose source is in
+`heart.owner_sources`, without a machine prefix); `outcome` and `exposure` entries need not. `lina heart list`,
+`review-input` and the self-note check read these rows; `lina heart candidates` reads the placements in
+`transcript_rows` and their text here, leaving out forgotten rows. `SOUL.self.md` and `heart/changes.jsonl`
+stay files in the profile.
+
+`lina heart import --from <hermes home or profile dir> [--dry-run]` (and `lina migrate memory`, after the LCM
+rows have moved) carries a trial agent's heart: `SOUL.self.md` and `heart/{preferences.json,changes.jsonl,
+temperament-seed.json,quiz,self-backups}` are copied unchanged (files `0600`, directories `0700`; a file that
+is already there and differs is skipped and listed), and each `heart/journal.jsonl` line becomes a row. The trial
+cites LCM `store_id`s; each maps to `ctx.lcm_messages.text_uid` of the moved row, and one with no moved row is
+listed while its entry is kept. Every line is a row or listed as unreadable.
+
 ### What stays in each profile's `state.db`
 
 `state.db` keeps operational state only: sessions, locks, gateway routing, workers, usage, and

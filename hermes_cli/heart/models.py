@@ -11,19 +11,28 @@ class Record(BaseModel):
     model_config = ConfigDict(frozen=True)
 
 
-class Evidence(Record):
-    message_id: int
-    session_id: str
+class Pref(Record):
+    """The taste a journal entry bears on (docs/design/agent-tastes.md); ``route`` decides the owner rule."""
+    target: str
+    kind: str
+    dir: str
+    route: str
 
 
 class Entry(Record):
+    """One journal line; ``evidence`` are the ``memory.messages`` uids it cites."""
     ts: str
     event: str
     feeling: str
     note: str
-    evidence: tuple[Evidence, ...]
+    evidence: tuple[str, ...]
     strength: int
     via: Literal["turn", "review"] = "turn"
+    pref: Pref | None = None
+
+    @property
+    def reaction(self) -> bool:
+        return self.pref is None or self.pref.route == "reaction"
 
 
 class Change(Record):
@@ -37,7 +46,7 @@ class Change(Record):
 
 
 class Message(Record):
-    message_id: int
+    uid: str
     session_id: str
     role: str
     source: str
@@ -46,12 +55,12 @@ class Message(Record):
 
 
 class Reply(Record):
-    message_id: int
+    uid: str
     text: str
 
 
 class Candidate(Record):
-    message_id: int
+    uid: str
     session_id: str
     time: str
     text: str

@@ -7,7 +7,7 @@ import pytest
 from hermes_cli.heart import storage
 from hermes_cli.heart.models import Change, Entry
 from hermes_cli.work import env
-from tests.hermes_cli.test_heart_journal import DAY, NOW, STAMP, database, invoke, sandbox, write
+from tests.hermes_cli.test_heart_journal import DAY, NOW, STAMP, database, invoke, put_entry, sandbox, write
 
 __all__ = ["sandbox"]
 
@@ -15,9 +15,8 @@ __all__ = ["sandbox"]
 def test_weekly_counts_paths_changes_and_hides_journal_prose(sandbox, tmp_path):
     database(sandbox["alpha"])
     write()
-    write("--via", "review")
-    journal = sandbox["alpha"] / "heart/journal.jsonl"
-    before = journal.read_bytes()
+    write("--via", "review", "--strength", "3")
+    before = invoke("list", "--json")[1]
     changes = sandbox["alpha"] / "heart/changes.jsonl"
     storage.append(changes, Change(ts=STAMP, added=("Changed greeting",), removed=("Old greeting",)))
     storage.append(changes, Change(ts=STAMP, refused="protected-topic"))
@@ -35,19 +34,17 @@ def test_weekly_counts_paths_changes_and_hides_journal_prose(sandbox, tmp_path):
     assert "## Alpha" in page and "## Beta\n- Not enabled yet." in page
     for secret in ("Synthetic event", "Synthetic note", "calm"):
         assert secret not in page
-    assert journal.read_bytes() == before
+    assert invoke("list", "--json")[1] == before
     assert path.stat().st_mode & 0o777 == 0o600
 
 
-def test_weekly_bounds_and_legacy_path_default(sandbox, tmp_path):
+def test_weekly_bounds_and_default_path(sandbox, tmp_path):
     database(sandbox["alpha"])
     write()
-    path = sandbox["alpha"] / "heart/journal.jsonl"
-    entry = json.loads(path.read_text())
+    [entry] = json.loads(invoke("list", "--json")[1])
     entry.pop("via")
-    path.write_text(json.dumps(entry) + "\n")
     for offset in (-30 * 86400, 3 * 86400):
-        storage.append(path, Entry.model_validate({**entry, "ts": storage.stamp(NOW + offset)}))
+        put_entry(sandbox["alpha"], Entry.model_validate({**entry, "ts": storage.stamp(NOW + offset)}))
     invoke("weekly", "--out-dir", str(tmp_path / "out"))
     page = next((tmp_path / "out").glob("*.md")).read_text()
     assert "Journal: 1 lines (turn 1, review 0)" in page

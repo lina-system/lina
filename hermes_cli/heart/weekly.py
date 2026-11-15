@@ -9,9 +9,9 @@ from pathlib import Path
 
 from pydantic import TypeAdapter
 
-from hermes_cli.heart import storage
+from hermes_cli.heart import rows, storage
 from hermes_cli.heart.locale import text
-from hermes_cli.heart.models import Change, Entry, Insight
+from hermes_cli.heart.models import Change, Insight
 from hermes_cli.profiles import get_profile_dir, list_profile_names
 from hermes_cli.work.env import current
 
@@ -43,10 +43,12 @@ def in_week(timestamp: str, end: dt.date) -> bool:
 
 def section(profile: str, end: dt.date) -> str:
     lines = [f"## {current().agents.get(profile, profile)}"]
-    heart = get_profile_dir(profile) / "heart"
+    home = get_profile_dir(profile)
+    heart = home / "heart"
     if not heart.is_dir():
         return "\n".join(lines + [text("inactive")])
-    entries = [entry for entry in storage.records(heart / "journal.jsonl", Entry) if in_week(entry.ts, end)]
+    with rows.open_store(home) as store:
+        entries = [entry for entry in rows.entries(store) if in_week(entry.ts, end)]
     changes = [change for change in storage.records(heart / "changes.jsonl", Change) if in_week(change.ts, end)]
     applied = [change for change in changes if change.added or change.removed]
     refused = Counter(change.refused for change in changes if change.refused)
