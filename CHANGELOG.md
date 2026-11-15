@@ -50,6 +50,7 @@ Hermes Agent upstream changes are not listed here; see the upstream history on t
 - `lina brain upkeep [--root DIR] [--json]` performs deterministic link and backlink upkeep with separately reported Korean plain-text mentions, report-only lint, shared sync-artifact exclusions and stable orphan reports, without model calls or file writes (lina#443).
 
 - Deterministic Korean reply checks repair listed words and Hangul particles, reject unsafe or oversized edits, flag an original calque catalog above a density gate, score word-list samples with `lina eval korean`, and expose a report-only advisory reader stub without outbound wiring (lina#381).
+- `docs/design/standing-rules.md`: the owner's standing rules apart from memory and tastes, their scopes and precedence, how a rule is born and versioned, where rules enter the context order beside lina#307, lina#309, lina#380 and lina#440, and today's places sorted into rule, memory or taste, with follow-up issue drafts in `docs/design/standing-rules-issues/` (lina#323). Design only; nothing is built.
 
 ### Fixed
 

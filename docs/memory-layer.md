@@ -64,6 +64,8 @@ The person card is fetched while the prompt is built, within Honcho's first-turn
 a card that is not ready by then leaves the prompt without it until the next build, and the log says so. Per-turn
 recall then carries only dialectic and search results.
 
+The owner's standing rules, how they differ from memory and where they are to enter this order: [design/standing-rules.md](design/standing-rules.md) (lina#323).
+
 ## The policy table
 
 `plugins/memory/lina/policy.yaml` is data: per route, whether the turn goes to LCM, to Honcho, and as whose
