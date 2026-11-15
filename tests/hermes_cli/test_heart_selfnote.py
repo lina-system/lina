@@ -8,7 +8,7 @@ import pytest
 from hermes_cli.heart import selfnote, storage
 from hermes_cli.heart.models import Change, Entry
 from hermes_cli.work import env
-from tests.hermes_cli.test_heart_journal import DAY, NOW, STAMP, database, invoke, records, sandbox, write
+from tests.hermes_cli.test_heart_journal import DAY, NOW, STAMP, database, invoke, put_entry, records, sandbox, write
 
 __all__ = ["sandbox"]
 
@@ -55,9 +55,9 @@ def test_length_reports_actual_overflow(note):
 
 
 def test_future_journal_timestamp_is_refused(note):
-    path = note.parent / "heart/journal.jsonl"
+    [entry] = json.loads(invoke("list", "--json")[1])
     future = storage.stamp(NOW + 1)
-    storage.append(path, Entry.model_validate({**records(path)[0], "ts": future}))
+    put_entry(note.parent, Entry.model_validate({**entry, "ts": future}))
     assert apply(note, f"New ({DAY}, evidence {future})\n")[0] == 1
     assert records(note.parent / "heart/changes.jsonl")[-1]["refused"] == "evidence-ts"
 

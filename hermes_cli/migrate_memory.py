@@ -68,6 +68,8 @@ def _publish_files(copied: Path, destination: Path, *, lcm_store: bool = False) 
         if not path.is_file() or path.name in {"state.db", "lcm.db", "work.db"}:
             continue
         relative = path.relative_to(copied)
+        if relative.parts[0] in {"heart", "SOUL.self.md"}:
+            continue  # carried by hermes_cli.heart.carry: private modes, the journal as store rows
         target = _safe(destination / relative)
         if relative == Path("config.yaml"):
             _publish_config(path, destination, lcm_store=lcm_store)
@@ -151,6 +153,9 @@ def _profile(args) -> dict:
     agent = migrate_agent(copied.state_db, destination / "state.db", args.agent)
     reports = [agent.as_dict()]
     lcm = migrate_lcm(copied.lcm_db, copied.state_db, destination, args.agent, work)
+    # After LCM: the trial journal cites LCM store_ids, which map to uids through the moved LCM rows.
+    from hermes_cli.heart.carry import carry
+    heart = carry(copied.profile_dir, destination, args.agent).as_dict()
     honcho = {"status": "not_supplied", "counted": True, "ok": True, "reason": "no_archive_supplied"}
     if copied.honcho_dump is not None:
         from hermes_cli.migrate_memory_honcho import migrate_honcho
@@ -181,6 +186,7 @@ def _profile(args) -> dict:
     duplicates = duplicate_report(args.agent)
     steps = {"identity": {"counted": True, "ok": agent.ok}, "agent": {"counted": True, "ok": agent.ok},
              "lcm": {"counted": lcm["counted"], "ok": lcm["ok"]},
+             "heart": {"counted": heart["counted"], "ok": heart["ok"]},
              "honcho": {"counted": honcho["counted"], "ok": honcho["ok"]},
              "external": {"counted": True, "ok": all(r["ok"] for r in reports[1:]),
                           "status": "imported" if copied.spool is not None else "not_supplied"},
@@ -188,14 +194,14 @@ def _profile(args) -> dict:
              "work": {"counted": work_report["counted"], "ok": work_report["ok"]}}
     return {"format": 1, "round": 2, "profile": args.profile, "agent": args.agent,
             "destination_home": str(destination), "copies": [asdict(row) for row in copied.receipt],
-            "sources": reports, "lcm": lcm, "honcho": honcho, "work": work_report,
+            "sources": reports, "lcm": lcm, "heart": heart, "honcho": honcho, "work": work_report,
             "files": files, "overlay": overlay, "census": census,
             "skipped_symlinks": list(copied.skipped_symlinks), "duplicates": duplicates,
             "complete": duplicates["ok"] and all(s["counted"] and s["ok"] for s in steps.values()),
             "steps": steps,
             "embeddings": {"status": "deferred", "counted": True, "ok": True, "command": "lina store reembed",
                            "reason": "No embedding endpoint is called; Honcho reports legacy vector disposition."},
-            "ok": lcm["ok"] and all(report["ok"] for report in reports) and duplicates["ok"]
+            "ok": lcm["ok"] and heart["ok"] and all(report["ok"] for report in reports) and duplicates["ok"]
                   and honcho.get("ok", honcho.get("status") == "not_supplied")
                   and work_report.get("ok", work_report.get("status") == "not_supplied")}
 
