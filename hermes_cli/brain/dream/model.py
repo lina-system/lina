@@ -116,10 +116,15 @@ class Spend:
                 "stopped": self.stopped}
 
 
+def call_aux(task: str, request: str, max_tokens: int) -> str:
+    """One tool-less call of the auxiliary client's *task* (``auxiliary.<task>`` in config.yaml chooses the model)."""
+    from agent.auxiliary_client import call_llm
+    response = call_llm(task=task, temperature=0, max_tokens=max_tokens,
+                        messages=[{"role": "user", "content": request}])
+    return response.choices[0].message.content or ""
+
+
 def aux_complete(request: str) -> str:
     """The production model: the auxiliary client's ``brain_dream`` task (``auxiliary.brain_dream`` in config.yaml),
     with no tools."""
-    from agent.auxiliary_client import call_llm
-    response = call_llm(task=TASK, temperature=0, max_tokens=MAX_OUTPUT_TOKENS,
-                        messages=[{"role": "user", "content": request}])
-    return response.choices[0].message.content or ""
+    return call_aux(TASK, request, MAX_OUTPUT_TOKENS)

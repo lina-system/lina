@@ -139,7 +139,7 @@ def test_a_cycle_upkeeps_then_dreams_and_changes_pages_only_through_proposals(_m
     report = json.loads(_brain(capsys, "dream", "--json"))
 
     assert list(report["phases"]) == ["upkeep", "orphans", "atoms", "patterns", "concepts", "consolidate",
-                                      "contradictions", "drift"]
+                                      "contradictions", "drift", "promote"]
     assert report["phases"]["upkeep"]["new_links"] >= 1
     assert report["phases"]["atoms"]["atoms"] >= 5
     for phase in ("patterns", "concepts", "consolidate", "contradictions", "drift"):

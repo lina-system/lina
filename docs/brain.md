@@ -55,7 +55,8 @@ One summary paragraph, then what is known now. Rewritten when new information ar
   Entries are only ever appended (`hermes_cli/brain/page.py` `append`).
 - **Grade** (lina#439 section 1): `owner`, `agent` or `external`. An entry without one, which covers every
   hand-written entry, is `external`, the least trusted grade. The person card reads it (Person pages, below);
-  promotion does not yet.
+  the `promote` phase proposes an `external` entry for compiled truth once it is confirmed (External messages,
+  below).
 
 The parser is lossless: every byte of a file lands in exactly one part, and `render(parse(text)) == text` holds for
 any file, hand-written or not. The importer never needs to rewrite a file, and it never does.
@@ -240,8 +241,8 @@ agent read them. A page's vector is deleted when the page is deleted or its file
   through `lina brain projects sync` (below), not through a folder.
 - **The nightly cycle** (lina#444): described below. Accepted proposals of kinds that would rewrite a file (a new
   page, an addition to compiled truth) are recorded, not carried out; no phase auto-applies yet.
-- **Grades** (lina#440): stored, defaulting to `external`. The person card reads them (lina#445); promotion does
-  not yet.
+- **Grades** (lina#440): stored, defaulting to `external`. The person card reads them (lina#445); promotion is a
+  proposal (lina#441, see "External messages" below).
 - **Honcho and person pages** (lina#445): done, see "Person pages" below.
 - **Search** (lina#446): see "Search" below.
 - **Frontmatter `type` labels** that are not page types (a wiki's own labels) are kept in the frontmatter copy but
@@ -367,7 +368,7 @@ identical. The first report's change counters and added-edge lists naturally dif
 ```sh
 lina brain dream --plan              # what would run and cost; no model call, nothing written
 lina brain dream                     # one cycle; prints one line and the path of the report page
-lina brain dream --phase drift       # one phase only (any of the eight below)
+lina brain dream --phase drift       # one phase only (any of the nine below)
 lina brain dream --json              # the full report
 lina brain dream --metrics           # the counters of finished cycles
 lina brain proposals list [--status proposed|accepted|rejected|applied|all] [--phase P] [--json]
@@ -388,6 +389,7 @@ One cycle runs these phases in order (`hermes_cli/brain/dream/`, after GBrain's 
 | `consolidate` | yes | proposals `compiled_truth` (one claim for several, on pages with `consolidate_min_atoms` claims, the oldest at least `consolidate_min_age_hours` old) and `merge` (two pages of one directory that share a name and are about the same subject) |
 | `contradictions` | yes | proposals `contradiction` (claims and dated entries of one page that cannot all hold) and `close_edge` (open typed relations of one page and type that cannot all still hold; `mentions` edges are not relations) |
 | `drift` | yes | proposals `compiled_truth`: a statement of the compiled truth, quoted exactly, that later timeline entries show has changed, with the suggested statement |
+| `promote` | yes | proposals `promote`: an `external` timeline line that an owner message or an independent second source states again (see "External messages") |
 
 The deterministic phases take no model call and no cycle lock. The model phases run under one lock, a row of
 `brain.cycle_lock` that expires after `lock_ttl_minutes` and is renewed before every model call. When another
@@ -434,7 +436,7 @@ makes the run exit 1; the other phases still run.
 | `proposal_id` | the id `accept` and `reject` take |
 | `agent_id` | the agent whose cycle made it (the profile); row-level security `lina_agent_rows` |
 | `phase` | the phase or other writer that made it |
-| `kind` | open text: `new_page`, `compiled_truth`, `merge`, `contradiction`, `close_edge`, and kinds later writers add (promotions, lina#441) |
+| `kind` | open text: `new_page`, `compiled_truth`, `merge`, `contradiction`, `close_edge`, `promote` (lina#441), and kinds later writers add |
 | `target` | the page slug it is about, or `from->to` for a relation |
 | `payload` | what the kind needs: the text to add or the suggested statement, the merge's `from`/`into`/`reason`, the edge, the cited atom ids |
 | `grade` | the lowest grade of the material it is built from (lina#440); a page's compiled truth is of unknown origin and so `external`; a timeline entry and an atom carry their own |
@@ -564,3 +566,69 @@ lina brain people import-honcho [--json]                 # Honcho's existing con
   Honcho's session summary and the agent's own sections follow the card; Honcho's own representation and peer card
   of the person are left out. A person with no page keeps Honcho's card until a page is linked. An edited file is
   read after `lina brain import` or `reindex`, by the next session.
+
+## External messages
+
+```sh
+lina brain extract --plan            # how many messages are pending and what would be sent; nothing written
+lina brain extract                   # one run; prints one line and the new lines per page
+lina brain extract --limit 20 --json # at most 20 messages, the full report
+```
+
+`lina brain extract` (lina#441, design lina#439 section 1) reads stored external messages into brain timelines
+(`hermes_cli/brain/extract.py`). It runs as the store owner, like `import`.
+
+- **Input.** Each message is named by its stable reference `msg:messages:<uid>`, the form `lina messages` (lina#549)
+  returns: a row of `memory.messages` of source `messages`, read in its current version
+  (`memory.external_message_heads`). `resolve` is the one function that turns a reference into the row; the raw
+  spool is never read. A message not yet extracted is pending, oldest first, at most `--limit` (100) per run.
+- **The model has no tools.** One call per message, through the auxiliary task `brain_extract`
+  (`auxiliary.brain_extract` in config.yaml, like `brain_dream`). The message enters the prompt only as the one item
+  of the quoted data block (`plugins/memory/lina/grade.py` `data_block`), labelled with its reference, date, author
+  and conversation. One message per call keeps an instruction inside one message from bending the record of another.
+- **One object of a fixed schema.** The answer must be exactly `{"who", "when", "what", "source_id"}`: `who` at most
+  80 characters, `when` a date `YYYY-MM-DD`, `what` at most 240 characters, both one line of plain text without
+  `[[links]]` or markdown links, and `source_id` the input's own reference. Any other key, a missing key, another
+  type or source id, or text that is not one JSON object is invalid.
+- **Raw text is never copied.** A `who` or `what` that repeats 40 or more characters of the message (compared NFKC,
+  case-folded, whitespace collapsed) is invalid: a line is a short statement in the model's words, and the reference
+  keeps the raw text showable on request.
+- **Where a line goes.** A valid record is appended as `- <when> | external | msg:messages:<uid> | <what>` to the
+  person page that has the name `who` (an alias, the title or the file name), when exactly one person page has it.
+  Otherwise it goes to the inbox page as `<who>: <what>`:
+
+  ```text
+  <LINA root>/brain-inbox/external-messages.md     type source, title "External messages", slug external-messages
+  ```
+
+  The inbox is generated and is its own brain root, outside every imported wiki and outside the projects work folder;
+  the run refuses an inbox that overlaps another brain directory. Files only grow (the append path of person pages:
+  one lock per file, the bytes written stay, the directory is synced into the index), and a reference already on the
+  page, by hand or by an earlier run, is never written again.
+- **Each message once.** `brain.extracted` (migration `0021_brain_extracted.sql`, shared, SELECT-only for `lina_app`)
+  holds one row per handled reference: `written` with its page, or `invalid` with the validator's reason (never the
+  message or the answer) and the number of attempts. A written message is never read again, so a second run on
+  unchanged messages calls no model and writes nothing; an invalid one is read again on a later run until it has
+  failed three times. An invalid answer changes no page, timeline row or proposal. A model call that fails ends the
+  run with exit 1, keeping what was read before it.
+- **For other callers.** `read_records(conn, refs, complete)` returns the validated records (and the invalid ones
+  with their reasons) without writing anything. The receiving place for outside notices (lina#520) is to read
+  through it.
+
+### Promotion
+
+An `external` line joins compiled truth only as a proposal. The nightly cycle's `promote` phase (`lina brain dream
+--phase promote`, budget `brain.dream.budget.promote`) sends, for each page with `external` lines that cite a
+source, those lines and the newest owner messages that name the page (speaker and grade `owner`, of this agent,
+containing one of the page's names) as quoted data, and asks which line is stated again. It may cite only:
+
+- an owner message (basis `owner`): confirmed in a conversation with the owner; or
+- another `external` line of the same page from an independent source (basis `second_source`): a stored message of
+  another conversation (one thread is one source), or another reference family (`mail`, `honcho`, ...), whose raw
+  text is not the same message or a copy of it.
+
+Any other citation makes the answer invalid. Each confirmed line becomes one proposal of kind `promote` on its page,
+graded `external`, with `payload.add` the line's text, `payload.basis` and the confirming references in
+`source_refs`; a line is proposed once (its fingerprint is its reference). Nothing is promoted on its own:
+`lina brain proposals accept ID --confirm-external` marks the proposal `accepted` and writes no file, and compiled
+truth changes only when a person edits the page.

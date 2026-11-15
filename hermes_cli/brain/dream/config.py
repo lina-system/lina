@@ -10,7 +10,7 @@ from pathlib import Path
 from hermes_cli.brain.store import BrainStoreError
 
 DETERMINISTIC = ("upkeep", "orphans")
-MODEL_PHASES = ("atoms", "patterns", "concepts", "consolidate", "contradictions", "drift")
+MODEL_PHASES = ("atoms", "patterns", "concepts", "consolidate", "contradictions", "drift", "promote")
 PHASES = DETERMINISTIC + MODEL_PHASES
 _COUNTS = ("lock_ttl_minutes", "page_chars", "pattern_days", "concept_min_group", "consolidate_min_atoms",
            "consolidate_min_age_hours")

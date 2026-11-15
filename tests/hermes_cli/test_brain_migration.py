@@ -1,6 +1,7 @@
 """lina#442: migration 0014_brain applies on an empty store and on one that already holds memory rows, follows the
 agent_id row-level security rules of docs/store.md, and adds the shared page vectors to vec. lina#444: migration
-0019_brain_proposals reshapes brain.proposals, keeps older rows and scopes the cycle tables per agent.
+0019_brain_proposals reshapes brain.proposals, keeps older rows and scopes the cycle tables per agent. lina#441:
+0021_brain_extracted is shared and read-only for agents.
 
 These run on the real Postgres from tests/_fixtures/memory_store.py, each in a database of its own.
 """
@@ -20,7 +21,8 @@ from tests._fixtures.memory_store import _as_app, _initdb_sql, _with_db
 BRAIN = "0014_brain.sql"
 PROPOSALS = "0019_brain_proposals.sql"
 BRAIN_TABLES = {"roots", "pages", "aliases", "edges", "timeline", "atoms", "merges", "proposals",
-                "dream_cycles", "dream_pages_seen", "dream_inputs", "cycle_lock", "search_docs", "search_terms"}
+                "dream_cycles", "dream_pages_seen", "dream_inputs", "cycle_lock", "search_docs", "search_terms",
+                "extracted"}
 VECTOR = "[" + ",".join(["1"] + ["0"] * 1023) + "]"
 
 
@@ -119,6 +121,10 @@ def test_proposals_are_agent_scoped_pages_are_shared_and_page_vectors_are_read_o
                          "content_sha256) VALUES ('y', 9, %s, 'y.md', 'idea', 'y', '', 'y')", (root,))
         with pytest.raises(psycopg.errors.InsufficientPrivilege):
             conn.execute("INSERT INTO brain.proposals (agent_id, phase, kind) VALUES ('beta', 'drift', 'timeline')")
+        assert conn.execute("SELECT count(*) FROM brain.extracted").fetchone() == (0,)
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            conn.execute("INSERT INTO brain.extracted (source_ref, outcome, page_slug) "
+                         "VALUES ('msg:messages:x', 'written', '미나')")
 
     with psycopg.connect(owner, autocommit=True) as conn:
         def page_vectors() -> int:

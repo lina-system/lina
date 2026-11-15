@@ -1,5 +1,6 @@
-"""The six model phases of the cycle, after GBrain's ``runCycle`` (lina#438): atoms, patterns, concept synthesis,
-consolidate, contradictions and drift.
+"""The model phases of the cycle, after GBrain's ``runCycle`` (lina#438): atoms, patterns, concept synthesis,
+consolidate, contradictions and drift; and promote (lina#441), which proposes ``external`` timeline lines for
+compiled truth once the owner or a second independent source confirms them.
 
 A phase reads the brain as it is in the store (``load``), turns it into requests (one prompt each, with a fixed
 answer shape) and reads each answer into writes. Only ``atoms`` writes index rows (``brain.atoms``, short claims
@@ -12,6 +13,7 @@ unknown origin and so ``external``; a timeline entry and an atom carry their own
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
@@ -138,6 +140,10 @@ class Phase:
     brain: Brain
     settings: Settings
     name = ""
+
+    @classmethod
+    def loaded(cls, conn, settings: Settings, agent_id: str) -> Phase:
+        return cls(load(conn), settings)
 
     def requests(self) -> list[Request]:
         raise NotImplementedError
@@ -392,5 +398,111 @@ class DriftPhase(Phase):
         return found
 
 
+@dataclass(frozen=True)
+class Evidence:
+    """What may confirm an external line: an owner message (``owner``) or an external line of another source
+    (``external``), with the source family and raw text that decide whether it is independent."""
+    item: Item
+    family: str | None
+    raw: str | None
+
+
+def family(ref: str, conversations: dict[str, str]) -> str:
+    """The source a reference belongs to: a stored external message's conversation (one thread is one source), else
+    the reference up to its last ``:`` (``mail:4711`` is of ``mail``)."""
+    if ref in conversations:
+        return f"conversation:{conversations[ref]}"
+    return ref.rsplit(":", 1)[0] if ":" in ref else ref
+
+
+@dataclass
+class PromotePhase(Phase):
+    """Per page with ``external`` lines that cite a source: ask which of them an owner message (speaker and grade
+    ``owner``, of this agent, naming the page) or an external line of another, independent source states again. Each
+    confirmed line becomes a ``promote`` proposal; nothing is promoted until a person accepts it."""
+    name = "promote"
+    TASK = ("Items of grade external are facts read from outside sources; items of grade owner are the owner's own "
+            "messages. For each external item that an owner item, or an external item from another source, states "
+            "again (the same person and the same fact), cite it and the items that state it again.")
+    SHAPE = ('{"promote": [{"item": <number of an external item>, "confirmed_by": [<item numbers>]}]}, '
+             'at most 5 entries')
+    OWNER_MESSAGES = 10
+    OWNER_CHARS = 600
+    evidence: dict = field(default_factory=dict)
+
+    @classmethod
+    def loaded(cls, conn, settings: Settings, agent_id: str) -> Phase:
+        phase = cls(load(conn), settings)
+        lines: dict[str, list[tuple]] = defaultdict(list)
+        for slug, day, ref, entry in conn.execute(
+                "SELECT page_slug, entry_date, source_ref, text FROM brain.timeline WHERE grade = 'external' "
+                "AND source_ref IS NOT NULL AND source_ref <> '' ORDER BY page_slug, entry_date NULLS FIRST, line"):
+            lines[slug].append((day, ref, entry))
+        refs = sorted({ref for found in lines.values() for _, ref, _ in found})
+        raw = {ref: (conversation, content) for ref, conversation, content in conn.execute(
+            "SELECT 'msg:' || uid, conversation_id, content FROM memory.messages WHERE source = 'messages' "
+            "AND 'msg:' || uid = ANY(%s)", (refs,))}
+        conversations = {ref: conversation for ref, (conversation, _) in raw.items() if conversation}
+        for slug, found in sorted(lines.items()):
+            external = [Evidence(Item(ref, "external", day.isoformat() if day else None, entry),
+                                 family(ref, conversations), (raw.get(ref) or (None, None))[1])
+                        for day, ref, entry in found[-TIMELINE_ITEMS:]]
+            owner = [Evidence(Item(f"msg:{uid}", "owner", ts.date().isoformat() if ts else None,
+                                   content[:cls.OWNER_CHARS]), None, None)
+                     for uid, content, ts in _owner_messages(conn, slug, agent_id, cls.OWNER_MESSAGES)]
+            if external and len(external) + len(owner) >= 2:
+                phase.evidence[slug] = (*external, *owner)
+        return phase
+
+    def requests(self) -> list[Request]:
+        return [Request(f"page:{slug}", self.TASK, self.SHAPE, tuple(entry.item for entry in found), ("page", slug))
+                for slug, found in sorted(self.evidence.items())]
+
+    def read(self, request: Request, answer: dict) -> list:
+        from hermes_cli.brain.extract import copies
+        slug = request.context[1]
+        found = self.evidence[slug]
+        proposals = []
+        for entry in field_list(answer, "promote", 5):
+            picked = entry.get("item")
+            if (not isinstance(picked, int) or isinstance(picked, bool) or not 1 <= picked <= len(found)
+                    or found[picked - 1].item.grade != "external"):
+                raise Invalid("item must be the number of an external item")
+            line = found[picked - 1]
+            confirming = numbers(entry, "confirmed_by", len(found))
+            if picked in confirming:
+                raise Invalid("an item cannot confirm itself")
+            basis = set()
+            for n in confirming:
+                other = found[n - 1]
+                if other.item.grade == "owner":
+                    basis.add("owner")
+                elif other.family == line.family or (other.raw and line.raw and (
+                        other.raw == line.raw or copies(other.raw, line.raw))):
+                    raise Invalid("a confirming external item must come from another source and not copy it")
+                else:
+                    basis.add("second_source")
+            refs = (line.item.ref, *(found[n - 1].item.ref for n in confirming))
+            proposals.append(Proposal("promote", slug, {
+                "line": {"date": line.item.date, "source_ref": line.item.ref, "text": line.item.text},
+                "add": line.item.text, "basis": sorted(basis), "confirmed_by": list(refs[1:]),
+            }, lowest(found[n - 1].item.grade for n in (picked, *confirming)), refs,
+                fingerprint(self.name, "promote", slug, line.item.ref)))
+        return proposals
+
+
+def _owner_messages(conn, slug: str, agent_id: str, most: int) -> list[tuple]:
+    """The newest owner messages of *agent_id* that name page *slug* by one of its names (two characters or more)."""
+    names = [row[0] for row in conn.execute("SELECT alias FROM brain.aliases WHERE slug = %s", (slug,))
+             if len(row[0].strip()) >= 2]
+    if not names:
+        return []
+    patterns = ["%" + re.sub(r"([\\%_])", r"\\\1", name.strip()) + "%" for name in names]
+    return conn.execute(
+        "SELECT uid, content, ts FROM memory.messages WHERE agent_id = %s AND speaker = 'owner' AND grade = 'owner' "
+        "AND forgotten_at IS NULL AND content ILIKE ANY(%s) ORDER BY ts DESC NULLS LAST, message_id DESC LIMIT %s",
+        (agent_id, patterns, most)).fetchall()
+
+
 PHASE_CLASSES = {phase.name: phase for phase in (AtomsPhase, PatternsPhase, ConceptsPhase, ConsolidatePhase,
-                                                 ContradictionsPhase, DriftPhase)}
+                                                 ContradictionsPhase, DriftPhase, PromotePhase)}

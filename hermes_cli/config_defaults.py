@@ -1399,6 +1399,7 @@ DEFAULT_CONFIG = {
                 "consolidate": {"calls": 20, "input_chars": 100_000},
                 "contradictions": {"calls": 20, "input_chars": 100_000},
                 "drift": {"calls": 20, "input_chars": 100_000},
+                "promote": {"calls": 20, "input_chars": 100_000},
             },
             "report_dir": "",
             "lock_ttl_minutes": 30,

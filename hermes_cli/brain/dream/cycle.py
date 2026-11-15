@@ -18,7 +18,7 @@ from pathlib import Path
 
 from hermes_cli.brain.dream.config import DETERMINISTIC, MODEL_PHASES, PHASES, DreamError, Settings
 from hermes_cli.brain.dream.model import Complete, Invalid, Spend, answer_object, digest
-from hermes_cli.brain.dream.phases import PHASE_CLASSES, Atoms, Phase, Proposal, load
+from hermes_cli.brain.dream.phases import PHASE_CLASSES, Atoms, Phase, Proposal
 
 LOCK = "dream"
 logger = logging.getLogger(__name__)
@@ -81,7 +81,7 @@ def _answered(conn, agent_id: str, phase: str) -> dict[str, str]:
 
 
 def plan_phase(conn, name: str, settings: Settings, agent_id: str) -> dict:
-    phase: Phase = PHASE_CLASSES[name](load(conn), settings)
+    phase: Phase = PHASE_CLASSES[name].loaded(conn, settings, agent_id)
     answered = _answered(conn, agent_id, name)
     spend = Spend(settings.budgets[name])
     counts = Counter()
@@ -103,7 +103,7 @@ def plan_phase(conn, name: str, settings: Settings, agent_id: str) -> dict:
 def run_phase(conn, name: str, settings: Settings, complete: Complete, agent_id: str, cycle_id: int,
               lock: Lock) -> dict:
     """Send the phase's requests until its budget is spent; write what each valid answer yields."""
-    phase: Phase = PHASE_CLASSES[name](load(conn), settings)
+    phase: Phase = PHASE_CLASSES[name].loaded(conn, settings, agent_id)
     answered = _answered(conn, agent_id, name)
     spend = Spend(settings.budgets[name])
     counts: Counter = Counter()

@@ -1,5 +1,5 @@
 """``lina brain``: import a wiki directory into the brain, rebuild its index, merge two pages, print the mapping,
-run upkeep and the nightly cycle, and decide the cycle's proposals."""
+run upkeep and the nightly cycle, decide the cycle's proposals, and extract external messages into timelines."""
 
 from __future__ import annotations
 
@@ -60,6 +60,7 @@ def build(subparsers) -> None:
     build_people(subparsers)
     _build_dream(subparsers)
     _build_projects(subparsers)
+    _build_extract(subparsers)
 
 
 def _build_dream(subparsers) -> None:
@@ -112,6 +113,22 @@ def _build_projects(subparsers) -> None:
     show.add_argument("goal", help="The goal id (G1) or the page slug (goal-g1)")
     show.add_argument("--json", action="store_true", help="Print the page as JSON")
     show.set_defaults(brain_fn=run_show)
+
+
+def _build_extract(subparsers) -> None:
+    from hermes_cli.brain.extract import LIMIT
+    from hermes_cli.brain.extract import run as run_extract
+
+    extract = subparsers.add_parser(
+        "extract", help="Read stored external messages into brain timelines through a tool-less model step",
+        description="Each message not yet extracted (msg:messages:<uid>) is read by a model with no tools, as "
+                    "quoted data, into one record of who, when, what and source id. A valid record becomes an "
+                    "external timeline line on the person page it names, else on the brain inbox page; an invalid "
+                    "one writes nothing. The model is auxiliary.brain_extract.")
+    extract.add_argument("--plan", action="store_true", help="Say what would be sent; call no model, write nothing")
+    extract.add_argument("--limit", type=int, default=LIMIT, help=f"At most this many messages (default {LIMIT})")
+    extract.add_argument("--json", action="store_true", help="Print the full report as JSON")
+    extract.set_defaults(brain_fn=run_extract)
 
 
 def execute(args: argparse.Namespace) -> int:
