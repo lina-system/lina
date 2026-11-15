@@ -5,7 +5,7 @@ Postgres, LCM-X is the real engine with a summary added through its DAG, and Hon
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -26,11 +26,12 @@ def home(tmp_path, monkeypatch, lina_env):
     return home
 
 
-def _insert(memory_store_sql, *, uid, source, agent_id, scope, role, content, author=None, conversation=None):
+def _insert(memory_store_sql, *, uid, source, agent_id, scope, role, content, author=None, conversation=None,
+            ts="2026-11-01T09:00:00+00:00"):
     memory_store_sql(
         "INSERT INTO memory.messages (uid, source, agent_id, scope, role, content, author, conversation_id, ts,"
-        " content_sha256) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, '2026-11-01T09:00:00+00:00', 'x')",
-        (uid, source, agent_id, scope, role, content, author, conversation))
+        " content_sha256) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'x')",
+        (uid, source, agent_id, scope, role, content, author, conversation, ts))
 
 
 def _honcho(lina_env):
@@ -223,3 +224,89 @@ def test_the_memory_tools_sit_beside_the_existing_ones(seeded):
     names = seeded.agent._memory_manager.get_all_tool_names()
 
     assert {"memory_search", "memory_open", "memory_recall", "honcho_search", "honcho_conclude"} <= names
+
+
+# lina#726: a 200k-character digest holding every query term must not outrank the short, newer records of the same
+# event, whether it is a summary the host injected as a user turn or a long paste a person sent.
+MOVE_QUERY = "hub move lina-hub cutover"
+MOVE_RECORDS = ("hub move done, lina-hub answers on the new address",
+                "cutover finished, the old hub is off",
+                "lina-hub cutover checked from the phone")
+
+
+def _ago(days: float) -> str:
+    return (datetime.now(UTC) - timedelta(days=days)).isoformat()
+
+
+def _digest(opener: str) -> str:
+    body = "Plan for the hub move to lina-hub and the cutover; backups, keys, services, the phone and the NAS. "
+    return (opener + body * (200_000 // len(body) + 1))[:200_000]
+
+
+@pytest.mark.parametrize("opener", ["[Depth-3 Summary (d3, node 398)]\n## Summary\n", "pasted notes:\n"],
+                         ids=["injected-summary", "long-paste"])
+def test_short_newer_records_rank_above_a_huge_digest_with_every_term(seeded, memory_store_sql, opener):
+    _insert(memory_store_sql, uid="agent:default:digest", source="agent", agent_id="default", scope="agent",
+            role="user", content=_digest(opener), ts=_ago(10))
+    for day, text in enumerate(MOVE_RECORDS, 1):
+        _insert(memory_store_sql, uid=f"agent:default:move-{day}", source="agent", agent_id="default",
+                scope="agent", role="user" if day % 2 else "assistant", content=text, ts=_ago(4 - day))
+
+    found = _call(seeded.agent, "memory_search", query=MOVE_QUERY, sources=["agent"])
+
+    refs = [hit["ref"] for hit in found["results"]]
+    assert set(refs[:3]) == {f"msg:agent:default:move-{day}" for day in (1, 2, 3)}
+    assert ("msg:agent:default:digest" in refs) is (not opener.startswith("[Depth-"))
+
+
+def test_the_vector_leg_leaves_out_an_injected_summary_turn_too(seeded, memory_store_sql):
+    from agent.embedding_client import EmbeddingClient, EmbeddingSettings
+
+    _insert(memory_store_sql, uid="agent:default:summary", source="agent", agent_id="default", scope="agent",
+            role="user", content=_digest("[Depth-3 Summary (d3, node 398)]\n## Summary\n"))
+    uid, message_id = memory_store_sql("SELECT uid, message_id FROM memory.messages WHERE uid = %s",
+                                       ("agent:default:summary",))[0]
+    vector = "[" + ",".join(["1"] + ["0"] * 1023) + "]"
+    chunk = memory_store_sql("INSERT INTO vec.chunks (source, agent_id, message_ids, text) VALUES"
+                             " ('agent', 'default', %s, 'x') RETURNING chunk_id", ([message_id],))[0][0]
+    memory_store_sql("INSERT INTO vec.embeddings (kind, item_id, agent_id, model, dim, embedding) VALUES"
+                     " ('chunk', %s, 'default', 'test-embed', 1024, %s::vector)", (chunk, vector))
+    answer = {"data": [{"index": 0, "embedding": [1.0] + [0.0] * 1023}]}
+    provider = next(p for p in seeded.agent._memory_manager.providers if p.name == "lina-memory")
+    provider._embedding = EmbeddingClient(EmbeddingSettings(base_url="http://embed.test/v1", model="test-embed"),
+                                          transport=httpx.MockTransport(lambda _r: httpx.Response(200, json=answer)))
+
+    found = _call(seeded.agent, "memory_search", query="flowers", sources=["agent"])
+
+    assert f"msg:{uid}" not in [hit["ref"] for hit in found["results"]]
+
+
+def test_a_persons_bracketed_message_and_a_plain_turn_are_still_found(seeded, memory_store_sql):
+    bracketed = {"agent:default:b-1": "[urgent] hub move tonight, keep lina-hub up",
+                 "agent:default:b-2": "[Depth chart] hub move order for the team",
+                 "agent:default:b-3": "[OUT-OF-BAND USER MESSAGE]\nstop the hub move\n[/OUT-OF-BAND USER MESSAGE]"}
+    for uid, text in bracketed.items():
+        _insert(memory_store_sql, uid=uid, source="agent", agent_id="default", scope="agent", role="user",
+                content=text, ts=_ago(1))
+
+    moved = {hit["ref"] for hit in _call(seeded.agent, "memory_search", query="hub move", sources=["agent"])["results"]}
+    orchid = _call(seeded.agent, "memory_search", query="orchid", sources=["agent"])["results"]
+
+    assert moved == {f"msg:{uid}" for uid in bracketed}
+    assert {_call(seeded.agent, "memory_open", ref=hit["ref"])["text"] for hit in orchid} == {
+        "please track the orchid delivery, 회의록도 정리해줘", "Tracking the orchid delivery now."}
+
+
+def test_fusion_weighs_a_hits_age_so_a_newer_hit_beats_a_much_older_one_ranked_just_above_it():
+    from plugins.memory.lina.search import MemorySearch, Readers
+
+    now = datetime.now(UTC)
+    messages = [{"id": "old", "session_id": "hs-1", "content": "hub move plan", "created_at": now - timedelta(days=60)},
+                {"id": "new", "session_id": "hs-1", "content": "hub move done", "created_at": now - timedelta(days=1)}]
+    manager = SimpleNamespace(search_messages=lambda *_a, **_k: messages, search_conclusions=lambda *_a, **_k: [])
+    search = MemorySearch(Readers(store=MagicMock(), honcho=lambda: (manager, "key"), lcm=MagicMock(),
+                                  embedder=MagicMock()))
+
+    found = search.search("hub move", sources=["honcho"])
+
+    assert [hit["ref"] for hit in found["results"]] == ["ltm:m:new:hs-1", "ltm:m:old:hs-1"]

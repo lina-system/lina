@@ -665,9 +665,13 @@ class MessageStore:
 
         A row matches when its words match (the ``simple`` tsvector) or when one of the query's terms is a
         substring of its text (``pg_trgm``), so a two-character Korean term hits inside a longer word. Rank: the
-        tsvector rank plus the share of terms found as substrings. Agent rows are its turns (user and assistant
-        text, no tool output); an external message edited later counts once, as its newest version. Forgotten
-        rows are left out. Row-level security decides which rows are this agent's to read."""
+        length-normalized tsvector rank plus the share of terms found as substrings, damped by the row's length,
+        times a recency weight (half-life ``MEMORY_RECENCY_HALF_LIFE_DAYS``, never below ``MEMORY_RECENCY_FLOOR``),
+        so a huge digest that holds every term does not outrank the short, newer record of the same event
+        (lina#726). Agent rows are its turns (user and assistant text, no tool output), without the blocks the
+        host injected as user turns (``_INJECTED_TURN_RE``); an external message edited later counts once, as its
+        newest version. Forgotten rows are left out. Row-level security decides which rows are this agent's to
+        read."""
         terms = list(dict.fromkeys(t for t in query.split() if t))[:_MEMORY_TERMS]
         if not terms or not sources:
             return []
@@ -677,14 +681,19 @@ class MessageStore:
         sql = (
             f"SELECT {_MEMORY_FIELDS} FROM ("
             f" SELECT DISTINCT ON (split_part(uid, '#', 1)) {_MEMORY_COLUMNS},"
-            f" ts_rank(tsv, plainto_tsquery('simple', %s)) + ({hit_sum})::float / %s AS score"
+            f" (ts_rank(tsv, plainto_tsquery('simple', %s), 1)"
+            f" + ({hit_sum})::float / %s / (1 + ln(1 + length(content) / %s::float)))"
+            " * greatest(%s, least(1.0, power(0.5, extract(epoch FROM now() - coalesce(ts, observed_at)) / %s)))"
+            " AS score"
             " FROM memory.messages"
             " WHERE forgotten_at IS NULL AND content IS NOT NULL AND source = ANY(%s)"
-            " AND (source <> 'agent' OR role IN ('user', 'assistant'))"
+            " AND (source <> 'agent' OR (role IN ('user', 'assistant') AND content !~ %s))"
             f" AND (tsv @@ plainto_tsquery('simple', %s) OR {any_hit})"
             " ORDER BY split_part(uid, '#', 1), message_id DESC"
             ") hits ORDER BY score DESC, at DESC LIMIT %s")
-        args = [query, *patterns, len(patterns), list(sources), query, *patterns, int(limit)]
+        args = [query, *patterns, len(patterns), _MEMORY_LENGTH_SCALE, MEMORY_RECENCY_FLOOR,
+                MEMORY_RECENCY_HALF_LIFE_DAYS * 86400.0, list(sources), _INJECTED_TURN_RE, query, *patterns,
+                int(limit)]
         with self._cursor() as cur:
             cur.execute(sql, args)
             return [_memory_row(row) for row in cur.fetchall()]
@@ -713,8 +722,11 @@ class MessageStore:
                 ordered = list(dict.fromkeys(int(i) for row in cur.fetchall() for i in row[0]))
             if not ordered:
                 return []
+            # The same readable rows as search_memory: an agent's own turns without the host-injected blocks.
             cur.execute(f"SELECT {_MEMORY_COLUMNS} FROM memory.messages WHERE message_id = ANY(%s)"
-                        " AND forgotten_at IS NULL AND content IS NOT NULL", (ordered,))
+                        " AND forgotten_at IS NULL AND content IS NOT NULL"
+                        " AND (source <> 'agent' OR (role IN ('user', 'assistant') AND content !~ %s))",
+                        (ordered, _INJECTED_TURN_RE))
             rows = {row.message_id: row for row in map(_memory_row, cur.fetchall())}
         return [rows[i] for i in ordered if i in rows][:int(limit)]
 
@@ -728,6 +740,25 @@ class MessageStore:
 
 
 _MEMORY_TERMS = 8
+# A row's substring share is divided by 1 + ln(1 + length / scale): a few hundred characters keep almost all of
+# it, a 200k-character digest keeps about a fifth.
+_MEMORY_LENGTH_SCALE = 2000
+# The recency weight of a memory_search hit, shared with plugins/memory/lina/search.py's fusion: 2^(-age/half-life),
+# never below the floor, so age nudges toward newer records and never buries an old one (as lcm_recall's prior).
+# Fourteen days, not lcm_recall's thirty: a question about last week's work must reach last week's records.
+MEMORY_RECENCY_HALF_LIFE_DAYS = 14
+MEMORY_RECENCY_FLOOR = 0.5
+# Blocks the host injected as role=user turns, not words a person wrote: LCM-X's summary handover
+# ("[Depth-3 Summary (d3, node 398)]", plugins/context_engine/lcm-x/engine.py), the objective it preserves from
+# compacted history, an invoked skill's body (agent/skill_commands.py), and runtime/system notes. Matched on the
+# exact opener, so a person's own message that merely starts with a bracket stays searchable; a steer
+# ("[OUT-OF-BAND USER MESSAGE ...") carries the person's words and stays too.
+_INJECTED_TURN_RE = (
+    r"^\s*\[(?:(?:Recent|Session Arc|Durable|Depth-[0-9]+) Summary \(d[0-9]+, node [0-9]+\)\]"
+    r"|Current user objective preserved from compacted history\]"
+    r"|IMPORTANT: (?:The user has invoked |Background process|[0-9]+ background process|You are running as a )"
+    r"|System: |System note:|Runtime note:|CONTEXT COMPACTION|CONTEXT SUMMARY\]|PRIOR CONTEXT"
+    r"|ASYNC DELEGATION|Planning state preserved)")
 _MEMORY_COLUMNS = ("message_id, uid, source, role, author, agent_id, conversation_id, session_id,"
                    " coalesce(ts, observed_at) AS at, content, forgotten_at IS NOT NULL AS forgotten")
 _MEMORY_FIELDS = ("message_id, uid, source, role, author, agent_id, conversation_id, session_id, at, content,"

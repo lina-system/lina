@@ -9,7 +9,8 @@ The sources:
 - ``lcm``: the LCM-X summaries of this agent's session, through LCM-X's own tools (``lcm_grep``, ``lcm_expand_query``,
   ``lcm_expand``), so the search does not care which database LCM-X keeps them in.
 
-Each source ranks its own hits; the lists are merged by reciprocal rank fusion. A source that is off or fails is left
+Each source ranks its own hits; the lists are merged by reciprocal rank fusion, weighted by each hit's age the way the
+store ranks its rows (lina#726). A source that is off or fails is left
 out and named in ``skipped``: the search never fails because one source did. Every hit carries an opaque ``ref`` that
 ``memory_open`` resolves: ``msg:<memory.messages uid>``, ``ltm:m:<message id>:<Honcho session>``, ``ltm:c:<conclusion
 id>``, ``ctx:<summary node id>:<LCM session>``.
@@ -29,6 +30,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Optional
 
+from hermes_state_store import MEMORY_RECENCY_FLOOR, MEMORY_RECENCY_HALF_LIFE_DAYS
 from tools.budget_config import DEFAULT_RESULT_SIZE_CHARS
 
 logger = logging.getLogger(__name__)
@@ -52,7 +54,9 @@ SEARCH_SCHEMA = {
         "Search all of memory at once: this agent's past conversations, the owner's external messages "
         "(KakaoTalk, Discord, iMessage, LINE), long-term memory (Honcho messages and conclusions) and the "
         "conversation summaries. Returns ranked hits, each with a short excerpt and a ref; pass the ref to "
-        "memory_open for the full original. Sources that are off or fail are listed in 'skipped'."
+        "memory_open for the full original. Sources that are off or fail are listed in 'skipped'. A summary hit "
+        "is a cue, not the record: before saying what happened, open a dated non-summary hit, or say that only a "
+        "summary from its date was found."
     ),
     "parameters": {
         "type": "object",
@@ -73,7 +77,8 @@ OPEN_SCHEMA = {
         "Open the original of a memory_search hit by its ref: the full message, conclusion or summary. "
         f"Returns at most {OPEN_TEXT_CHARS:,} characters of text per call; 'text_chars' is the whole length. When "
         "'truncated' is true, call again with offset=next_offset for the next part; the parts joined in order are "
-        "the whole text."
+        "the whole text. A summary is a cue: say what happened from a dated non-summary record, or say that only "
+        "a summary from its date was found."
     ),
     "parameters": {
         "type": "object",
@@ -148,14 +153,29 @@ def excerpt(text: str, terms: Sequence[str], width: int = EXCERPT_CHARS) -> str:
     return ("…" if start else "") + flat[start:start + width].strip() + ("…" if start + width < len(flat) else "")
 
 
-def fuse(lists: Sequence[Sequence[Hit]], limit: int) -> list[dict[str, Any]]:
-    """Reciprocal rank fusion of ranked lists: a hit scores ``1 / (RRF_K + rank)`` in each list it is in."""
+def recency(time: Optional[str], now: datetime) -> float:
+    """A hit's age weight: ``2^(-age / half-life)``, never below the floor (and the floor when its time is unknown)."""
+    try:
+        at = datetime.fromisoformat(time) if time else None
+    except ValueError:
+        at = None
+    if at is None:
+        return MEMORY_RECENCY_FLOOR
+    age_days = max(0.0, (now - (at if at.tzinfo else at.replace(tzinfo=UTC))).total_seconds() / 86400.0)
+    return max(MEMORY_RECENCY_FLOOR, 0.5 ** (age_days / MEMORY_RECENCY_HALF_LIFE_DAYS))
+
+
+def fuse(lists: Sequence[Sequence[Hit]], limit: int, now: datetime) -> list[dict[str, Any]]:
+    """Reciprocal rank fusion of ranked lists: a hit scores ``1 / (RRF_K + rank)`` in each list it is in, times its
+    ``recency`` at *now*."""
     scores: dict[str, float] = {}
     hits: dict[str, Hit] = {}
     for ranked in lists:
         for rank, hit in enumerate(ranked, 1):
             scores[hit.ref] = scores.get(hit.ref, 0.0) + 1.0 / (RRF_K + rank)
             hits.setdefault(hit.ref, hit)
+    for ref, hit in hits.items():
+        scores[ref] *= recency(hit.time, now)
     newest_first = sorted(hits, key=lambda ref: hits[ref].time or "", reverse=True)
     ordered = sorted(newest_first, key=lambda ref: scores[ref], reverse=True)[:limit]
     return [{"source": hits[ref].source, "ref": ref, "excerpt": hits[ref].excerpt, "time": hits[ref].time,
@@ -218,7 +238,7 @@ class MemorySearch:
             leg(["honcho"], lambda: self._honcho_lists(query, terms, limit))
         if "lcm" in wanted:
             leg(["lcm"], lambda: self._lcm_lists(query, terms, limit))
-        return {"query": query, "results": fuse(lists, limit), "skipped": skipped}
+        return {"query": query, "results": fuse(lists, limit, datetime.now(UTC)), "skipped": skipped}
 
     def _store_lists(self, query: str, terms: Sequence[str], sources: Sequence[str], limit: int) -> list[list[Hit]]:
         rows = self._readers.store().search_memory(query, sources=sources, limit=limit * len(sources))
