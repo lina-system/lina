@@ -709,7 +709,8 @@ class MessageStore:
     # ── memory_search / memory_open (lina#22) ──
 
     def search_memory(self, query: str, *, sources: Sequence[str], limit: int = 20,
-                      authors: Optional[Sequence[str]] = None) -> list[MemoryRow]:
+                      authors: Optional[Sequence[str]] = None,
+                      speakers: Optional[Sequence[str]] = None) -> list[MemoryRow]:
         """The rows of *sources* (``agent``, ``messages``) this agent may read that match *query*, best first.
 
         A row matches when its words match (the ``simple`` tsvector) or when one of the query's terms is a
@@ -720,11 +721,13 @@ class MessageStore:
         (lina#726). Agent rows are its turns (user and assistant text, no tool output), without the blocks the
         host injected as user turns (``_INJECTED_TURN_RE``); an external message edited later counts once, as its
         newest version. Forgotten rows are left out. Row-level security decides which rows are this agent's to
-        read. *authors* keeps the rows whose author or speaker ref is one of them (a person's linked handles)."""
+        read. *authors* keeps the rows whose author or speaker ref is one of them (a person's linked handles),
+        *speakers* the rows of those speaker kinds, both before the limit."""
         terms = list(dict.fromkeys(t for t in query.split() if t))[:_MEMORY_TERMS]
         if not terms or not sources or authors is not None and not authors:
             return []
         by_author = "" if authors is None else " AND (author = ANY(%s) OR speaker_ref = ANY(%s))"
+        by_speaker = "" if speakers is None else " AND speaker = ANY(%s)"
         patterns = ["%" + _like_escape(term) + "%" for term in terms]
         hit_sum = " + ".join(["(content ILIKE %s)::int"] * len(patterns))
         any_hit = " OR ".join(["content ILIKE %s"] * len(patterns))
@@ -738,12 +741,13 @@ class MessageStore:
             " FROM memory.messages"
             " WHERE forgotten_at IS NULL AND content IS NOT NULL AND source = ANY(%s)"
             " AND (source <> 'agent' OR (role IN ('user', 'assistant') AND content !~ %s))"
-            f" AND (tsv @@ plainto_tsquery('simple', %s) OR {any_hit}){by_author}"
+            f" AND (tsv @@ plainto_tsquery('simple', %s) OR {any_hit}){by_author}{by_speaker}"
             " ORDER BY split_part(uid, '#', 1), message_id DESC"
             ") hits ORDER BY score DESC, at DESC LIMIT %s")
         args = [query, *patterns, len(patterns), _MEMORY_LENGTH_SCALE, MEMORY_RECENCY_FLOOR,
                 MEMORY_RECENCY_HALF_LIFE_DAYS * 86400.0, list(sources), _INJECTED_TURN_RE, query, *patterns,
-                *([] if authors is None else [list(authors), list(authors)]), int(limit)]
+                *([] if authors is None else [list(authors), list(authors)]),
+                *([] if speakers is None else [list(speakers)]), int(limit)]
         with self._cursor() as cur:
             cur.execute(sql, args)
             return [_memory_row(row) for row in cur.fetchall()]
@@ -755,11 +759,14 @@ class MessageStore:
             return cur.fetchone() is not None
 
     def search_memory_vectors(self, embedding: Sequence[float], *, model: str, sources: Sequence[str],
-                              limit: int = 20) -> list[MemoryRow]:
+                              limit: int = 20, speakers: Optional[Sequence[str]] = None) -> list[MemoryRow]:
         """The rows of the embedded chunks (``vec.chunks``, kind ``chunk``) of *sources* nearest *embedding*, nearest
         first, each row once; empty when nothing of *sources* is embedded with *model*. Row-level security gives
-        this agent's chunks and the shared external ones (owner ``SHARED_VECTOR_OWNER``, migration 0009)."""
+        this agent's chunks and the shared external ones (owner ``SHARED_VECTOR_OWNER``, migration 0009).
+        *speakers* keeps the chunks holding a row of those speaker kinds, before the limit, and those rows."""
         vector = "[" + ",".join(repr(float(v)) for v in embedding) + "]"
+        of_speaker = "" if speakers is None else " AND speaker = ANY(%s)"
+        kinds = [] if speakers is None else [list(speakers)]
         with self._cursor() as cur:
             # Its own transaction (a savepoint inside a write) so the HNSW settings end with the query (lina#387).
             with cur.connection.transaction():
@@ -768,15 +775,17 @@ class MessageStore:
                 cur.execute(
                     "SELECT c.message_ids FROM vec.embeddings e JOIN vec.chunks c ON c.chunk_id = e.item_id"
                     " WHERE e.kind = 'chunk' AND e.model = %s AND c.source = ANY(%s)"
-                    " ORDER BY e.embedding <=> %s::vector LIMIT %s", (model, list(sources), vector, int(limit)))
+                    + ("" if speakers is None else " AND EXISTS (SELECT 1 FROM memory.messages m"
+                       " WHERE m.message_id = ANY(c.message_ids) AND m.speaker = ANY(%s))")
+                    + " ORDER BY e.embedding <=> %s::vector LIMIT %s", (model, list(sources), *kinds, vector, int(limit)))
                 ordered = list(dict.fromkeys(int(i) for row in cur.fetchall() for i in row[0]))
             if not ordered:
                 return []
             # The same readable rows as search_memory: an agent's own turns without the host-injected blocks.
             cur.execute(f"SELECT {_MEMORY_COLUMNS} FROM memory.messages WHERE message_id = ANY(%s)"
                         " AND forgotten_at IS NULL AND content IS NOT NULL"
-                        " AND (source <> 'agent' OR (role IN ('user', 'assistant') AND content !~ %s))",
-                        (ordered, _INJECTED_TURN_RE))
+                        " AND (source <> 'agent' OR (role IN ('user', 'assistant') AND content !~ %s))" + of_speaker,
+                        (ordered, _INJECTED_TURN_RE, *kinds))
             rows = {row.message_id: row for row in map(_memory_row, cur.fetchall())}
         return [rows[i] for i in ordered if i in rows][:int(limit)]
 

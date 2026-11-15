@@ -282,9 +282,11 @@ class MemorySearch:
 
     def _store_lists(self, query: str, terms: Sequence[str], sources: Sequence[str], limit: int,
                      kinds: Optional[Sequence[str]], authors: Optional[Sequence[str]]) -> list[list[Hit]]:
+        # One query per source, narrowed in the store before its limit: a better-ranked row of another source or
+        # speaker never takes a place of the rows asked for.
         store = self._readers.store()
-        rows = store.search_memory(query, sources=sources, limit=limit * len(sources), authors=authors)
-        lists = [[_row_hit(row, terms) for row in rows if row.source == source and (not kinds or row.speaker in kinds)]
+        lists = [[_row_hit(row, terms) for row in store.search_memory(query, sources=[source], limit=limit,
+                                                                      authors=authors, speakers=kinds)]
                  for source in sources]
         if "agent" in sources and authors is None and (not kinds or "gateway" in kinds):
             lists.append([_part_hit(part, terms) for part in store.search_parts(query, limit=limit)])
@@ -297,9 +299,9 @@ class MemorySearch:
         embedder = self._readers.embedder()
         if embedder is None or not store.has_memory_vectors(model=embedder.model, sources=sources):
             return []
-        rows = store.search_memory_vectors(embedder.embed_one(query), model=embedder.model, sources=sources,
-                                           limit=limit * len(sources))
-        return [[_row_hit(row, terms) for row in rows if row.source == source and (not kinds or row.speaker in kinds)]
+        embedding = embedder.embed_one(query)
+        return [[_row_hit(row, terms) for row in store.search_memory_vectors(
+                    embedding, model=embedder.model, sources=[source], limit=limit, speakers=kinds)]
                 for source in sources]
 
     def _honcho_lists(self, query: str, terms: Sequence[str], limit: int) -> list[list[Hit]]:
