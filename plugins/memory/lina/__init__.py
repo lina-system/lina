@@ -18,7 +18,7 @@ from typing import Any, Optional
 
 from agent.memory_provider import MemoryProvider, RecallStatus, ctx_bound
 
-from . import lcm, links, search, speaker
+from . import grade, lcm, links, search, speaker
 from .identity import OWNER_HANDLE, IdentityRegistry, SourceKey
 from .policy import load_policy, signals_for_turn, turn_start_index
 from .record import TurnRecord, build_record, turn_rows
@@ -291,9 +291,10 @@ class LinaMemoryProvider(MemoryProvider):
         return self._with_external_messages(honcho, query)
 
     def _with_external_messages(self, honcho: str, query: str) -> str:
-        """Per-turn and explicit recall both carry external-message hits; the source switch empties them (lina#23)."""
+        """Per-turn and explicit recall both carry external-message hits; the source switch empties them (lina#23).
+        They enter the prompt through ``grade.recall_text``: an external hit only inside its data block (lina#440)."""
         found = self._memory_search().search(query, sources=["messages"])
-        messages = "\n".join(search.recall_line(hit) for hit in found["results"])
+        messages = grade.recall_text(found["results"])
         return "\n\n".join(part for part in (honcho, messages) if part)
 
     def queue_prefetch(self, query: str, *, session_id: str = "") -> None:

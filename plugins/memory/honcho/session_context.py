@@ -332,7 +332,9 @@ class SessionContextMixin:
     def _message_record(session: Any, message: Any) -> dict[str, Any]:
         author = getattr(message, "peer_id", "") or ""
         created = getattr(message, "created_at", None)
+        metadata = getattr(message, "metadata", None)
         return {"id": str(message.id), "content": getattr(message, "content", "") or "", "peer_id": author,
+                "lina_grade": metadata.get("lina_grade") if isinstance(metadata, dict) else None,
                 "session_id": getattr(message, "session_id", "") or "",
                 "created_at": created.isoformat() if hasattr(created, "isoformat") else created,
                 "speaker": "agent" if author == session.assistant_peer_id else "person"}

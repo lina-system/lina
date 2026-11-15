@@ -12,7 +12,9 @@ The sources:
 A store hit names its speaker as stored (lina#324): ``owner``, ``agent``, ``gateway``, ``outside`` or ``unknown``, never
 guessed from the text. The gateway's notes on the owner's messages (an image reading, a reply quote, ...) are hits of
 their own, speaker ``gateway`` with the note's kind and whose words it quotes, never the owner's message.
-``speaker`` keeps only hits of those kinds; ``person`` keeps the messages of one person on every channel the owner
+Every hit and every opened original carries its trust grade (lina#440, ``grade.py``): a store row's and a note's as
+stored, a summary's from ``ctx.summary_grades`` when the store holds it, a Honcho message's from the ``lina_grade``
+LINA wrote on it; anything else is ``external``. ``speaker`` keeps only hits of those kinds; ``person`` keeps the messages of one person on every channel the owner
 confirmed as theirs (``links.py``).
 
 Each source ranks its own hits; the lists are merged by reciprocal rank fusion, weighted by each hit's age the way the
@@ -38,6 +40,8 @@ from typing import Any, Optional
 
 from hermes_state_store import MEMORY_RECENCY_FLOOR, MEMORY_RECENCY_HALF_LIFE_DAYS
 from tools.budget_config import DEFAULT_RESULT_SIZE_CHARS
+
+from . import grade
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +127,7 @@ class Hit:
     author: Optional[str]
     speaker: str  # a stored kind (SPEAKERS) for store hits; person | agent | conclusion | summary for the others
     note: Optional[dict[str, Any]] = None  # a gateway note: its kind, the message it is on, whose words it quotes
+    grade: str = "external"  # owner | agent | external (grade.py)
 
 
 @dataclass(frozen=True)
@@ -194,14 +199,15 @@ def fuse(lists: Sequence[Sequence[Hit]], limit: int, now: datetime) -> list[dict
     newest_first = sorted(hits, key=lambda ref: hits[ref].time or "", reverse=True)
     ordered = sorted(newest_first, key=lambda ref: scores[ref], reverse=True)[:limit]
     return [{"source": hits[ref].source, "ref": ref, "excerpt": hits[ref].excerpt, "time": hits[ref].time,
-             "author": hits[ref].author, "speaker": hits[ref].speaker, "score": round(scores[ref], 6),
+             "author": hits[ref].author, "speaker": hits[ref].speaker, "grade": hits[ref].grade,
+             "score": round(scores[ref], 6),
              **({"note": hits[ref].note} if hits[ref].note else {})}
             for ref in ordered]
 
 
 def _row_hit(row: Any, terms: Sequence[str]) -> Hit:
     return Hit(row.source, f"msg:{row.uid}", excerpt(row.content or "", terms), utc_iso(row.at),
-               row.speaker_ref or row.author, row.speaker)
+               row.speaker_ref or row.author, row.speaker, grade=row.grade)
 
 
 def _note(part: Any) -> dict[str, Any]:
@@ -210,18 +216,7 @@ def _note(part: Any) -> dict[str, Any]:
 
 def _part_hit(part: Any, terms: Sequence[str]) -> Hit:
     return Hit("agent", f"note:{part.part_id}", excerpt(part.content, terms), utc_iso(part.at), None, part.speaker,
-               _note(part))
-
-
-def recall_line(hit: dict[str, Any]) -> str:
-    """One recall line, labelled by who said it, so a quote is never presented as another speaker's."""
-    who = hit.get("speaker") or "unknown"
-    if hit.get("note"):
-        quotes = hit["note"].get("quotes")
-        who = f"gateway note ({hit['note']['kind']}{f', quoting {quotes}' if quotes else ''})"
-    elif hit.get("author") and who in ("owner", "outside", "agent"):
-        who = f"{who} {hit['author']}"
-    return f"[{hit['ref']}] ({who}) {hit['excerpt']}"
+               _note(part), part.grade)
 
 
 def _reason(exc: BaseException) -> str:
@@ -307,7 +302,8 @@ class MemorySearch:
     def _honcho_lists(self, query: str, terms: Sequence[str], limit: int) -> list[list[Hit]]:
         manager, session_key = self._readers.honcho()
         messages = [Hit("honcho", f"ltm:m:{m['id']}:{m['session_id']}", excerpt(m["content"], terms),
-                        utc_iso(m.get("created_at")), m.get("peer_id") or None, m.get("speaker") or "person")
+                        utc_iso(m.get("created_at")), m.get("peer_id") or None, m.get("speaker") or "person",
+                        grade=grade.lowest([m.get("lina_grade")]))
                     for m in manager.search_messages(session_key, query, limit=limit)]
         conclusions = [Hit("honcho", f"ltm:c:{c['id']}", excerpt(c["content"], terms), utc_iso(c.get("created_at")),
                            c.get("observer_id") or None, "conclusion")
@@ -315,10 +311,17 @@ class MemorySearch:
         return [messages, conclusions]
 
     def _lcm_lists(self, query: str, terms: Sequence[str], limit: int) -> list[list[Hit]]:
-        found = self._lcm_tool("lcm_grep", {"query": query, "limit": limit, "sort": "relevance"})
+        found = [r for r in self._lcm_tool("lcm_grep", {"query": query, "limit": limit, "sort": "relevance"}).get(
+            "results") or () if r.get("type") == "summary"]
+        grades = self._summary_grades([(r["node_id"], r.get("session_id") or "") for r in found])
         return [[Hit("lcm", f"ctx:{r['node_id']}:{r.get('session_id') or ''}", excerpt(r.get("snippet") or "", terms),
-                     utc_iso(r.get("latest_at") or r.get("earliest_at")), None, "summary")
-                 for r in found.get("results") or () if r.get("type") == "summary"]]
+                     utc_iso(r.get("latest_at") or r.get("earliest_at")), None, "summary",
+                     grade=grades.get((r["node_id"], r.get("session_id") or ""), "external"))
+                 for r in found]]
+
+    def _summary_grades(self, nodes: Sequence[tuple[int, str]]) -> dict[tuple[int, str], str]:
+        """The stored grade of each summary the store holds (LCM-X on the store); one it does not hold is external."""
+        return self._readers.store().summary_grades(nodes) if nodes else {}
 
     def _lcm_tool(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
         raw = self._readers.lcm(lambda engine: engine.handle_tool_call(name, args))
@@ -351,7 +354,8 @@ class MemorySearch:
             if not enabled():
                 raise SourceOff("External messages are off.")
         opened = {"source": row.source, "time": utc_iso(row.at), "author": row.author, "role": row.role,
-                  "speaker": row.speaker, "speaker_ref": row.speaker_ref,
+                  "speaker": row.speaker, "speaker_ref": row.speaker_ref, "grade": row.grade,
+                  "source_id": row.source_id,
                   "conversation_id": row.conversation_id, "session_id": row.session_id}
         if row.forgotten:
             return {**opened, "forgotten": True, "text": None, "note": "This message was forgotten; its text is gone."}
@@ -361,8 +365,8 @@ class MemorySearch:
         part = self._readers.store().open_part(int(part_id)) if part_id.isdigit() else None
         if part is None:
             raise RefError(f"no gateway note for ref {ref!r} (unknown, or not readable by this agent)")
-        return {"source": "agent", "speaker": part.speaker, "note": _note(part), "time": utc_iso(part.at),
-                "text": part.content}
+        return {"source": "agent", "speaker": part.speaker, "grade": part.grade, "note": _note(part),
+                "time": utc_iso(part.at), "text": part.content}
 
     def _open_honcho(self, ref: str, rest: str) -> dict[str, Any]:
         sub, _, ident = rest.partition(":")
@@ -373,10 +377,11 @@ class MemorySearch:
                 raise RefError(f"malformed ref {ref!r}: a Honcho message ref is ltm:m:<id>:<session>")
             item = manager.get_message(session_key, honcho_session, message_id)
             return {"source": "honcho", "kind": "message", "text": item["content"], "time": utc_iso(item["created_at"]),
-                    "author": item["peer_id"], "speaker": item["speaker"], "session_id": item["session_id"]}
+                    "author": item["peer_id"], "speaker": item["speaker"], "grade": grade.lowest([item.get("lina_grade")]),
+                    "session_id": item["session_id"]}
         if sub == "c" and ident:
             item = manager.get_conclusion(session_key, ident)
-            return {"source": "honcho", "kind": "conclusion", "text": item["content"],
+            return {"source": "honcho", "kind": "conclusion", "text": item["content"], "grade": "external",
                     "time": utc_iso(item["created_at"]), "observer": item["observer_id"],
                     "observed": item["observed_id"], "session_id": item["session_id"]}
         raise RefError(f"malformed ref {ref!r}: a Honcho ref is ltm:m:<id>:<session> or ltm:c:<id>")
@@ -396,6 +401,7 @@ class MemorySearch:
         sources = [item for item in expanded.get("expanded") or () if isinstance(item, dict)]
         key = "store_id" if expanded.get("source_type") == "messages" else "node_id"
         return {"source": "lcm", "kind": "summary", "text": summary.get("summary"),
+                "grade": self._summary_grades([(node_id, session_id)]).get((node_id, session_id), "external"),
                 "summary_truncated": bool(summary.get("summary_truncated")), "session_id": session_id,
                 "depth": expanded.get("depth"), "source_type": expanded.get("source_type"),
                 "source_ids": [item.get(key) for item in sources if item.get(key) is not None]}

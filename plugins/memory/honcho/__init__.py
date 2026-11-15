@@ -52,9 +52,17 @@ def _record_metadata(turn_record: Any) -> tuple[dict[str, Any], dict[str, Any]]:
         return {}, {}
     shared = {"lina_agent": turn_record.agent_id, "lina_conversation": turn_record.conversation_id,
               "lina_person": turn_record.person_id, "lina_route": turn_record.route}
-    return ({"metadata": {**shared, "lina_uid": turn_record.user_uid, "lina_speaker": turn_record.user_speaker}},
+    grade = _lina_grade()
+    return ({"metadata": {**shared, "lina_uid": turn_record.user_uid, "lina_speaker": turn_record.user_speaker,
+                          "lina_grade": grade.of_speaker(turn_record.user_speaker)}},
             {"metadata": {**shared, "lina_uid": turn_record.reply_uid, "lina_route": "agent_reply",
-                          "lina_speaker": "agent"}})
+                          "lina_speaker": "agent", "lina_grade": "agent"}})
+
+
+def _lina_grade():
+    """lina-memory's trust grades (lina#440): each message LINA writes carries its ``lina_grade``."""
+    from plugins.memory import import_provider_module
+    return import_provider_module("lina-memory", "grade")
 
 
 def _note_messages(turn_record: Any) -> list[tuple[str, dict[str, Any]]]:
@@ -65,7 +73,11 @@ def _note_messages(turn_record: Any) -> list[tuple[str, dict[str, Any]]]:
     shared = {"lina_agent": turn_record.agent_id, "lina_conversation": turn_record.conversation_id,
               "lina_person": turn_record.person_id, "lina_route": turn_record.route, "lina_uid": turn_record.user_uid,
               "lina_speaker": "gateway"}
-    return [(f"[gateway note: {note['kind']}] {note['text']}", {"metadata": {**shared, "lina_note": note["kind"]}})
+    grade = _lina_grade()
+    return [(f"[gateway note: {note['kind']}] {note['text']}", {"metadata": {
+                **shared, "lina_note": note["kind"],
+                "lina_grade": grade.lowest(["agent", *([grade.of_speaker(note["quoted_speaker"])]
+                                                     if note.get("quoted_speaker") else [])])}})
             for note in getattr(turn_record, "gateway_notes", ()) if note.get("text")]
 
 
