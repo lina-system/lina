@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeout
 from pathlib import Path
 
+import httpx
 import jsonschema
 import pytest
 from fastapi.testclient import TestClient
@@ -17,6 +18,8 @@ from starlette.websockets import WebSocketDisconnect
 import hermes_yaml
 from hermes_cli import lina_deps
 from tests.hermes_cli._work_env import NOW, WorkEnv
+from tests.hermes_cli.test_lina_agent_talk_api import KEYS, AgentGateway, Multiplexed
+from tests.hermes_cli.test_lina_talk_api import fake_model
 
 pytestmark = pytest.mark.platforms("posix")
 
@@ -469,6 +472,100 @@ def test_an_idle_stream_sends_an_empty_batch_every_keepalive_and_stays_open(work
         while not message["events"]:  # a keepalive may land between the write and its batch
             message = _next(ws, pool)
         assert _events(message) == [("work", "comment", "T1")]
+
+
+class StoredAtTheEnd(AgentGateway):
+    """An agent's api_server that stores a turn when its run ends, before the stream's last frame: the gateway
+    persists the turn inside ``_run_agent`` and sends ``done`` after it (``_handle_session_chat_stream``)."""
+
+    def handle(self, request: httpx.Request) -> httpx.Response:
+        response = super().handle(request)
+        if request.method != "POST" or not request.url.path.endswith("/chat/stream") or response.status_code != 200:
+            return response
+        turn = self.turns.pop()
+        head, done, tail = response.content.rpartition(b"event: done")
+
+        async def frames():
+            yield head
+            self.turns.append(turn)
+            yield done + tail
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=frames())
+
+
+@pytest.fixture
+def gateways(work, monkeypatch) -> dict[str, StoredAtTheEnd]:
+    """Each agent's gateway behind the multiplexed listener of ``test_lina_agent_talk_api``."""
+    from hermes_cli import lina_talk, web_server_cron
+    listener = Multiplexed({name: work.root / "profiles" / name for name in KEYS})
+    listener.agents = {name: StoredAtTheEnd(key) for name, key in KEYS.items()}
+    for home in listener.homes.values():
+        home.mkdir(parents=True)
+    monkeypatch.setattr(lina_talk, "profile_home", lambda agent: listener.homes[agent])
+    monkeypatch.setattr(web_server_cron, "_gateway_fire_endpoint",
+                        lambda agent, home: f"http://127.0.0.1:8642/p/{agent}/api/cron/fire")
+    monkeypatch.setattr(lina_talk, "http_client",
+                        lambda: httpx.AsyncClient(transport=httpx.MockTransport(listener.handle)))
+    for name, key in KEYS.items():
+        monkeypatch.setenv(f"LINA_GATEWAY_KEY_{name.upper()}", key)
+    return listener.agents
+
+
+def _ask(work: WorkEnv) -> str:
+    """A decision the owner is asked -> the key of its notice on the bell."""
+    from hermes_cli.lina_board_write import current_notices
+    work.ok("wait", "T1", "--decide", "색을 고를까?")
+    (notice,) = current_notices(work.root, NOW)
+    return notice["key"]
+
+
+def test_a_talk_turn_arrives_for_its_agent_once_the_history_shows_it(work, gateways, client, pool, monkeypatch):
+    from hermes_cli import lina_board_events as events
+    stored_then, announce = [], events.announce
+
+    def announced(root, source, kind, item):
+        if source == "talk":
+            stored_then.append([turn["message"] for turn in gateways[item].turns])
+        announce(root, source, kind, item)
+    monkeypatch.setattr(events, "announce", announced)
+    with client.websocket_connect(_url()) as ws:
+        _next(ws, pool)
+        assert client.post("/api/lina/agents/beta/talk", json={"message": "하나"}).status_code == 200
+        message = _next(ws, pool)
+    assert _events(message) == [("talk", "message", "beta")] and set(message["events"][0]) == {"source", "kind", "id",
+                                                                                                 "at"}
+    assert stored_then == [["[LINA app]\n\n하나"]]  # written after the gateway stored the turn, not before
+    history = client.get("/api/lina/agents/beta/talk").json()["messages"]
+    assert [m["content"] for m in history] == ["[LINA app]\n\n하나", fake_model("하나")]
+
+
+def test_a_read_mark_arrives_as_a_notices_event_and_one_that_changes_nothing_does_not(work, client, pool):
+    key = _ask(work)
+    with client.websocket_connect(_url()) as ws:
+        _next(ws, pool)
+        assert client.post("/api/lina/notices/read", json={"keys": [key]}).status_code == 200
+        assert _events(_next(ws, pool)) == [("notices", "read", "owner")]
+        assert client.post("/api/lina/notices/read", json={"keys": [key]}).status_code == 200  # already marked
+        work.ok("comment", "T1", "봐 줘")
+        message = _next(ws, pool)
+        while not message["events"]:  # a keepalive may land before the comment's batch
+            message = _next(ws, pool)
+    assert _events(message) == [("work", "comment", "T1")]
+
+
+def test_since_replays_the_talk_turns_and_read_marks_a_reconnecting_client_missed(work, gateways, client, pool):
+    _ask(work)
+    with client.websocket_connect(_url()) as ws:
+        cursor = _next(ws, pool)["cursor"]
+    assert client.post("/api/lina/work/items/T1/talk", json={"message": "색은 파랑으로 해"}).status_code == 200
+    assert client.post("/api/lina/agents/beta/talk", json={"message": "베타 쪽"}).status_code == 200
+    assert client.post("/api/lina/notices/read", json={"all": True}).status_code == 200
+
+    with client.websocket_connect(_url(cursor)) as ws:
+        missed = _next(ws, pool)
+    assert [e for e in _events(missed) if e[0] in ("talk", "notices")] == [
+        ("talk", "message", "alpha"), ("talk", "message", "beta"), ("notices", "read", "owner")]
+    with client.websocket_connect(_url(missed["cursor"])) as ws:
+        assert _next(ws, pool) == {"cursor": missed["cursor"], "events": []}
 
 
 def test_the_stream_is_behind_the_dashboard_socket_credential(work, client, pool):

@@ -6,6 +6,7 @@ hand-offs, run, recompute, close), with ``via="app"`` where the command takes it
 that refuses (``die``) writes nothing; its one line becomes the 4xx detail. Read marks on the board's notices are kept
 per owner in ``$LINA_HOME/board/read.json`` (``{owner id: {notice key: marked at}}``), so every device reads the same;
 the keys of the replies Web Push sends (lina#244, ``lina_push_watch.reply_keys``) are accepted and kept the same way.
+A change of the marks is announced on the change stream's ``notices`` source (lina#742).
 """
 
 from __future__ import annotations
@@ -292,14 +293,18 @@ def mark_read(body, now: float | None = None) -> dict:
     unknown = sorted(set(keys or ()) - current)
     if unknown:
         raise Refused(400, f"not a current notice: {unknown[0]}")
+    from hermes_cli.lina_board_events import announce
     owner = env.load(root).owner
     with _MARKS_LOCK:
         marks = load_json(_marks_path(root), {})
         marks = marks if isinstance(marks, dict) else {}
-        mine = {k: at for k, at in (marks.get(owner) or {}).items() if k in current}
+        before = marks.get(owner) or {}
+        mine = {k: at for k, at in before.items() if k in current}
         for key in notices if every else keys:
             mine.setdefault(key, int(now))
         marks[owner] = mine
         save_json(_marks_path(root), marks)
+        if mine != before:  # lina#742: the other devices' bells refetch
+            announce(root, "notices", "read", owner)
     return {"ok": True, "unread": len(notices - set(mine))}
 

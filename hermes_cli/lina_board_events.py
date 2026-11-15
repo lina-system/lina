@@ -1,6 +1,6 @@
 """One change stream for the app (lina#150): ``GET /api/lina/events`` upgraded to a WebSocket.
 
-Four append-only stores are tailed, each by its own position, and the four positions travel as one opaque cursor:
+Six append-only stores are tailed, each by its own position, and the six positions travel as one opaque cursor:
 
 - ``work``: the work record's ``event`` table (one row per record line and run hand-off), by event id.
 - ``worker``: ``lina worker``'s ``receipts.jsonl`` (the hub appends a receipt on every run state change, next to the
@@ -9,6 +9,16 @@ Four append-only stores are tailed, each by its own position, and the four posit
 - ``kanban``: the board's ``task_events`` table, by row id, read-only (the plugin's ``/events`` source).
 - ``settings``: the work settings' ``work-settings/audit.jsonl`` (lina#256, one line per revision), by line count;
   ``kind`` is ``revised``, ``rolled_back`` or ``outside`` and ``id`` the revision (``r42``).
+- ``talk``: ``board/talk.jsonl`` (lina#742), by byte offset: ``kind`` ``message`` and ``id`` the agent, one line per
+  turn of that agent's app conversation, written once the turn reads back through ``GET
+  /api/lina/agents/<agent>/talk`` (``lina_talk._relay``, after the gateway's last frame). Only turns the app sends
+  through this web server are announced; a turn the gateway writes on its own (a kanban wake posted into the app
+  conversation, another API client) shows on the next history read.
+- ``notices``: ``board/notices.jsonl`` (lina#742), by byte offset: ``kind`` ``read`` and ``id`` the owner, one line
+  per change of the owner's read marks (``lina_board_write.mark_read``); the client refetches the bell.
+
+Not on the stream, on purpose: device status, quota and usage. They change by themselves all the time and the app
+reads them when a screen opens; do not add a poll for them in the app or a source for them here.
 
 Each socket polls with one connection per store on its own single-thread executor (the kanban plugin's tailer
 pattern), at most every ``BATCH_SECONDS``; with nothing to send for ``KEEPALIVE_SECONDS`` it sends an empty batch at its
@@ -47,7 +57,8 @@ BATCH_SECONDS = 0.3
 # bind. Shorter than the 5 s the app's reconnects were seen at, less its 1 s first backoff.
 KEEPALIVE_SECONDS = 3.0
 PAGE = 200
-CURSOR_PREFIX = "c3."  # c1 had positions only, c2 no settings source: an old cursor gets one resync
+CURSOR_PREFIX = "c4."  # c1 had positions only, c2 no settings source, c3 no talk or notices: an old one resyncs
+JOURNALS = ("talk", "notices")  # the sources this module's own writers append to (announce)
 UNKNOWN = "?"  # the identity of a source that could not be read when its position was taken
 _FAILS = (OSError, sqlite3.Error, RuntimeError)
 # Receipts that change nothing the board shows of a run (``worker/board.py``: state and reason from ``work_state``,
@@ -105,10 +116,12 @@ class Cursor(NamedTuple):
     worker: int
     kanban: int
     settings: int = 0
-    ids: tuple[str, ...] = ("", "", "", "")  # the store identity each position was taken in ("" = empty store)
+    talk: int = 0
+    notices: int = 0
+    ids: tuple[str, ...] = ("",) * 6  # the store identity each position was taken in ("" = empty store)
 
 
-SOURCES = 4
+SOURCES = 6
 
 
 def encode(cursor: Cursor) -> str:
@@ -145,8 +158,86 @@ def _epoch(value: Any) -> int | None:
         return None
 
 
+def journal(root: Path, source: str) -> Path:
+    return root / "board" / f"{source}.jsonl"
+
+
+def announce(root: Path, source: str, kind: str, item: str) -> None:
+    """One line on *source*'s journal (one of ``JOURNALS``): what changed, by id only, once the change reads back.
+    A failed append is logged and the write it announces stands: other devices see it on their next refetch."""
+    path = journal(root, source)
+    line = json.dumps({"kind": kind, "id": item, "at": int(time.time())}, ensure_ascii=False) + "\n"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as fh:  # one short line: one append, never interleaved
+            fh.write(line)
+    except OSError as exc:
+        log.warning("lina events: the %s journal was not written: %s", source, exc)
+
+
+def _worker_event(rec: dict) -> dict | None:
+    if rec.get("kind") and rec.get("task") and streamed(rec):
+        return {"source": "worker", "kind": rec["kind"], "id": rec["task"], "at": _epoch(rec.get("ts"))}
+    return None
+
+
+class _Lines:
+    """An append-only JSON-lines file tailed by byte offset (the worker's receipts, the journals); *event* turns one
+    record into the event sent, None for one that is not sent. Identity: the file's inode and its first line (a
+    recreated or rotated file differs)."""
+
+    def __init__(self, path: Path, event):
+        self.path, self.event = path, event
+
+    def size(self) -> int:
+        return self.path.stat().st_size if self.path.is_file() else 0
+
+    def ident(self) -> str:
+        if not self.path.is_file():
+            return ""
+        with self.path.open("rb") as fh:
+            line = fh.readline()
+        return _digest(self.path.stat().st_ino, line) if line else ""
+
+    def kept(self, position: int) -> bool:
+        """Not past the file's end, and on a line boundary."""
+        if position > self.size():
+            return False
+        if position:
+            with self.path.open("rb") as fh:
+                fh.seek(position - 1)
+                return fh.read(1) == b"\n"
+        return True
+
+    def events(self, after: int) -> tuple[int, list[dict]]:
+        if not self.path.is_file():
+            return after, []
+        with self.path.open("rb") as fh:
+            fh.seek(after)
+            data = fh.read()
+        end = data.rfind(b"\n") + 1  # a line still being written waits for the next poll
+        out = []
+        for line in data[:end].splitlines():
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            found = self.event(rec) if isinstance(rec, dict) else None
+            if found:
+                out.append(found)
+        return after + end, out
+
+
+def _journal_event(source: str):
+    def event(rec: dict) -> dict | None:
+        if rec.get("kind") and rec.get("id"):
+            return {"source": source, "kind": rec["kind"], "id": rec["id"], "at": _epoch(rec.get("at"))}
+        return None
+    return event
+
+
 class Stream:
-    """The four stores of one socket. Every method runs on the socket's own thread (connections are thread-bound)."""
+    """The six stores of one socket. Every method runs on the socket's own thread (connections are thread-bound)."""
 
     def __init__(self, root: Path):
         from hermes_cli.worker import settings
@@ -154,7 +245,8 @@ class Stream:
         self.root = root
         # The receipts are the worker's own state, so they come from the root the worker writes (lina#269): the
         # board's root serves the work record and the read marks, and is not where the worker's hub lives.
-        self.receipts = Store(settings.root(_worker_base())).receipts
+        self.receipts = _Lines(Store(settings.root(_worker_base())).receipts, _worker_event)
+        self.journals = {source: _Lines(journal(root, source), _journal_event(source)) for source in JOURNALS}
         from hermes_cli.lina_work_settings_store import Store as SettingsStore
         self.audit = SettingsStore().audit  # the work settings' own root, as their writers use (lina#256)
         self.work_db: Any = None
@@ -186,9 +278,6 @@ class Stream:
     def _work_bounds(self) -> int:
         return int(self._work().execute("SELECT COALESCE(max(id), 0) FROM event").fetchone()[0])
 
-    def _worker_size(self) -> int:
-        return self.receipts.stat().st_size if self.receipts.is_file() else 0
-
     def _kanban_top(self) -> int:
         db = self._kanban()
         return 0 if db is None else int(db.execute("SELECT COALESCE(max(id), 0) FROM task_events").fetchone()[0])
@@ -198,20 +287,13 @@ class Stream:
     # - work: the first event row (id, at). The table is append-only (nothing deletes from ``event``), so the first
     #   row stays while the store lives, and a new store starts with new rows. The store has no id of its own
     #   (``setting`` holds fixed defaults only).
-    # - worker: the receipts file's inode and its first line (a recreated or rotated file differs).
+    # - worker, talk, notices: the file's inode and its first line (``_Lines``).
     # - kanban: the database file's inode and the first task inserted (id, created_at; by rowid, since created_at
     #   ties within a second and task ids are random). Not the first ``task_events`` row, which pruning moves.
     #   Deleting that task changes the identity too: one spare resync, never a miss.
     def _work_id(self) -> str:
         first = self._work().execute("SELECT id, at FROM event ORDER BY id LIMIT 1").fetchone()
         return _digest(int(first[0]), str(first[1])) if first else ""
-
-    def _worker_id(self) -> str:
-        if not self.receipts.is_file():
-            return ""
-        with self.receipts.open("rb") as fh:
-            line = fh.readline()
-        return _digest(self.receipts.stat().st_ino, line) if line else ""
 
     def _kanban_id(self) -> str:
         db = self._kanban()
@@ -223,10 +305,12 @@ class Stream:
 
     def _sources(self) -> tuple:
         """Per source: name, position now, identity, events after a position, and whether a position is kept."""
+        lines = ((name, store.size, store.ident, store.events, store.kept) for name, store in self.journals.items())
         return (("work", self._work_bounds, self._work_id, self._work_events, self._work_kept),
-                ("worker", self._worker_size, self._worker_id, self._worker_events, self._worker_kept),
+                ("worker", self.receipts.size, self.receipts.ident, self.receipts.events, self.receipts.kept),
                 ("kanban", self._kanban_top, self._kanban_id, self._kanban_events, self._kanban_kept),
-                ("settings", self._settings_count, self._settings_id, self._settings_events, self._settings_kept))
+                ("settings", self._settings_count, self._settings_id, self._settings_events, self._settings_kept),
+                *lines)
 
     # ---------------------------------------------------------------- settings (lina#256)
     def _settings_lines(self) -> list[bytes]:
@@ -285,16 +369,6 @@ class Stream:
     def _work_kept(self, position: int) -> bool:
         return position <= self._work_bounds()
 
-    def _worker_kept(self, position: int) -> bool:
-        """Not past the file's end, and on a line boundary."""
-        if position > self._worker_size():
-            return False
-        if position:
-            with self.receipts.open("rb") as fh:
-                fh.seek(position - 1)
-                return fh.read(1) == b"\n"
-        return True
-
     def _kanban_kept(self, position: int) -> bool:
         top = self._kanban_top()
         if position >= top:
@@ -308,23 +382,6 @@ class Stream:
                                     f"WHERE id > ? ORDER BY id LIMIT {PAGE}", (after,)).fetchall()
         return (int(rows[-1][0]) if rows else after,
                 [{"source": "work", "kind": kind, "id": item, "at": _epoch(at)} for _, kind, item, at in rows])
-
-    def _worker_events(self, after: int) -> tuple[int, list[dict]]:
-        if not self.receipts.is_file():
-            return after, []
-        with self.receipts.open("rb") as fh:
-            fh.seek(after)
-            data = fh.read()
-        end = data.rfind(b"\n") + 1  # a line still being written waits for the next poll
-        out = []
-        for line in data[:end].splitlines():
-            try:
-                rec = json.loads(line)
-            except ValueError:
-                continue
-            if isinstance(rec, dict) and rec.get("kind") and rec.get("task") and streamed(rec):
-                out.append({"source": "worker", "kind": rec["kind"], "id": rec["task"], "at": _epoch(rec.get("ts"))})
-        return after + end, out
 
     def _kanban_events(self, after: int) -> tuple[int, list[dict]]:
         db = self._kanban()

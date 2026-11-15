@@ -272,9 +272,15 @@ def _settled_reply(data: str) -> str:
 async def _relay(client, upstream, target: Target, message: str, session_id: str) -> AsyncIterator[bytes]:
     """``talk.started``, then the gateway's frames as they are, with ``talk.carried`` after the reply's
     ``assistant.completed``. The note for the agent's next messaging turn is written before that frame is yielded:
-    a client that goes away at any yield (the generator is closed there) can no longer skip it."""
+    a client that goes away at any yield (the generator is closed there) can no longer skip it.
+
+    When the stream is over the change stream's ``talk`` source gets one line for the agent (lina#742): the gateway
+    stores the turn inside the run and sends its last frame after it, so :func:`history` shows the turn by then. A
+    client that went away earlier interrupts the run, and what the gateway keeps of it may land after that line."""
     import asyncio
     from gateway.app_talk_carry import write_carry
+    from hermes_cli.lina_board import _root
+    from hermes_cli.lina_board_events import announce
     try:
         started = {"agent": target.agent, "session_id": session_id}
         if target.item:
@@ -293,5 +299,8 @@ async def _relay(client, upstream, target: Target, message: str, session_id: str
             if reply:
                 yield _frame("talk.carried", {"agent": target.agent, "item": target.item})
     finally:
-        await upstream.aclose()
-        await client.aclose()
+        try:
+            await upstream.aclose()
+            await client.aclose()
+        finally:
+            announce(_root(), "talk", "message", target.agent)
