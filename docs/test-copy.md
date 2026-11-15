@@ -148,6 +148,17 @@ Start a gateway from the copy's home (`lina gateway run`, or `lina gateway insta
   `embedding.max_retries`. It saves its progress and names the command that continues it; `--max-rate N` keeps a run
   under a limit you share.
 - **One store per machine** (step 1).
+- **The copy's terminal shares the host's `PATH` and files.** `lina migrate memory` sets `terminal.home_mode: profile`,
+  and a gateway serving several profiles applies it per profile: the copy's commands run with `HOME` set to
+  `$LINA_HOME/profiles/<copy name>/home`, the other profiles keep the host user's home. That changes `HOME` only.
+  With the default `local` backend the commands still run as the same OS user, with the gateway process's `PATH`
+  plus the standard system directories, LINA's own runtime directories and `~/.local/bin` of the gateway's own `HOME` (the host user's). So a
+  wrapper script the host user put on that `PATH` still runs when the copy types its name, and it runs as the host
+  user: it reads whatever its own code names by absolute path (the host user's `~/.ssh`, `~/.config`, credential
+  files, sockets). Only the files it finds through `$HOME` move to the copy's home. Taking a directory off `PATH`
+  does not stop a command that calls the wrapper by its full path either. Real separation needs a container
+  backend (`terminal.backend: docker`): the container's `PATH` comes from its image and only the mounted
+  directories are visible. LINA has no `PATH` isolation for the `local` backend.
 
 ## 10. Tearing it down
 

@@ -854,6 +854,19 @@ _HOME_MODE_ALIASES = {"isolated": "profile", "profile_home": "profile", "profile
                       "host": "real", "user": "real", "real_home": "real", "real-home": "real"}
 
 
+def _subprocess_home_mode(env: dict[str, str]) -> str:
+    """``terminal.home_mode`` of the active profile. A bound terminal scope is the authority (a
+    multiplexed process's env holds the launch profile's value); a refusal scope reads as ``auto``."""
+    from tools.terminal_scope import get_terminal_scope
+
+    scope = get_terminal_scope()
+    if scope is None:
+        mode = _env_get(env, "TERMINAL_HOME_MODE", "auto")
+    else:
+        mode = str(scope.get("TERMINAL_HOME_MODE") or "").strip()
+    return mode.lower() or "auto"
+
+
 def get_subprocess_home(env: dict[str, str] | None = None) -> str | None:
     """Subprocess ``HOME`` override, or ``None``.
 
@@ -862,7 +875,7 @@ def get_subprocess_home(env: dict[str, str] | None = None) -> str | None:
     """
     env = env or {}
     profile_home = _profile_home_path(env)
-    mode = _env_get(env, "TERMINAL_HOME_MODE", "auto").lower() or "auto"
+    mode = _subprocess_home_mode(env)
     mode = _HOME_MODE_ALIASES.get(mode, mode)
 
     if mode == "profile":

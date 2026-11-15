@@ -129,6 +129,40 @@ def test_routed_turn_reads_every_terminal_consumer_from_profile(
     assert os.environ["TERMINAL_DOCKER_VOLUMES"] == _LAUNCH_VOLUMES
 
 
+@pytest.mark.parametrize("launch_home_mode", [None, "profile"], ids=["launch-unset", "launch-profile"])
+def test_home_mode_is_per_profile_on_one_gateway(tmp_path, monkeypatch, launch_home_mode):
+    """lina#715: two profiles on one gateway. The one with ``terminal.home_mode: profile`` gets
+    ``HOME`` = its own ``<profile>/home``; the other keeps the host home, whatever the launch
+    process env says."""
+    import gateway.run as gw
+    import hermes_constants
+    from hermes_constants import apply_subprocess_home_env
+    from tools.terminal_scope import build_profile_terminal_scope
+
+    host_home = tmp_path / "host-home"
+    host_home.mkdir()
+    monkeypatch.setenv("HOME", str(host_home))
+    monkeypatch.delenv("HERMES_REAL_HOME", raising=False)
+    if launch_home_mode is None:
+        monkeypatch.delenv("TERMINAL_HOME_MODE", raising=False)
+    else:
+        monkeypatch.setenv("TERMINAL_HOME_MODE", launch_home_mode)
+    monkeypatch.setattr(hermes_constants, "is_container", lambda: False)
+    copy = _profile(tmp_path, "copy", "terminal:\n  backend: local\n  home_mode: profile\n")
+    other = _profile(tmp_path, "other", "terminal:\n  backend: local\n")
+    for home in (copy, other):
+        (home / "home").mkdir()
+
+    assert build_profile_terminal_scope(copy)["TERMINAL_HOME_MODE"] == "profile"
+    homes = {}
+    for home in (copy, other):
+        with gw._profile_runtime_scope(home):
+            env = {"HOME": str(host_home), "HERMES_HOME": str(home)}
+            apply_subprocess_home_env(env)
+            homes[home.name] = env["HOME"]
+    assert homes == {"copy": str(copy / "home"), "other": str(host_home)}
+
+
 def test_profile_omitting_keys_gets_defaults_not_launch_values(tmp_path):
     """#101132/#95470: a docker profile that does NOT set docker_volumes or
     docker_shared_container_key must not inherit the launch profile's."""
