@@ -14,6 +14,11 @@ from tests.test_packaging_install import (
 
 
 PHRASE = "This conversation uses Lossless Context Management (LCM)"
+ORDER = "Recent or time-bounded history: use `lcm_recent`"
+
+
+def full_section(module, disabled=frozenset()):
+    return module.lcm_system_prompt_section(set(disabled), module.get_recall_policy())
 
 
 class LegacyContext:
@@ -82,9 +87,11 @@ def test_u1_registers_one_callable_section(plugin):
     assert callable(content)
     ctx.engine.on_session_start("bound", platform="cli")
     text = content({"session_id": "bound"})
-    assert text == module.LCM_SYSTEM_PROMPT_NOTE
-    assert len(text) <= 700 < 4000
+    assert text == full_section(module)
+    assert text.startswith(module.LCM_SYSTEM_PROMPT_NOTE + "\n\n")
+    assert len(text.encode("utf-8")) <= 8 * 1024 and len(text) <= 4000
     assert PHRASE in text
+    assert ORDER in text
     assert "[Note:" not in text
     assert "Earlier turns have been compacted into hierarchical summaries below." not in text
 
@@ -97,6 +104,7 @@ def test_prompt_callback_survives_package_eviction(plugin, monkeypatch):
     ctx = register(SectionContext())
     ctx.engine.on_session_start("bound", platform="cli")
     content = ctx.sections[0][1]
+    expected = full_section(module, {"lcm_recall"})
     root = Path(module.__file__).resolve().parent
     monkeypatch.setattr(sys, "path", [p for p in sys.path if Path(p).resolve() != root])
     for name in list(sys.modules):
@@ -104,7 +112,7 @@ def test_prompt_callback_survives_package_eviction(plugin, monkeypatch):
             monkeypatch.delitem(sys.modules, name)
     monkeypatch.delitem(sys.modules, "config", raising=False)
     monkeypatch.setenv("LCM_DISABLED_TOOLS", "lcm_recall")
-    assert content({"session_id": "bound"}) == module.lcm_system_prompt_note({"lcm_recall"})
+    assert content({"session_id": "bound"}) == expected
 
 
 def test_u2_resolves_only_lcm_sessions_and_fails_empty(plugin, monkeypatch):
@@ -117,7 +125,7 @@ def test_u2_resolves_only_lcm_sessions_and_fails_empty(plugin, monkeypatch):
     assert content({}) == ""
     ctx.engine.on_session_start("bound", platform="cli")
     assert registry.resolve_active_lcm_engine(session_id="bound") is ctx.engine
-    assert content({"session_id": "bound"}) == module.LCM_SYSTEM_PROMPT_NOTE
+    assert content({"session_id": "bound"}) == full_section(module)
     assert content({"session_id": "other"}) == ""
     # Keep a strong reference: the registry holds weak values.
     class OtherEngine:
@@ -149,14 +157,14 @@ def test_section_omits_bypassed_session_by_requested_id(plugin, monkeypatch, set
     content = ctx.sections[0][1]
     registry = importlib.import_module(f"{module.__name__}.engine_registry")
     ctx.engine.on_session_start("ordinary", platform="cli")
-    assert content({"session_id": "ordinary"}) == module.LCM_SYSTEM_PROMPT_NOTE
+    assert content({"session_id": "ordinary"}) == full_section(module)
     ctx.engine.on_session_start(session_id, platform="cli")
     assert registry.resolve_active_lcm_engine(session_id=session_id) is ctx.engine
     assert ctx.engine.side_channel_active
     assert not ctx.engine.current_session_ignored
     assert not ctx.engine.current_session_stateless
     assert content({"session_id": session_id}) == ""
-    assert content({"session_id": "ordinary"}) == module.LCM_SYSTEM_PROMPT_NOTE
+    assert content({"session_id": "ordinary"}) == full_section(module)
 
 
 def test_all_enabled_note_is_byte_identical(plugin):
@@ -208,7 +216,7 @@ def test_section_keeps_note_when_ended_bypass_child_id_is_reused_normally(plugin
     assert ctx.engine._lcm_session_last_bypassed["rotated-child"] is False
     assert not ctx.engine._bypasses_lcm_context_management()
 
-    assert ctx.sections[0][1]({"session_id": "rotated-child"}) == module.LCM_SYSTEM_PROMPT_NOTE
+    assert ctx.sections[0][1]({"session_id": "rotated-child"}) == full_section(module)
 
 
 def test_section_keeps_foreground_note_while_auxiliary_child_is_active(plugin):
@@ -219,7 +227,7 @@ def test_section_keeps_foreground_note_while_auxiliary_child_is_active(plugin):
     assert ctx.engine._thread_context_stateless()
     assert "auxiliary-child" in ctx.engine._active_auxiliary_session_ids()
 
-    assert ctx.sections[0][1]({"session_id": "foreground"}) == module.LCM_SYSTEM_PROMPT_NOTE
+    assert ctx.sections[0][1]({"session_id": "foreground"}) == full_section(module)
 
 
 @pytest.mark.parametrize("disabled", [
@@ -233,9 +241,9 @@ def test_section_names_only_enabled_tools(plugin, monkeypatch, disabled):
     ctx.engine.on_session_start("ordinary", platform="cli")
     text = ctx.sections[0][1]({"session_id": "ordinary"})
     assert PHRASE in text
-    assert text == module.lcm_system_prompt_note(disabled)
+    assert text == full_section(module, disabled)
     for name in {"lcm_recall", "lcm_grep", "lcm_describe", "lcm_expand"}:
-        assert (name in text) == (name not in disabled)
+        assert (re.search(rf"\b{name}\b", text) is None) == (name in disabled)
     assert ('An "Externalized tool output"' in text) == ("lcm_expand" not in disabled)
     assert ("externalized_ref=" in text) == ("lcm_expand" not in disabled)
     assert ("Tools: " in text) == (len(disabled) < 4)
@@ -267,7 +275,7 @@ def test_prompt_section_does_not_wait_for_stable_use_lock(plugin):
         assert locked.wait(1), "lock holder did not start"
         caller.start()
         assert rendered.wait(0.5), "prompt section waited on the stable-use lock"
-        assert results == [module.LCM_SYSTEM_PROMPT_NOTE]
+        assert results == [full_section(module)]
     finally:
         release.set()
         holder.join(2)
