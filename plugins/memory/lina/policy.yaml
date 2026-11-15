@@ -25,17 +25,19 @@ match:
 
 # lcm: the turn goes to LCM. honcho: the turn goes to Honcho. words_of: whose words its text is.
 # A route kept out of Honcho keeps the whole turn (its reply too) out of Honcho.
+# speaker: the kind memory.messages stores for a row of the route (lina#324): owner, agent, gateway, outside or
+# unknown. A person in a shared room is the owner only through a handle the owner confirmed (docs/memory-layer.md).
 routes:
-  person_channel: {lcm: true, honcho: true, words_of: person}
-  bot_relay: {lcm: true, honcho: true, words_of: author}
-  worker_event: {lcm: true, honcho: false, words_of: worker}
-  cron_notice: {lcm: true, honcho: false, words_of: system}
-  background_notice: {lcm: true, honcho: false, words_of: system}
-  gateway_notice: {lcm: true, honcho: false, words_of: system}
-  compression: {lcm: true, honcho: false, words_of: system}
-  imported: {lcm: false, honcho: false, words_of: source}
-  agent_reply: {lcm: true, honcho: true, words_of: agent}
-  tool_round: {lcm: true, honcho: false, words_of: tool}
+  person_channel: {lcm: true, honcho: true, words_of: person, speaker: owner}
+  bot_relay: {lcm: true, honcho: true, words_of: author, speaker: outside}
+  worker_event: {lcm: true, honcho: false, words_of: worker, speaker: agent}
+  cron_notice: {lcm: true, honcho: false, words_of: system, speaker: gateway}
+  background_notice: {lcm: true, honcho: false, words_of: system, speaker: gateway}
+  gateway_notice: {lcm: true, honcho: false, words_of: system, speaker: gateway}
+  compression: {lcm: true, honcho: false, words_of: system, speaker: agent}
+  imported: {lcm: false, honcho: false, words_of: source, speaker: unknown}
+  agent_reply: {lcm: true, honcho: true, words_of: agent, speaker: agent}
+  tool_round: {lcm: true, honcho: false, words_of: tool, speaker: outside}
 
 # The rest of a turn, by message role, once its user side's route lets it into an engine.
 roles:

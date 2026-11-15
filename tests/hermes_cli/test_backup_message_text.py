@@ -63,7 +63,7 @@ def test_full_backup_import_restores_empty_message_store(home, tmp_path, memory_
     _seed(home, sid)
     archive = tmp_path / "backup.zip"
     assert backup.run_backup(Namespace(output=str(archive)))
-    memory_store_sql("TRUNCATE memory.messages")
+    memory_store_sql("TRUNCATE memory.message_parts, memory.messages")
     TEXT_CACHE.clear()
 
     # When the CLI import path restores the archive.
@@ -83,7 +83,7 @@ def test_named_profile_archive_restores_under_imported_agent(home, tmp_path, mon
     (source / "config.yaml").write_text("model: test\n", encoding="utf-8")
     _seed(source, "profile-collected")
     archive = profiles.export_profile("original", str(tmp_path / "profile.tar.gz"))
-    memory_store_sql("TRUNCATE memory.messages")
+    memory_store_sql("TRUNCATE memory.message_parts, memory.messages")
     TEXT_CACHE.clear()
 
     # When imported with a different profile identity.
@@ -103,7 +103,7 @@ def test_full_backup_restores_named_profile_text(home, tmp_path, monkeypatch, me
     monkeypatch.setattr(profiles, "create_wrapper_script", lambda name: None)
     archive = tmp_path / "nested.zip"
     assert backup.run_backup(Namespace(output=str(archive)))
-    memory_store_sql("TRUNCATE memory.messages")
+    memory_store_sql("TRUNCATE memory.message_parts, memory.messages")
     TEXT_CACHE.clear()
 
     # When imported into an empty text store.
@@ -120,7 +120,7 @@ def test_emergency_preflight_restores_collected_text(home, memory_store_sql):
     # Given a modern emergency image followed by external text collection.
     _seed(home, "emergency-collected")
     image = Path(preflight_state_db(home)["path"])
-    memory_store_sql("TRUNCATE memory.messages")
+    memory_store_sql("TRUNCATE memory.message_parts, memory.messages")
     TEXT_CACHE.clear()
 
     # When the emergency image is restored through the shared primitive.
@@ -156,6 +156,52 @@ def test_profile_imported_under_another_name_reads_its_text_beside_the_original(
     assert _uids(memory_store_sql, "original") == original_uids
     renamed = _uids(memory_store_sql, "renamed")
     assert renamed and all(uid.startswith("agent:renamed:") for uid in renamed)
+
+
+def _speakers_and_parts(memory_store_sql, agent):
+    speakers = memory_store_sql("SELECT role, speaker, speaker_ref, content FROM memory.messages WHERE agent_id = %s"
+                                " ORDER BY seq_in_session", (agent,))
+    parts = memory_store_sql("SELECT m.content, p.ordinal, p.kind, p.speaker, p.quoted_speaker, p.quoted_ref, p.content"
+                             " FROM memory.message_parts p JOIN memory.messages m USING (message_id)"
+                             " WHERE p.agent_id = %s ORDER BY p.ordinal", (agent,))
+    return speakers, parts
+
+
+def test_profile_imported_under_another_name_after_collection_keeps_speakers_and_notes(
+        home, tmp_path, monkeypatch, memory_store_sql):
+    """lina#324: the exported text carries each row's speaker kind and the gateway's notes on it."""
+    from hermes_cli import profiles
+    from hermes_state_store import GATEWAY_NOTES_KEY
+
+    monkeypatch.setattr(profiles, "_get_profiles_root", lambda: home / "profiles")
+    source = home / "profiles" / "original"
+    source.mkdir(parents=True)
+    (source / "config.yaml").write_text("model: test\n", encoding="utf-8")
+    notes = {GATEWAY_NOTES_KEY: {"owner_text": "Is this the right total?", "parts": [
+        {"kind": "image_reading", "text": "[A receipt from Cedar Market]", "quoted_speaker": "agent"},
+        {"kind": "reply_quote", "text": "[Replying to: due Friday]", "quoted_speaker": "agent", "quoted_ref": "41"}]}}
+    db = SessionDB(db_path=source / "state.db")
+    try:
+        db.create_session("noted", "telegram")
+        db.append_message("noted", "user", content="Is this the right total?", display_metadata=notes)
+        db.append_message("noted", "assistant", content="Yes, it matches.")
+    finally:
+        db.close()
+    memory_store_sql("UPDATE memory.messages SET speaker = 'owner', speaker_ref = 'telegram:1001'"
+                     " WHERE agent_id = 'original' AND role = 'user'")
+    before = _speakers_and_parts(memory_store_sql, "original")
+    assert len(before[1]) == 2 and before[0][0][1] == "owner"
+    archive = profiles.export_profile("original", str(tmp_path / "profile.tar.gz"))
+    memory_store_sql("TRUNCATE memory.message_parts, memory.messages")
+    TEXT_CACHE.clear()
+
+    restored = profiles.import_profile(str(archive), name="renamed")
+
+    assert _content(restored, "noted") == ["Is this the right total?", "Yes, it matches."]
+    speakers, parts = before
+    renamed = [(role, kind, "agent:renamed" if ref == "agent:original" else ref, text)
+               for role, kind, ref, text in speakers]
+    assert _speakers_and_parts(memory_store_sql, "renamed") == (renamed, parts)
 
 
 def test_full_backup_of_two_profiles_imported_into_another_profile_home(home, tmp_path, monkeypatch, memory_store_sql):
@@ -201,7 +247,7 @@ def test_restore_whose_text_is_missing_a_referenced_row_fails(home, memory_store
     lines = sidecar.read_text(encoding="utf-8").splitlines()
     assert len(lines) == 2
     sidecar.write_text(lines[0] + "\n", encoding="utf-8")
-    memory_store_sql("TRUNCATE memory.messages")
+    memory_store_sql("TRUNCATE memory.message_parts, memory.messages")
     TEXT_CACHE.clear()
 
     with pytest.raises(MessageTextRestoreError, match="1 message text"):

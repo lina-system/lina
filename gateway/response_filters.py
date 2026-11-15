@@ -200,10 +200,13 @@ def _producer_card(event: Any) -> dict:
 
 def display_metadata_for_event(event: Any) -> dict:
     """``{"display_text": ...}`` for an internal event whose producer named an async-result card, plus the
-    ``title_preview`` (titler-only) a canonical admission committed for this exact event."""
+    ``title_preview`` (titler-only) a canonical admission committed for this exact event, and the gateway's notes
+    on its text when they are kept as parts (``gateway/inbound_notes.py``)."""
+    from gateway import inbound_notes
     from gateway.session_display import admission_display
     preview = admission_display(event).get("title_preview")
-    return {**_producer_card(event), **({"title_preview": preview} if preview else {})}
+    return {**_producer_card(event), **({"title_preview": preview} if preview else {}),
+            **inbound_notes.display_metadata(event)}
 
 
 def persisted_user_metadata_for_event(event: Any) -> dict:

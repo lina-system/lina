@@ -146,6 +146,55 @@ def test_a_profile_without_message_text_renames_with_no_store(profile_env, monke
     assert migrate_profile_identity("harbor", "lighthouse") is True
 
 
+def _seed_noted(profile_dir: Path) -> None:
+    """An owner's message carrying a gateway note (lina#324) and the agent's reply."""
+    from hermes_state_store import GATEWAY_NOTES_KEY
+    notes = {GATEWAY_NOTES_KEY: {"owner_text": "is this the logbook?", "parts": [
+        {"kind": "image_reading", "text": "[A photo of a blue lighthouse logbook]", "quoted_speaker": "agent"}]}}
+    db = SessionDB(profile_dir / "state.db")
+    try:
+        db.create_session("noted", "telegram")
+        db.append_message("noted", "user", content="is this the logbook?", display_metadata=notes)
+        db.append_message("noted", "assistant", content="yes, the blue one")
+    finally:
+        db.close()
+
+
+def _readable(agent: str) -> tuple[list[str], list[str]]:
+    """The notes and the reply's speaker refs *agent* reads under row-level security."""
+    from hermes_state_store import MessageStore
+    store = MessageStore(agent)
+    try:
+        return ([part.content for part in store.search_parts("logbook")],
+                [row.speaker_ref for row in store.search_memory("blue", sources=["agent"]) if row.role == "assistant"])
+    finally:
+        store.close()
+
+
+def test_a_renamed_profile_reads_its_gateway_notes_and_the_old_agent_none(profile_env, memory_store_sql):
+    _seed_noted(create_profile("harbor", no_alias=True))
+    assert _readable("harbor") == (["[A photo of a blue lighthouse logbook]"], ["agent:harbor"])
+
+    _rename("harbor", "lighthouse")
+
+    assert _readable("lighthouse") == (["[A photo of a blue lighthouse logbook]"], ["agent:lighthouse"])
+    assert _readable("harbor") == ([], [])
+
+
+def test_a_failed_rename_gives_the_gateway_notes_back(profile_env, memory_store_sql):
+    from hermes_cli.profile_identity import text_moved_for_rename
+
+    profile_dir = create_profile("harbor", no_alias=True)
+    _seed_noted(profile_dir)
+    with pytest.raises(OSError, match="directory move failed"):
+        with text_moved_for_rename(profile_dir, "harbor", "lighthouse"):
+            assert _readable("lighthouse")[0] == ["[A photo of a blue lighthouse logbook]"]
+            raise OSError("directory move failed")
+
+    assert _readable("harbor") == (["[A photo of a blue lighthouse logbook]"], ["agent:harbor"])
+    assert _readable("lighthouse") == ([], [])
+
+
 class _OneAxisClient:
     model = "qwen3-embedding-8b"
     dimensions = 1024

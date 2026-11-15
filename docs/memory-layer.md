@@ -34,7 +34,8 @@ Each finished turn of an agent that carries `lina-memory` is received once and r
    Who wrote the turn and its Honcho session are fixed on the turn thread when the turn finishes and handed to
    the worker: by the time the worker runs, the next turn may have started, and Honcho's own per-turn state
    (`on_turn_start`) names that turn's author.
-4. It fills `memory.messages.conversation_id` for the turn's rows (`MessageStore.set_conversation`).
+4. It fills `memory.messages.conversation_id` for the turn's rows (`MessageStore.set_conversation`), and their
+   speaker kind (`MessageStore.set_speakers`, below).
 
 The LCM-X subtree is unchanged. Recall, tools and the session lifecycle (`prefetch`, `honcho_*` tools, `on_session_end`, ...) go to the Honcho
 adapter when Honcho is configured. `lina-memory`'s `plugin.yaml` names the adapter (`drives: [honcho]`), so
@@ -75,6 +76,15 @@ words. A turn's route comes from where it arrived, never from its text:
 | `compressor_row` | the context compressor's own rows (`_compressed_summary`, the in-flight task restatement flag) |
 | `author_is_bot` | the bot relay (`turn_author`) |
 
+Each route also names the speaker kind `memory.messages` stores for its rows (`speaker`, lina#324): `person_channel`
+`owner`, `bot_relay` and `tool_round` `outside`, `worker_event`, `compression` and `agent_reply` `agent`, the cron,
+background and gateway notices `gateway`, `imported` `unknown`. `plugins/memory/lina/speaker.py` decides each row of a
+finished turn: a user row by its own route, an assistant or tool row by its role's route. In a shared room (the
+gateway labelled the sender) a person is the owner only when their handle is confirmed as the owner's
+(`local_user:owner`, below); otherwise they are `outside`. The refs are `agent:<profile>`, `tool:<name>` and the
+sender's `<platform>:<user id>` (`local:owner` on local surfaces). The store's own rule and the backfill of older rows
+are in [store.md](store.md) (Speaker kinds).
+
 Only `person_channel` turns are stored in Honcho as the person's words. A bot relay goes to Honcho as the bot's
 own words in its own session; worker events, cron and background notices, gateway-internal notices and the
 compressor's rows stay out of Honcho. The table's `replaces` rows list what Honcho's old text filter
@@ -83,6 +93,30 @@ A person who types or quotes one of those strings is a person: their message rea
 
 `memory.provider: honcho` still loads the Honcho provider on its own; it applies the same table to the route
 the manager's `messages` and its init context show.
+
+## Gateway notes
+
+The gateway puts notes in front of what a person wrote (`gateway/inbound_notes.py`): an image reading, a voice,
+audio, video or document note, a reply quote, Discord's triggering-message note, a shared room's sender label and
+channel context. Each step of `_prepare_inbound_message_text` reports the exact bytes it added and their kind; when
+every byte of the model's text is a recorded note or the person's words, the user row stores the words alone and the
+notes become its parts (`memory.message_parts`, speaker `gateway`, with whose words each quotes), and the model still
+reads the composed text: it is the row's `api_content`, so the next turn replays the same bytes. A step that rewrites
+the text instead of adding to it (Discord's empty-content placeholder under a voice note) leaves that turn's notes in
+its text, as before, and logs it.
+
+Honcho gets the person's words as theirs and each note as its own message on the agent's side
+(`[gateway note: <kind>] ...`, `lina_speaker: gateway`), so no conclusion about the person comes from a note alone.
+Both come from the egress-redacted copy of the turn.
+
+## Recall by speaker
+
+`memory_search` hits from the store name their stored speaker, and the gateway's notes are hits of their own
+(`note:<id>`, speaker `gateway`, the note's kind and whose words it quotes), never the person's message: a reply quote
+of the agent's message is found as the agent's words and as a note quoting the agent. `speaker: [...]` keeps only those
+kinds (`["owner"]`: the owner's own words, no note), `person` keeps one person's messages on every channel confirmed as
+theirs. Recall lines carry the speaker: `[ref] (owner telegram:1001) ...`, `[ref] (outside kakao:...) ...`,
+`[ref] (gateway note (reply_quote, quoting agent)) ...`.
 
 ## The identity registry
 
@@ -100,8 +134,35 @@ An id is derived from the first key it is registered under, so it is the same on
 and after the registry holds it; Honcho peer names and LCM conversation ids are read as Honcho and LCM-X derive
 them today and are never renamed. A later key joins the identity an earlier key already has; two keys that name
 different identities are never merged. External messages (#18) keep their conversation ids
-(`messages:<platform>:<room id>`) and own the `messages_room` and `messenger_author` source kinds; their authors
-are not resolved to people. The tables have no `agent_id` column, so row-level security does not apply to them.
+(`messages:<platform>:<room id>`) and own the `messages_room` and `messenger_author` source kinds. Each external
+message's author is a person under its own `messenger_author` handle (`<platform>:<author id>`, the row's `author`),
+and a platform is part of every handle, so nothing is merged across platforms by itself. The tables have no
+`agent_id` column, so row-level security does not apply to them.
+
+### Linking handles (lina#313)
+
+One person can hold handles on several channels, written `<source>:<key>` (`gateway_user:telegram:1001`,
+`messenger_author:kakao:k-1`, `local_user:owner`). A handle joins a person only through a link in
+`memory.identity_links` (migration 0013):
+
+- `confirmed`: the owner said so. Only confirmed links join; a handle is confirmed to one person at most, and
+  confirming it to another undoes the first.
+- `candidate`: kept with its evidence, never in search or recall. Two people with the same display name stay two
+  people: a name match is at most a candidate.
+- `undone`: the owner said it is not; kept with that sentence.
+
+The agent records one owner sentence with `memory_link` (`confirm` or `undo` a handle and a person, `said`: the
+sentence; `list` a person's links) and asks when it cannot tell which person is meant; there is no screen for it.
+`memory_search` with `person` returns that person's messages from every confirmed channel and none of a same-name
+other's. An owner's hand-kept alias list imports as confirmed links (`memory_link` `import` with its path,
+`plugins/memory/lina/links.py`): one person per line, the first entry (a handle or a person id) names the person and
+every handle after it is confirmed as theirs; blank lines and `#` comments are skipped, and a line naming an unknown
+handle source fails the import before anything is written:
+
+```text
+# Mina, by hand
+messenger_author:kakao:k-1  messenger_author:line:u-5  gateway_user:telegram:1001
+```
 
 ## Measuring the cache
 
@@ -116,3 +177,10 @@ noise. Conversations are numbered; no id, endpoint or account from the input rea
 `memory.prefix_fingerprints: true` (off by default) appends one row per model request to
 `<home>/state/prefix-fingerprints.jsonl`: keyed hashes and byte lengths of the request's leading blocks (tools, then
 each message), never text; `--fingerprints` measures from it the exact common prefix of consecutive requests.
+
+## The owner's word list
+
+Every agent reads one shared list of words to avoid and the word to use instead, grown from the owner's corrections
+(`memory.word_list`, `lina words`, lina#378); the flagged and fixed sentence pairs kept with it are readable by the
+owner and the refiner only and never logged or exported. The scope, the writers and the privacy rule are in
+[korean.md](korean.md).

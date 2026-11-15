@@ -66,7 +66,7 @@ def test_existing_honcho_peers_and_lcm_conversation_resolve_to_the_same_ids(tmp_
     assert registry[("conversation", "honcho_session", f"lina-test:{session}")] == conversation
     assert registry[("conversation", "lcm_conversation", f"default:{old_conversation}")] == conversation
 
-    memory_store_sql("TRUNCATE memory.identity_keys, memory.identities")
+    memory_store_sql("TRUNCATE memory.identity_links, memory.identity_keys, memory.identities")
     lina_env.written.clear()
     again = make_agent("after-20b", db)
     run_turn(again, "a message once the registry is rebuilt #a2", "answer #a2")

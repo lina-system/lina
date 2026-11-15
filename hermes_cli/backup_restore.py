@@ -172,6 +172,7 @@ def _safe_restore_db(src: Path, dst: Path, *, sidecar: Any = _SIDECAR_BESIDE_SOU
     """
     from gateway.runtime_ownership import OwnershipConflict, exclusive_maintenance
     from hermes_cli.backup import verify_sqlite_integrity
+    from hermes_cli.store_gc import profile_lifecycle
 
     # backup() copies pages without validating their contents; its fallback
     # copies bytes even when SQLite rejected the source. Neither may touch the
@@ -183,13 +184,16 @@ def _safe_restore_db(src: Path, dst: Path, *, sidecar: Any = _SIDECAR_BESIDE_SOU
     try:
         with exclusive_maintenance([dst.absolute().parent, dst.resolve().parent]):
             with _restore_epoch_source(src, dst) as prepared, \
-                    tempfile.TemporaryDirectory(prefix="hermes-restore-text-") as work:
+                    tempfile.TemporaryDirectory(prefix="hermes-restore-text-") as work, \
+                    profile_lifecycle(dst):
                 from hermes_cli.backup_message_text import sidecar_beside, stage_with_texts
                 text = sidecar_beside(src) if sidecar is _SIDECAR_BESIDE_SOURCE else sidecar
                 ready = stage_with_texts(prepared, dst, text, Path(work))
                 # The text is in the store now. A failure from here on leaves only extra immutable rows there,
                 # which the collection reclaims after its grace period.
-                return _restore_db_pages(ready, dst)
+                if not _restore_db_pages(ready, dst):
+                    raise OSError("Could not publish restored database")
+                return True
     except (OwnershipConflict, OSError, sqlite3.Error) as exc:
         logger.error("%s", exc)
         return False
@@ -629,7 +633,8 @@ def _import_db_member_exclusive(
                 "leave them writing an invisible database. Stop those processes and re-run the import."
             )
         from hermes_cli.backup_message_text import stage_with_texts, zip_sidecar
-        with tempfile.TemporaryDirectory(prefix="hermes-import-text-") as work:
+        from hermes_cli.store_gc import profile_lifecycle
+        with tempfile.TemporaryDirectory(prefix="hermes-import-text-") as work, profile_lifecycle(target):
             incoming = Path(work) / "incoming.db"
             with zf.open(member) as src, incoming.open("wb") as staged:
                 shutil.copyfileobj(src, staged)

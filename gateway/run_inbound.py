@@ -20,6 +20,7 @@ from contextlib import suppress
 from pathlib import Path
 
 from agent.i18n import t
+from gateway import inbound_notes
 from gateway.config import Platform
 from gateway.platforms.base import EphemeralReply
 from gateway.platforms.event import MessageEvent, MessageType, clean_attachment_filename
@@ -59,6 +60,12 @@ def discord_triggering_note(message_id: Any) -> str:
     )
 
 
+def _note(event: Any, kind: str, before: str, after: str, **quoted: Any) -> str:
+    """*after*, recorded as a gateway note of *kind* when this event's notes are being kept."""
+    notes = inbound_notes.of(event)
+    return notes.step(kind, before, after, **quoted) if notes is not None else after
+
+
 def strip_discord_triggering_note(event: Any, message_text: Any) -> Any:
     """Authored text for the durable user row: peel off exactly the note
     ``_prepend_inbound_reply_context`` added for THIS event, if present. The note is a
@@ -70,6 +77,12 @@ def strip_discord_triggering_note(event: Any, message_text: Any) -> Any:
         return message_text
     prefix = f"{discord_triggering_note(message_id)}\n\n"
     return message_text.removeprefix(prefix)
+
+
+def persisted_text(event: Any, message_text: Any) -> Any:
+    """The text the user row stores for *event*: the owner's words when the gateway's notes are kept as parts
+    (lina#324), else the composed text without Discord's triggering-message note."""
+    return strip_discord_triggering_note(event, inbound_notes.persist_text(event, message_text))
 
 
 class GatewayInboundMixin(GatewayInboundHooksMixin, GatewayInboundTranscriptionMixin, GatewayPluginInjectionMixin):
@@ -1403,10 +1416,11 @@ class GatewayInboundMixin(GatewayInboundHooksMixin, GatewayInboundTranscriptionM
             # See #17916.
             if source.platform == Platform.SLACK and source.user_id:
                 _safe_user_name = f"{_safe_user_name} | Slack user <@{source.user_id}>"
-            message_text = f"[{_safe_user_name}] {message_text}"
+            message_text = _note(event, "sender_label", message_text, f"[{_safe_user_name}] {message_text}")
         # After the sender-prefix so the prefix applies only to the trigger message, not the backfill.
         if getattr(event, "channel_context", None):
-            message_text = f"{event.channel_context}\n\n[New message]\n{message_text}"
+            message_text = _note(event, "channel_context", message_text,
+                                 f"{event.channel_context}\n\n[New message]\n{message_text}", quoted_speaker="outside")
         return message_text
 
     @staticmethod
@@ -1519,17 +1533,19 @@ class GatewayInboundMixin(GatewayInboundHooksMixin, GatewayInboundTranscriptionM
     @classmethod
     def _prepend_inbound_media_file_notes(
         cls, message_text: str, audio_file_paths: list[str], video_paths: list[str],
-        original_names: Optional[dict[str, str]] = None,
+        original_names: Optional[dict[str, str]] = None, event: Optional[MessageEvent] = None,
     ) -> str:
         """Prepend a path-pointing note per audio-file / video attachment (content is not inlined)."""
         names = original_names or {}
-        for kind, noun, verb, tool, paths in (
-            ("an audio file attachment", "audio", "transcribe or process", "a transcription or media tool", audio_file_paths),
-            ("a video attachment", "video", "inspect or process", "a video analysis or media tool", video_paths),
+        for note_kind, kind, noun, verb, tool, paths in (
+            ("audio_note", "an audio file attachment", "audio", "transcribe or process", "a transcription or media tool",
+             audio_file_paths),
+            ("video_note", "a video attachment", "video", "inspect or process", "a video analysis or media tool",
+             video_paths),
         ):
             for _path in paths:
                 _display, _agent_path = cls._inbound_attachment_display_name(_path, names.get(_path, ""))
-                message_text = (
+                message_text = _note(event, note_kind, message_text, (
                     f"[The user sent {kind}: '{_display}'. "
                     f"It is saved at: {_agent_path}. "
                     f"Its content is not inlined here. If the user's request involves "
@@ -1538,7 +1554,7 @@ class GatewayInboundMixin(GatewayInboundHooksMixin, GatewayInboundTranscriptionM
                     f"instead of asking the user to describe it. Only ask what to do "
                     f"with it if their intent is genuinely unclear.]"
                     f"\n\n{message_text}"
-                )
+                ))
         return message_text
 
     @classmethod
@@ -1572,7 +1588,7 @@ class GatewayInboundMixin(GatewayInboundHooksMixin, GatewayInboundTranscriptionM
             context_note = _build_document_context_note(
                 display_name, agent_path, mtype, content_inlined=inline_flag is not False,
             )
-            message_text = f"{context_note}\n\n{message_text}"
+            message_text = _note(event, "document_note", message_text, f"{context_note}\n\n{message_text}")
         return message_text
 
     @staticmethod
@@ -1584,8 +1600,11 @@ class GatewayInboundMixin(GatewayInboundHooksMixin, GatewayInboundTranscriptionM
             # Adapters resolve the original message (or the user's native partial quote).
             # A preview here silently loses later list items and code; keep that context intact.
             reply_text = event.reply_to_text
-            _who = " your previous message" if getattr(event, "reply_to_is_own_message", False) else ""
-            message_text = f'[Replying to{_who}: "{reply_text}"]\n\n{message_text}'
+            _own = bool(getattr(event, "reply_to_is_own_message", False))
+            _who = " your previous message" if _own else ""
+            message_text = _note(event, "reply_quote", message_text, f'[Replying to{_who}: "{reply_text}"]\n\n{message_text}',
+                                 quoted_speaker="agent" if _own else "unknown",
+                                 quoted_ref=str(event.reply_to_message_id))
 
         # Discord: the triggering message id goes on the per-turn user message, never the cached
         # system prompt — it changes every turn and would bust the agent-cache signature. It is
@@ -1598,7 +1617,8 @@ class GatewayInboundMixin(GatewayInboundHooksMixin, GatewayInboundTranscriptionM
         ):
             from gateway.session import _discord_tools_loaded as _disc_tools_loaded
             if _disc_tools_loaded():
-                message_text = f"{discord_triggering_note(event.message_id)}\n\n{message_text}"
+                message_text = _note(event, "trigger_note", message_text,
+                                     f"{discord_triggering_note(event.message_id)}\n\n{message_text}")
         return message_text
 
     async def _inbound_model_context_length(self, source: SessionSource, session_key: str) -> int:
@@ -1690,19 +1710,23 @@ class GatewayInboundMixin(GatewayInboundHooksMixin, GatewayInboundTranscriptionM
         # Reset only this session's per-call buffer; other sessions may be concurrently preparing.
         self._consume_pending_native_image_paths(session_key)
 
+        notes = inbound_notes.start(event, message_text)
         message_text = self._prefix_inbound_sender_context(event, source, message_text)
         image_paths, audio_paths, audio_file_paths, video_paths = self._classify_inbound_media(event, _pending_stt_prepared)
         if image_paths:
-            message_text = await self._enrich_inbound_images(source, session_key, message_text, image_paths)
+            message_text = notes.step("image_reading", message_text, await self._enrich_inbound_images(
+                source, session_key, message_text, image_paths), quoted_speaker="agent")
         if audio_paths:
-            message_text = await self._enrich_inbound_voice(event, source, message_text, audio_paths)
+            message_text = notes.step("voice_note", message_text, await self._enrich_inbound_voice(
+                event, source, message_text, audio_paths))
         message_text = self._prepend_inbound_media_file_notes(
-            message_text, audio_file_paths, video_paths, self._inbound_original_names(event))
+            message_text, audio_file_paths, video_paths, self._inbound_original_names(event), event=event)
         message_text = self._prepend_inbound_document_notes(event, message_text)
         from gateway.session_context_refs import turn_references
-        message_text = await turn_references(self, event, source, session_key, message_text)
-        if message_text is None:
+        expanded = await turn_references(self, event, source, session_key, message_text)
+        if expanded is None:
             return None
+        message_text = notes.expanded(message_text, expanded)
         # After expansion: the quoted reply is someone else's text and stays literal — an
         # ``@file:`` inside it must never read a local file on the replier's behalf.
         return self._prepend_inbound_reply_context(event, source, message_text)

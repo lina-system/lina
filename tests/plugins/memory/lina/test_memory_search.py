@@ -92,7 +92,8 @@ def test_one_search_returns_hits_from_every_source_and_each_ref_opens_its_origin
     texts = {ref: page["text"] for ref, page in opened.items()}
     agent_texts = {texts[h["ref"]] for h in by_source["agent"]}
     assert agent_texts == {"please track the orchid delivery, 회의록도 정리해줘", "Tracking the orchid delivery now."}
-    assert {h["speaker"] for h in by_source["agent"]} == {"person", "agent"}
+    # The speaker kind memory.messages stores for each row (lina#324): the person's turn is the owner's.
+    assert {h["speaker"] for h in by_source["agent"]} == {"owner", "agent"}
     external = by_source["messages"]
     assert [texts[h["ref"]] for h in external] == [EXTERNAL_TEXT]
     assert external[0]["author"] == "kakao:friend-1" and external[0]["time"] == "2026-11-01T09:00:00+00:00"
@@ -279,6 +280,52 @@ def test_the_vector_leg_leaves_out_an_injected_summary_turn_too(seeded, memory_s
     found = _call(seeded.agent, "memory_search", query="flowers", sources=["agent"])
 
     assert f"msg:{uid}" not in [hit["ref"] for hit in found["results"]]
+
+
+OWNER_TURN = "please track the orchid delivery, 회의록도 정리해줘"
+
+
+def test_a_speaker_filter_finds_its_rows_below_better_ranked_rows_of_other_speakers(seeded, memory_store_sql):
+    """lina#324 review: the speaker kind narrows the store query before its limit."""
+    for n in range(3):
+        _insert(memory_store_sql, uid=f"agent:default:said-{n}", source="agent", agent_id="default", scope="agent",
+                role="assistant", content="orchid", ts=_ago(0))
+
+    found = _call(seeded.agent, "memory_search", query="orchid", sources=["agent"], limit=1, speaker=["owner"])
+
+    assert [(hit["speaker"], _call(seeded.agent, "memory_open", ref=hit["ref"])["text"])
+            for hit in found["results"]] == [("owner", OWNER_TURN)]
+
+
+def test_the_vector_leg_narrows_by_speaker_before_its_limit(seeded, memory_store_sql):
+    from agent.embedding_client import EmbeddingClient, EmbeddingSettings
+
+    rows = dict(memory_store_sql("SELECT role, message_id FROM memory.messages WHERE agent_id = 'default'"))
+    for axis, role in enumerate(("assistant", "user")):  # the agent's reply is the nearer one
+        vector = "[" + ",".join("1" if i == axis else "0" for i in range(1024)) + "]"
+        chunk = memory_store_sql("INSERT INTO vec.chunks (source, agent_id, message_ids, text) VALUES"
+                                 " ('agent', 'default', %s, 'x') RETURNING chunk_id", ([rows[role]],))[0][0]
+        memory_store_sql("INSERT INTO vec.embeddings (kind, item_id, agent_id, model, dim, embedding) VALUES"
+                         " ('chunk', %s, 'default', 'test-embed', 1024, %s::vector)", (chunk, vector))
+    answer = {"data": [{"index": 0, "embedding": [0.9, 0.1] + [0.0] * 1022}]}
+    provider = next(p for p in seeded.agent._memory_manager.providers if p.name == "lina-memory")
+    provider._embedding = EmbeddingClient(EmbeddingSettings(base_url="http://embed.test/v1", model="test-embed"),
+                                          transport=httpx.MockTransport(lambda _r: httpx.Response(200, json=answer)))
+
+    found = _call(seeded.agent, "memory_search", query="flowers", sources=["agent"], limit=1, speaker=["owner"])
+
+    assert [_call(seeded.agent, "memory_open", ref=hit["ref"])["text"] for hit in found["results"]] == [OWNER_TURN]
+
+
+def test_better_ranked_external_messages_leave_the_agents_own_rows_in_the_results(seeded, memory_store_sql):
+    """Each store source is ranked under its own limit, so one source never takes another's places."""
+    for n in range(4):
+        _insert(memory_store_sql, uid=f"ext-short-{n}", source="messages", agent_id=None, scope="agents",
+                role="user", content="orchid", author="kakao:friend-1", ts=_ago(0))
+
+    found = _call(seeded.agent, "memory_search", query="orchid", sources=["agent", "messages"], limit=2)
+
+    assert {hit["source"] for hit in found["results"]} == {"agent", "messages"}
 
 
 def test_a_persons_bracketed_message_and_a_plain_turn_are_still_found(seeded, memory_store_sql):

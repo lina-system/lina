@@ -9,6 +9,7 @@ All memory lives in one Postgres with pgvector, run in Docker and set up by LINA
 | `ctx` | context summaries |
 | `ltm` | long-term memory (the Honcho server's tables) |
 | `vec` | embeddings |
+| `brain` | the brain's pages, aliases, links, timelines, atoms, merges and proposals ([brain.md](brain.md)) |
 
 ## Installing
 
@@ -41,6 +42,7 @@ its settings are under the LINA root, not a profile home, in `store/`:
 | --- | --- | --- |
 | `lina` | `lina store` (over the container's local socket) | everything (cluster superuser) |
 | `lina_app` | agents | read and write its agent's rows in `memory`, `ctx` and `vec`; also read shared `memory.messages` rows with `scope = 'agents'` and their `vec` chunks (owner `*`) |
+| `lina_refiner` | the refiner (lina#198), by `SET ROLE` | NOLOGIN; read, add and retire entries of the shared word list `memory.word_list` and add its pairs (`memory.word_pairs`), nothing else |
 | `honcho` | the Honcho server | own schema `ltm` and migrate it; SELECT and INSERT on `memory.messages`, REFERENCES on its `message_id`, and USAGE on schema `memory`; read and write its own vectors (kinds `message` and `document`) in `vec.embeddings`, nothing else in `vec` |
 
 Every table in `memory`, `ctx`, `ltm` or `vec` that has an `agent_id` column gets row-level
@@ -74,6 +76,10 @@ which is not a profile name, so no agent's `lina_agent_rows` matches it for a wr
 `lina_shared_chunks` (`vec.chunks`) and `lina_shared_chunk_vectors` (`vec.embeddings`, kind `chunk`) let every
 agent read rows with that owner, so an agent's vector search finds the shared external messages beside its own rows.
 The migration also gives that owner to such vectors written before it with the owner `'None'`.
+
+Migration 0016 adds the owner's word list ([korean.md](korean.md)): `memory.word_list` has no `agent_id`, a
+SELECT-only policy lets every agent read it, and `lina_app`'s write grants on it are revoked; only the owner (`lina`)
+and `lina_refiner` write it. Its sentence pairs, `memory.word_pairs`, have no `lina_app` grant at all.
 ## Migrations
 
 Honcho migrates `ltm` itself. Schemas `memory`, `ctx` and `vec` belong to LINA: each
@@ -99,6 +105,8 @@ profile, so row-level security keeps each profile to its rows. Agents find the s
 | `session_id`, `seq_in_session` | the Hermes session that first wrote the row and its row id there |
 | `conversation_id` | the conversation: from the identity registry for agent turns (#20, [memory-layer.md](memory-layer.md)), null until `lina-memory` resolves the turn; `messages:<platform>:<room_id>` for external messages |
 | `author` | nullable author key: `<platform>:<author_id>` for external messages; NULL for agent rows (not a resolved person) |
+| `speaker` | who said it (lina#324): `owner`, `agent`, `gateway`, `outside` or `unknown`, never guessed from the text; see "Speaker kinds" below |
+| `speaker_ref` | which one: `agent:<profile>` for the agent, `tool:<name>` for a tool result, `<platform>:<user id>` for a gateway sender (`local:owner` on local surfaces), the `author` of an external message; NULL when the kind names no one |
 | `role`, `content`, `tool_name`, `tool_call_id`, `ts` | the message; `content` is plain text (the text parts of multimodal content, NUL removed) |
 | `tool_calls` | the tool calls as `jsonb` |
 | `observed_at` | when the row was written |
@@ -148,7 +156,8 @@ Honcho metadata does not delete shared text. Direct `document_sources` edges for
 public message ID are detached; document-to-document reasoning edges are not reinterpreted.
 
 A row is never changed after it is written, except `conversation_id`, filled once while it is null (found by base
-uid through the partial index `messages_unfilled_base`, which holds only rows still waiting for it). Hermes writes one message several times: compaction keeps the
+uid through the partial index `messages_unfilled_base`, which holds only rows still waiting for it), and `speaker`,
+filled once from `unknown` when lina-memory decides the turn (below). Hermes writes one message several times: compaction keeps the
 archived copy and inserts a live one, a compression child carries the tail of its parent, a prune keeps the
 original beside a shortened copy. Copies with the same text share one row; a copy whose text differs gets its
 own version row. Deleting a session deletes its `transcript_rows`, never the text: `lina store gc` (also run by the
@@ -166,6 +175,32 @@ including Honcho-origin rows whose workspace equals a profile and agent rows reu
 Profile rename changes the agent and UID prefix in place, preserving `message_id` and Honcho's
 reference; profile deletion removes local placements, not shared text. Backup restore inserts
 missing text and refuses a conflicting UID payload rather than replacing an existing shared row.
+
+Deleting a profile records `memory.agents.deleted_at` in the store owner's transaction.
+`lina store gc` also collects that agent's `memory.messages` rows, but only when the deletion
+time is **strictly older** than the grace period. Old message timestamps do not shorten this
+window: deleting a profile with years of history still preserves its text for the full period.
+At the exact boundary its rows remain. Agents with no recorded deletion are never selected
+by this sweep; live profiles continue to use the transcript, LCM-X and Honcho reference checks
+above. Other schemas keep their existing deletion/cascade rules.
+
+The setting is `sessions.message_text_grace_days` in `config.yaml`, default **30 days**, with
+the existing minimum of 2 days. `lina store gc --older-than-days 45` overrides it for that
+invocation, for both live-profile orphan text and deleted-profile text. For example:
+
+```yaml
+sessions:
+  message_text_grace_days: 30
+```
+
+Creating or renaming to the same profile name again, importing its profile archive, or restoring its
+`state.db` from a backup clears the deletion timestamp. Successful recovery also clears the
+filesystem tombstone. Recovery and collection lock the same agent row, so collection cannot
+remove text while it is being restored; a failed recovery rolls back the lifecycle change.
+The `lina_app` and `honcho` roles cannot change this owner-managed lifecycle table.
+Apply migration `0015_agent_deleted_at.sql` with `lina store upgrade` before using these
+operations on an existing store. Profiles deleted before this migration have no known deletion
+time and are retained; the collector does not infer one from message age or missing directories.
 
 ### External messages
 
@@ -209,6 +244,61 @@ physical delete or a forget operation. Cursor/head tables are not accessible to 
 that needs current-only semantics must use this ordering rule rather than assume the greatest message_id wins.
 Transcript garbage collection considers only `source = 'agent'`, never these owner-level rows.
 
+### Speaker kinds
+
+Migration `0013_speaker.sql` gives every row a speaker kind, and every writer keeps it: a row inserted without one
+(Honcho, external messages, the heart journal, an agent without lina-memory) gets the kind its stored fields decide
+(`memory.speaker_by_rule`, a `BEFORE INSERT` trigger), and the same rule backfilled the rows the store held before:
+
+| Stored fields | `speaker` | `speaker_ref` |
+| --- | --- | --- |
+| `source = 'messages'` (an external message) | `outside` | its `author` |
+| `source = 'heart'` (a journal row) | `agent` | `agent:<agent_id>` |
+| `role = 'assistant'` | `agent` | `agent:<agent_id>` |
+| `role = 'tool'` | `outside` | `tool:<tool_name>` |
+| `role = 'user'` with `native._compressed_summary` (the compressor's own row) | `agent` | `agent:<agent_id>` |
+| anything else, every other user turn included | `unknown` | NULL |
+
+A user turn's kind is not in its stored fields (its route is not stored), so it is `unknown` until lina-memory
+decides it when the turn finishes, from the policy table's route ([memory-layer.md](memory-layer.md)):
+`MessageStore.set_speakers` changes `unknown` to the route's kind on the turn's rows and never changes a decided kind.
+A backfilled user turn stays `unknown`; it is never taken for the owner.
+
+Derived items keep the kinds of their sources: `memory.message_source_speakers` gives a heart journal row's
+`source_speakers` (the distinct, sorted kinds of the uids it cites; a cited row that is gone counts as `unknown`), and
+`ctx.summary_speakers` an LCM-X summary's (of every message under it, through every condensed level). Both are views
+over the stored kinds, so a kind filled later shows at once. Messages LINA writes to Honcho carry `lina_speaker` in
+their metadata.
+
+### Gateway notes (`memory.message_parts`)
+
+A note the gateway puts in front of an inbound message (an image reading, a voice, audio, video or document note, a
+reply quote, Discord's triggering-message note, a shared room's sender label and channel context;
+`gateway/inbound_notes.py`) is a row of `memory.message_parts`, not text of the owner's message: the user row's
+`content` is the owner's words, and the model's text with the notes stays in `native.api_content`, so a replay sends
+the same bytes. The notes reach the store in the user row's display metadata (`gateway_notes`), which
+`put_row_text` writes as parts and drops from what state.db keeps.
+
+| Column | What it holds |
+| --- | --- |
+| `message_id` | the owner's message (`ON DELETE CASCADE`: the notes go with it) |
+| `ordinal` | the order the gateway added them, innermost first |
+| `agent_id` | the profile; row-level security (`lina_agent_rows`) applies through it |
+| `kind` | `reply_quote`, `image_reading`, `voice_note`, `audio_note`, `video_note`, `document_note`, `trigger_note`, `sender_label`, `channel_context` |
+| `speaker` | `gateway` |
+| `quoted_speaker`, `quoted_ref` | whose words the note quotes or reads out (a reply quote of the agent's message: `agent`; an image reading: `agent`, its model's reading; channel context: `outside`) and the quoted message's platform id; NULL when it quotes nobody |
+| `content`, `tsv` | the note's text and its `simple` tsvector (with a `pg_trgm` index, as on `memory.messages`) |
+
+### Identity links (`memory.identity_links`)
+
+A handle (`source`, `key` of an identity key of kind person: `gateway_user`, `messenger_author`, `local_user`,
+`honcho_peer`) joins a person only through a link: `confirmed` (the owner said so), `candidate` (kept with its
+`evidence`, joins nothing) or `undone` (kept with the owner's sentence that undid it); a handle is confirmed to one
+person at most (`identity_links_one_person`). Every external message's author is a person of the registry under its
+own `messenger_author` handle (registered by the migration for the authors already stored, and by lina-memory the
+first time a later one is named). Like the other registry tables it has no `agent_id` column. The rules are in
+[memory-layer.md](memory-layer.md).
+
 ### Heart journal rows
 
 `lina heart write` keeps each journal entry as one row (`hermes_cli/heart/rows.py`), written through
@@ -226,8 +316,8 @@ Transcript garbage collection considers only `source = 'agent'`, never these own
 
 `--messages` takes `memory.messages` uids of the agent's own unforgotten turns (`source = 'agent'`); another
 agent's uid reads as unknown, because row-level security hides it. An entry with no `pref`, or with route
-`reaction`, must cite at least one owner message (a `user` turn of a session whose source is in
-`heart.owner_sources`, without a machine prefix); `outcome` and `exposure` entries need not. `lina heart list`,
+`reaction`, must cite at least one owner message (a row whose stored `speaker` is `owner`, lina#324); `outcome` and
+`exposure` entries need not. `lina heart list`,
 `review-input` and the self-note check read these rows; `lina heart candidates` reads the placements in
 `transcript_rows` and their text here, leaving out forgotten rows. `SOUL.self.md` and `heart/changes.jsonl`
 stay files in the profile.

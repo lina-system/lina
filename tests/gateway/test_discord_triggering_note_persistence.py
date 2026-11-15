@@ -44,7 +44,8 @@ async def test_discord_note_rides_model_text_but_not_persisted_content(monkeypat
 
     note = discord_triggering_note("1550380365858865157")
     assert message_text.startswith(f"{note}\n\n[Replying to: \"Create a project plan for Q4\"]")
-    assert persist_user_message == '[Replying to: "Create a project plan for Q4"]\n\nyes do that'
+    # The reply pointer is a gateway note too: a part of its own beside the authored text (lina#324).
+    assert persist_user_message == "yes do that"
 
     # Control: a turn without a platform message id (desktop relay) persists byte-identical text.
     relay = MessageEvent(text="plain relay turn", source=source, message_id=None)

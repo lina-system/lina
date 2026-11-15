@@ -86,7 +86,8 @@ def _response(content: Optional[str], tool_calls=None):
 
 
 def run_turn(agent, user: str, reply: str, history=None, *, tool_round: Optional[str] = None,
-             display_kind: Optional[str] = None, turn_author: Optional[dict] = None) -> dict:
+             display_kind: Optional[str] = None, turn_author: Optional[dict] = None, **run_kwargs) -> dict:
+    """One turn of *agent*; *run_kwargs* reach ``run_conversation`` (the gateway's ``persist_user_*`` arguments)."""
     responses = []
     if tool_round:
         call = SimpleNamespace(id=f"call_{tool_round}", type="function",
@@ -101,7 +102,7 @@ def run_turn(agent, user: str, reply: str, history=None, *, tool_round: Optional
         kwargs["persist_user_display_kind"] = display_kind
     if turn_author:
         kwargs["turn_author"] = turn_author
-    result = agent.run_conversation(user, conversation_history=history, **kwargs)
+    result = agent.run_conversation(user, conversation_history=history, **kwargs, **run_kwargs)
     assert result.get("final_response") == reply, result
     return result
 

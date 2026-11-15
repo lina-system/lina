@@ -42,6 +42,9 @@ _NATIVE_TEXT_FIELDS = TEXT_FIELDS[2:]
 NATIVE_META_FIELDS = ("message_uid", "platform_message_id", "finish_reason", "token_count", "effect_disposition",
                       "observed", "_compressed_summary", "absorbed_message_uids", "tool_call_uids", "tool_call_uid")
 SOURCE_AGENT = "agent"
+# The user row's display-metadata key carrying the gateway's notes on its text (gateway/inbound_notes.py): written
+# as the row's parts in memory.message_parts, never into state.db (lina#324).
+GATEWAY_NOTES_KEY = "gateway_notes"
 # The vec.chunks / vec.embeddings owner of an external message every agent reads (memory.messages NULL agent_id,
 # scope 'agents'); not a profile name, so no agent can write it (migration 0009, lina#364).
 SHARED_VECTOR_OWNER = "*"
@@ -293,7 +296,7 @@ MIN_COLLECT_DAYS = 2.0
 DEFAULT_COLLECT_DAYS = 30.0
 TEXT_EXPORT_NAME = "memory-messages.jsonl"
 _EXPORT_COLUMNS = ("uid", "source", "session_id", "conversation_id", "seq_in_session", "role", "content", "tool_name",
-                   "tool_call_id", "tool_calls", "scope", "native", "content_sha256")
+                   "tool_call_id", "tool_calls", "scope", "native", "content_sha256", "speaker", "speaker_ref")
 
 
 class MessageStore:
@@ -514,6 +517,37 @@ class MessageStore:
             names = [d.name for d in cur.description]
             return [dict(zip(names, row)) for row in cur.fetchall()]
 
+    def put_parts(self, uid: str, parts: Sequence[dict[str, Any]]) -> None:
+        """The gateway's notes on the message *uid* as its parts (``memory.message_parts``, lina#324), each once: inside
+        ``write()``, with the message's own row."""
+        rows = [(ordinal, self.agent_id, part["kind"], part.get("quoted_speaker"), part.get("quoted_ref"),
+                 _pg_text(str(part["text"])), uid) for ordinal, part in enumerate(parts)]
+        with self._writer_cursor() as cur:
+            cur.executemany("INSERT INTO memory.message_parts (message_id, ordinal, agent_id, kind, quoted_speaker,"
+                            " quoted_ref, content) SELECT message_id, %s, %s, %s, %s, %s, %s FROM memory.messages"
+                            " WHERE uid = %s ON CONFLICT (message_id, ordinal) DO NOTHING", rows)
+
+    def set_speakers(self, speakers: Iterable[tuple[str, str, Optional[str]]]) -> int:
+        """Fill the speaker of these rows (``(base uid, kind, ref)``, every text version of each) where the stored
+        fields left it ``unknown`` (migration 0013): lina-memory decides a turn's rows from its route when the turn
+        finishes (lina#324). A kind once decided is never changed."""
+        changed = 0
+        with self._cursor() as cur:
+            for base, kind, ref in speakers:
+                # The versions 'base#...' are the byte range ['base#', 'base$'), served by messages_uid_c.
+                cur.execute("UPDATE memory.messages SET speaker = %s, speaker_ref = %s WHERE (uid = %s OR"
+                            " (uid COLLATE \"C\" >= %s AND uid COLLATE \"C\" < %s)) AND speaker = 'unknown'",
+                            (kind, ref, base, base + "#", base + "$"))
+                changed += cur.rowcount
+        return changed
+
+    def speakers(self, uids: Iterable[str]) -> dict[str, str]:
+        """The stored speaker kind of each of *uids* this agent may read."""
+        wanted = list(dict.fromkeys(u for u in uids if u))
+        with self._cursor() as cur:
+            cur.execute("SELECT uid, speaker FROM memory.messages WHERE uid = ANY(%s)", (wanted,))
+            return dict(cur.fetchall())
+
     def set_conversation(self, uids: Iterable[str], conversation_id: str) -> int:
         """Fill ``conversation_id`` (lina#20) on these rows (``base_uid`` uids), every text version of each, where it
         is still null. The one change a written row takes: the field is null until identity resolves it. The match
@@ -563,23 +597,35 @@ class MessageStore:
                 deleted += len(gone)
 
     def export_texts(self, uids: Iterable[Optional[str]]) -> Iterator[dict[str, Any]]:
-        """The text rows of *uids* as JSON-ready dicts (``import_texts`` takes them back)."""
+        """The text rows of *uids* as JSON-ready dicts (``import_texts`` takes them back), each with its speaker and,
+        under ``parts``, the gateway's notes on it in order (the ``put_parts`` shape)."""
         wanted = sorted({u for u in uids if u})
         columns = ", ".join(_EXPORT_COLUMNS)
         for start in range(0, len(wanted), 1000):
             with self._cursor() as cur:
                 cur.execute(f"SELECT {columns}, extract(epoch FROM ts) FROM memory.messages WHERE uid = ANY(%s)",
                             (wanted[start:start + 1000],))
-                for record in cur.fetchall():
-                    row = dict(zip(_EXPORT_COLUMNS, record))
-                    row["ts"] = None if record[-1] is None else float(record[-1])
-                    row["payload_sha256"] = (row.get("native") or {}).get("payload_sha256")
-                    yield row
+                records = cur.fetchall()
+                cur.execute("SELECT m.uid, p.kind, p.content, p.quoted_speaker, p.quoted_ref FROM memory.message_parts p"
+                            " JOIN memory.messages m USING (message_id) WHERE m.uid = ANY(%s) ORDER BY m.uid, p.ordinal",
+                            (wanted[start:start + 1000],))
+                parts: dict[str, list[dict[str, Any]]] = {}
+                for uid, kind, text, quoted_speaker, quoted_ref in cur.fetchall():
+                    parts.setdefault(uid, []).append({"kind": kind, "text": text, "quoted_speaker": quoted_speaker,
+                                                      "quoted_ref": quoted_ref})
+            for record in records:
+                row = dict(zip(_EXPORT_COLUMNS, record))
+                row["ts"] = None if record[-1] is None else float(record[-1])
+                row["payload_sha256"] = (row.get("native") or {}).get("payload_sha256")
+                if row["uid"] in parts:
+                    row["parts"] = parts[row["uid"]]
+                yield row
 
     def import_texts(self, rows: Iterable[dict[str, Any]]) -> int:
         """Write exported text rows back under this agent, keeping rows already there (``ON CONFLICT DO
-        NOTHING``) in one transaction. A damaged row (``check_text_row``) fails the import before anything is
-        written. Returns the rows inserted."""
+        NOTHING``) in one transaction, with their gateway notes (``parts``). A row exported before speakers were
+        stored gets the kind its fields decide (migration 0013). A damaged row (``check_text_row``) fails the import
+        before anything is written. Returns the rows inserted."""
         rows = list(rows)
         for row in rows:
             if (damage := check_text_row(row)) is not None:
@@ -596,6 +642,8 @@ class MessageStore:
                 with self._writer_cursor() as cur:
                     cur.execute(sql, (row["uid"], self.agent_id, *values, row.get("ts")))
                     inserted += len(cur.fetchall())
+                if row.get("parts"):
+                    self.put_parts(row["uid"], row["parts"])
         return inserted
 
     def text_uids_with_digest(self, message_uid: str, content_sha256: str) -> list[str]:
@@ -660,7 +708,9 @@ class MessageStore:
 
     # ── memory_search / memory_open (lina#22) ──
 
-    def search_memory(self, query: str, *, sources: Sequence[str], limit: int = 20) -> list[MemoryRow]:
+    def search_memory(self, query: str, *, sources: Sequence[str], limit: int = 20,
+                      authors: Optional[Sequence[str]] = None,
+                      speakers: Optional[Sequence[str]] = None) -> list[MemoryRow]:
         """The rows of *sources* (``agent``, ``messages``) this agent may read that match *query*, best first.
 
         A row matches when its words match (the ``simple`` tsvector) or when one of the query's terms is a
@@ -671,10 +721,13 @@ class MessageStore:
         (lina#726). Agent rows are its turns (user and assistant text, no tool output), without the blocks the
         host injected as user turns (``_INJECTED_TURN_RE``); an external message edited later counts once, as its
         newest version. Forgotten rows are left out. Row-level security decides which rows are this agent's to
-        read."""
+        read. *authors* keeps the rows whose author or speaker ref is one of them (a person's linked handles),
+        *speakers* the rows of those speaker kinds, both before the limit."""
         terms = list(dict.fromkeys(t for t in query.split() if t))[:_MEMORY_TERMS]
-        if not terms or not sources:
+        if not terms or not sources or authors is not None and not authors:
             return []
+        by_author = "" if authors is None else " AND (author = ANY(%s) OR speaker_ref = ANY(%s))"
+        by_speaker = "" if speakers is None else " AND speaker = ANY(%s)"
         patterns = ["%" + _like_escape(term) + "%" for term in terms]
         hit_sum = " + ".join(["(content ILIKE %s)::int"] * len(patterns))
         any_hit = " OR ".join(["content ILIKE %s"] * len(patterns))
@@ -688,12 +741,13 @@ class MessageStore:
             " FROM memory.messages"
             " WHERE forgotten_at IS NULL AND content IS NOT NULL AND source = ANY(%s)"
             " AND (source <> 'agent' OR (role IN ('user', 'assistant') AND content !~ %s))"
-            f" AND (tsv @@ plainto_tsquery('simple', %s) OR {any_hit})"
+            f" AND (tsv @@ plainto_tsquery('simple', %s) OR {any_hit}){by_author}{by_speaker}"
             " ORDER BY split_part(uid, '#', 1), message_id DESC"
             ") hits ORDER BY score DESC, at DESC LIMIT %s")
         args = [query, *patterns, len(patterns), _MEMORY_LENGTH_SCALE, MEMORY_RECENCY_FLOOR,
                 MEMORY_RECENCY_HALF_LIFE_DAYS * 86400.0, list(sources), _INJECTED_TURN_RE, query, *patterns,
-                int(limit)]
+                *([] if authors is None else [list(authors), list(authors)]),
+                *([] if speakers is None else [list(speakers)]), int(limit)]
         with self._cursor() as cur:
             cur.execute(sql, args)
             return [_memory_row(row) for row in cur.fetchall()]
@@ -705,11 +759,14 @@ class MessageStore:
             return cur.fetchone() is not None
 
     def search_memory_vectors(self, embedding: Sequence[float], *, model: str, sources: Sequence[str],
-                              limit: int = 20) -> list[MemoryRow]:
+                              limit: int = 20, speakers: Optional[Sequence[str]] = None) -> list[MemoryRow]:
         """The rows of the embedded chunks (``vec.chunks``, kind ``chunk``) of *sources* nearest *embedding*, nearest
         first, each row once; empty when nothing of *sources* is embedded with *model*. Row-level security gives
-        this agent's chunks and the shared external ones (owner ``SHARED_VECTOR_OWNER``, migration 0009)."""
+        this agent's chunks and the shared external ones (owner ``SHARED_VECTOR_OWNER``, migration 0009).
+        *speakers* keeps the chunks holding a row of those speaker kinds, before the limit, and those rows."""
         vector = "[" + ",".join(repr(float(v)) for v in embedding) + "]"
+        of_speaker = "" if speakers is None else " AND speaker = ANY(%s)"
+        kinds = [] if speakers is None else [list(speakers)]
         with self._cursor() as cur:
             # Its own transaction (a savepoint inside a write) so the HNSW settings end with the query (lina#387).
             with cur.connection.transaction():
@@ -718,15 +775,17 @@ class MessageStore:
                 cur.execute(
                     "SELECT c.message_ids FROM vec.embeddings e JOIN vec.chunks c ON c.chunk_id = e.item_id"
                     " WHERE e.kind = 'chunk' AND e.model = %s AND c.source = ANY(%s)"
-                    " ORDER BY e.embedding <=> %s::vector LIMIT %s", (model, list(sources), vector, int(limit)))
+                    + ("" if speakers is None else " AND EXISTS (SELECT 1 FROM memory.messages m"
+                       " WHERE m.message_id = ANY(c.message_ids) AND m.speaker = ANY(%s))")
+                    + " ORDER BY e.embedding <=> %s::vector LIMIT %s", (model, list(sources), *kinds, vector, int(limit)))
                 ordered = list(dict.fromkeys(int(i) for row in cur.fetchall() for i in row[0]))
             if not ordered:
                 return []
             # The same readable rows as search_memory: an agent's own turns without the host-injected blocks.
             cur.execute(f"SELECT {_MEMORY_COLUMNS} FROM memory.messages WHERE message_id = ANY(%s)"
                         " AND forgotten_at IS NULL AND content IS NOT NULL"
-                        " AND (source <> 'agent' OR (role IN ('user', 'assistant') AND content !~ %s))",
-                        (ordered, _INJECTED_TURN_RE))
+                        " AND (source <> 'agent' OR (role IN ('user', 'assistant') AND content !~ %s))" + of_speaker,
+                        (ordered, _INJECTED_TURN_RE, *kinds))
             rows = {row.message_id: row for row in map(_memory_row, cur.fetchall())}
         return [rows[i] for i in ordered if i in rows][:int(limit)]
 
@@ -737,6 +796,31 @@ class MessageStore:
             cur.execute(f"SELECT {_MEMORY_COLUMNS} FROM memory.messages WHERE uid = %s", (uid,))
             row = cur.fetchone()
         return None if row is None else _memory_row(row)
+
+    def search_parts(self, query: str, *, limit: int = 20) -> list[PartRow]:
+        """The gateway's notes (``memory.message_parts``) this agent may read that match *query*, best first, the way
+        ``search_memory`` matches and ranks; a note on a forgotten message is left out."""
+        terms = list(dict.fromkeys(t for t in query.split() if t))[:_MEMORY_TERMS]
+        if not terms:
+            return []
+        patterns = ["%" + _like_escape(term) + "%" for term in terms]
+        hit_sum = " + ".join(["(p.content ILIKE %s)::int"] * len(patterns))
+        any_hit = " OR ".join(["p.content ILIKE %s"] * len(patterns))
+        sql = (f"SELECT {_PART_COLUMNS} FROM memory.message_parts AS p JOIN memory.messages AS m USING (message_id)"
+               " WHERE m.forgotten_at IS NULL"
+               f" AND (p.tsv @@ plainto_tsquery('simple', %s) OR {any_hit})"
+               f" ORDER BY ts_rank(p.tsv, plainto_tsquery('simple', %s), 1) + ({hit_sum})::float / %s DESC,"
+               " at DESC LIMIT %s")
+        with self._cursor() as cur:
+            cur.execute(sql, [query, *patterns, query, *patterns, len(patterns), int(limit)])
+            return [PartRow(*row) for row in cur.fetchall()]
+
+    def open_part(self, part_id: int) -> Optional[PartRow]:
+        with self._cursor() as cur:
+            cur.execute(f"SELECT {_PART_COLUMNS} FROM memory.message_parts AS p JOIN memory.messages AS m"
+                        " USING (message_id) WHERE p.part_id = %s AND m.forgotten_at IS NULL", (int(part_id),))
+            row = cur.fetchone()
+        return None if row is None else PartRow(*row)
 
 
 _MEMORY_TERMS = 8
@@ -760,9 +844,12 @@ _INJECTED_TURN_RE = (
     r"|System: |System note:|Runtime note:|CONTEXT COMPACTION|CONTEXT SUMMARY\]|PRIOR CONTEXT"
     r"|ASYNC DELEGATION|Planning state preserved)")
 _MEMORY_COLUMNS = ("message_id, uid, source, role, author, agent_id, conversation_id, session_id,"
-                   " coalesce(ts, observed_at) AS at, content, forgotten_at IS NOT NULL AS forgotten")
+                   " coalesce(ts, observed_at) AS at, content, forgotten_at IS NOT NULL AS forgotten, speaker,"
+                   " speaker_ref")
 _MEMORY_FIELDS = ("message_id, uid, source, role, author, agent_id, conversation_id, session_id, at, content,"
-                  " forgotten")
+                  " forgotten, speaker, speaker_ref")
+_PART_COLUMNS = ("p.part_id, m.uid, p.kind, p.speaker, p.quoted_speaker, p.quoted_ref,"
+                 " coalesce(m.ts, m.observed_at) AS at, p.content")
 
 
 @dataclass(frozen=True)
@@ -779,10 +866,25 @@ class MemoryRow:
     at: Any  # datetime
     content: Optional[str]
     forgotten: bool
+    speaker: str = "unknown"  # owner | agent | gateway | outside | unknown (migration 0013, lina#324)
+    speaker_ref: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class PartRow:
+    """One gateway note (``memory.message_parts``) on the message ``uid``."""
+    part_id: int
+    uid: str
+    kind: str
+    speaker: str
+    quoted_speaker: Optional[str]
+    quoted_ref: Optional[str]
+    at: Any  # the message's time
+    content: str
 
 
 def _memory_row(row: Sequence[Any]) -> MemoryRow:
-    values = list(row[:11])
+    values = list(row[:13])
     if values[10]:
         values[9] = None
     return MemoryRow(*values)
@@ -854,9 +956,21 @@ def _row_meta(row: dict[str, Any]) -> dict[str, Any]:
     return {field: row.get(field) for field in NATIVE_META_FIELDS}
 
 
+def _split_gateway_notes(display_metadata: Any) -> tuple[Any, list[dict[str, Any]]]:
+    """``(display metadata without the gateway's notes, the notes' parts)`` of an encoded ``display_metadata``."""
+    if not isinstance(display_metadata, str) or GATEWAY_NOTES_KEY not in display_metadata:
+        return display_metadata, []
+    meta = json.loads(display_metadata)
+    notes = meta.pop(GATEWAY_NOTES_KEY, None) if isinstance(meta, dict) else None
+    if not isinstance(notes, dict):
+        return display_metadata, []
+    return (json.dumps(meta) if meta else None), [part for part in notes.get("parts") or () if isinstance(part, dict)]
+
+
 def put_row_text(store: MessageStore, row: dict[str, Any], *, row_id: Optional[int]) -> dict[str, Any]:
     """Write *row*'s text (a message row in the old ``messages`` column shape) and return its placement
-    columns: the row without its text, plus ``text_uid``, ``content_digest`` and ``tool_call_count``."""
+    columns: the row without its text, plus ``text_uid``, ``content_digest`` and ``tool_call_count``. The gateway's
+    notes on a user row's text become the row's parts and leave its display metadata."""
     from agent.message_metadata import mint_uid
     message_uid = row.get("message_uid") or mint_uid()
     values = tuple(row.get(field) for field in TEXT_FIELDS)
@@ -865,6 +979,10 @@ def put_row_text(store: MessageStore, row: dict[str, Any], *, row_id: Optional[i
         tool_call_id=row.get("tool_call_id"), timestamp=row.get("timestamp"), session_id=row.get("session_id"),
         seq_in_session=row_id, meta={**_row_meta(row), "message_uid": message_uid})
     placement = {k: v for k, v in row.items() if k not in TEXT_FIELDS}
+    if "display_metadata" in placement:
+        placement["display_metadata"], parts = _split_gateway_notes(placement["display_metadata"])
+        if parts:
+            store.put_parts(uid, parts)
     placement.update(message_uid=message_uid, text_uid=uid, content_digest=content_digest(values[0]),
                      tool_call_count=tool_call_count(values[1]))
     return placement
@@ -1028,7 +1146,8 @@ def _remap_state_db_uids(db_path: Path, agent: str) -> list[str]:
 
 
 def _sidecar_rows(sidecar: Optional[Path], agent: str) -> list[dict[str, Any]]:
-    """A backup's text rows, each checked (``check_text_row``) and renamed to *agent*'s uid."""
+    """A backup's text rows, each checked (``check_text_row``) and renamed to *agent*'s uid; a row its old agent
+    said (``speaker_ref`` ``agent:<old>``) is said by *agent* now."""
     if sidecar is None:
         return []
     try:
@@ -1041,7 +1160,10 @@ def _sidecar_rows(sidecar: Optional[Path], agent: str) -> list[dict[str, Any]]:
             raise MessageTextRestoreError(
                 f"message text {row.get('uid') if isinstance(row, dict) else row!r} in {sidecar.name}: {damage}; "
                 "the backup is damaged")
-        row["uid"] = _remapped_uid(row["uid"], agent)
+        renamed = _remapped_uid(row["uid"], agent)
+        if renamed != row["uid"] and row.get("speaker_ref") == _agent_ref(row["uid"].split(":", 2)[1]):
+            row["speaker_ref"] = _agent_ref(agent)
+        row["uid"] = renamed
     return rows
 
 
@@ -1138,6 +1260,11 @@ def _agent_prefixes(old_agent: str, new_agent: str) -> tuple[str, str]:
     return f"{SOURCE_AGENT}:{old_agent}:", f"{SOURCE_AGENT}:{new_agent}:"
 
 
+def _agent_ref(agent: str) -> str:
+    """The ``speaker_ref`` of a row *agent* said (migration 0013)."""
+    return f"{SOURCE_AGENT}:{agent}"
+
+
 def check_agent_move(old_agent: str, new_agent: str) -> None:
     """Validate a move of *old_agent*'s text to *new_agent*, changing nothing: the owner role connects
     (StoreUnavailableError otherwise) and no new uid is held by different text (MessageTextRestoreError)."""
@@ -1165,9 +1292,14 @@ def check_agent_move(old_agent: str, new_agent: str) -> None:
 
 
 def _follow_text_owner(cur, from_agent: str, to_agent: str) -> None:
-    """Give *to_agent* the vec.chunks rows (and their kind ``chunk`` vectors) of *from_agent* whose message now
-    belongs to *to_agent*: embedded text follows its memory.messages row. A store from before migration 0003 has
-    no vec tables and nothing to move."""
+    """Give *to_agent* what of *from_agent* belongs to a memory.messages row *to_agent* now has: the row's gateway
+    notes (memory.message_parts, migration 0013), and the vec.chunks rows embedding it with their kind ``chunk``
+    vectors (migration 0003). A store from before one of those migrations has none of its rows to move."""
+    cur.execute("SELECT to_regclass('memory.message_parts') IS NOT NULL")
+    if cur.fetchone()[0]:
+        cur.execute("UPDATE memory.message_parts p SET agent_id = %s FROM memory.messages m"
+                    " WHERE m.message_id = p.message_id AND p.agent_id = %s AND m.agent_id = %s",
+                    (to_agent, from_agent, to_agent))
     cur.execute("SELECT to_regclass('vec.chunks') IS NOT NULL")
     if not cur.fetchone()[0]:
         return
@@ -1245,7 +1377,8 @@ def move_agent_rows(old_agent: str, new_agent: str) -> MovedRows:
     """Hand *old_agent*'s text rows to *new_agent* in one transaction (as the owner role: row-level security keeps
     lina_app inside one agent): agent_id and the uid prefix ``agent:<old>:`` -> ``agent:<new>:``. A row whose new
     uid already holds the same text stays where it is (its copy is there); one held by other text fails the move.
-    The embedded text and vectors of the moved rows (vec.chunks, kind ``chunk``) move with them, and so do the agent's
+    A moved row the old agent said (``speaker_ref`` ``agent:<old>``) is said by the new one. The gateway's notes, the
+    embedded text and the vectors of the moved rows move with them (``_follow_text_owner``), and so do the agent's
     LCM-X records (``_follow_lcm_owner``) unless *new_agent* has its own. Returns the new uids, so
     ``return_agent_rows`` can undo exactly this move."""
     import psycopg
@@ -1254,11 +1387,13 @@ def move_agent_rows(old_agent: str, new_agent: str) -> MovedRows:
     try:
         with conn.transaction(), conn.cursor() as cur:
             cur.execute(
-                "UPDATE memory.messages o SET agent_id = %s, uid = %s || substr(o.uid, %s)"
+                "UPDATE memory.messages o SET agent_id = %s, uid = %s || substr(o.uid, %s),"
+                " speaker_ref = CASE WHEN o.speaker_ref = %s THEN %s ELSE o.speaker_ref END"
                 " WHERE o.agent_id = %s AND starts_with(o.uid, %s) AND NOT EXISTS (SELECT 1 FROM memory.messages n"
                 " WHERE n.uid = %s || substr(o.uid, %s) AND n.native->>'payload_sha256' = o.native->>'payload_sha256')"
                 " RETURNING o.uid",
-                (new_agent, new_prefix, len(old_prefix) + 1, old_agent, old_prefix, new_prefix, len(old_prefix) + 1))
+                (new_agent, new_prefix, len(old_prefix) + 1, _agent_ref(old_agent), _agent_ref(new_agent), old_agent,
+                 old_prefix, new_prefix, len(old_prefix) + 1))
             moved = [row[0] for row in cur.fetchall()]
             _follow_text_owner(cur, old_agent, new_agent)
             moved = MovedRows(moved)
@@ -1283,8 +1418,10 @@ def return_agent_rows(uids: Sequence[str], old_agent: str, new_agent: str) -> No
     conn = _owner_connection()
     try:
         with conn.transaction(), conn.cursor() as cur:
-            cur.execute("UPDATE memory.messages SET agent_id = %s, uid = %s || substr(uid, %s) WHERE uid = ANY(%s)",
-                        (old_agent, old_prefix, len(new_prefix) + 1, list(uids)))
+            cur.execute("UPDATE memory.messages SET agent_id = %s, uid = %s || substr(uid, %s),"
+                        " speaker_ref = CASE WHEN speaker_ref = %s THEN %s ELSE speaker_ref END WHERE uid = ANY(%s)",
+                        (old_agent, old_prefix, len(new_prefix) + 1, _agent_ref(new_agent), _agent_ref(old_agent),
+                         list(uids)))
             _follow_text_owner(cur, new_agent, old_agent)
             if getattr(uids, "lcm_moved", False):
                 _follow_lcm_owner(cur, new_agent, old_agent)

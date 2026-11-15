@@ -13,6 +13,7 @@ import hermes_yaml
 
 POLICY_PATH = Path(__file__).with_name("policy.yaml")
 _SIGNAL_FIELDS = ("agent_context", "platform", "display_kind", "compressor_row", "author_is_bot")
+SPEAKER_KINDS = ("owner", "agent", "gateway", "outside", "unknown")
 # Producer-owned flags of rows the context compressor writes (agent/context_compressor.py,
 # agent/message_metadata.py); SessionDB keeps both, so a resumed row still carries them.
 _COMPRESSED_SUMMARY_KEY = "_compressed_summary"
@@ -25,6 +26,7 @@ class Rule:
     lcm: bool
     honcho: bool
     words_of: str
+    speaker: str
 
 
 @dataclass(frozen=True)
@@ -38,8 +40,11 @@ class TurnSignals:
 
 class Policy:
     def __init__(self, table: Mapping[str, Any]) -> None:
-        self._routes = {name: Rule(name, bool(row["lcm"]), bool(row["honcho"]), str(row["words_of"]))
-                        for name, row in table["routes"].items()}
+        self._routes = {name: Rule(name, bool(row["lcm"]), bool(row["honcho"]), str(row["words_of"]),
+                                   str(row["speaker"])) for name, row in table["routes"].items()}
+        bad = {rule.route for rule in self._routes.values() if rule.speaker not in SPEAKER_KINDS}
+        if bad:
+            raise ValueError(f"policy.yaml: routes with no speaker kind of {SPEAKER_KINDS}: {sorted(bad)}")
         self._match = [dict(row) for row in table["match"]]
         self._roles = dict(table["roles"])
         self.replaces = [dict(row) for row in table.get("replaces", ())]

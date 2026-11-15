@@ -181,10 +181,16 @@ def test_fifty_turns_each_request_starts_with_the_previous_one_except_across_a_c
         server.url = f"http://127.0.0.1:{server.server_port}/v1"
         _configure(home, server.url)
         agent = _agent(home, server, "sess-prefix", clock.now)
+        skill_turn: list[int] = []
 
         def before_turn(n: int) -> None:
-            if n == SKILL_TURN:
+            # The skill arrives on the first turn from SKILL_TURN on that follows a compaction: that turn cannot
+            # compact again, and a compaction on the skill's own turn would rebuild the prompt with it (no note).
+            # Where compactions fall depends on how many tokens each request carries.
+            compacted = n >= 2 and server.requests[n - 1].compactions != server.requests[n - 2].compactions
+            if n >= SKILL_TURN and not skill_turn and compacted:
                 _add_skill(home)
+                skill_turn.append(n)
             if n == NEXT_DAY_TURN:
                 clock.now += timedelta(days=1)
 
@@ -225,7 +231,9 @@ def test_fifty_turns_each_request_starts_with_the_previous_one_except_across_a_c
     systems = {r.body["messages"][0]["content"] for r in requests[:NEXT_DAY_TURN + 2]
                if r.compactions == requests[0].compactions}
     assert len(systems) == 1
-    assert "seed-calendar" in _text(requests[SKILL_TURN].body["messages"][-1])
+    assert skill_turn and skill_turn[0] < NEXT_DAY_TURN
+    assert requests[skill_turn[0]].compactions == requests[skill_turn[0] - 1].compactions
+    assert "seed-calendar" in _text(requests[skill_turn[0]].body["messages"][-1])
     assert "Today's date: Wednesday, November 04, 2026" in _text(requests[NEXT_DAY_TURN].body["messages"][-1])
     assert not any("Today's date" in _text(r.body["messages"][-1]) for r in requests[:NEXT_DAY_TURN])
 

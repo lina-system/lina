@@ -18,9 +18,9 @@ from typing import Any, Optional
 
 from agent.memory_provider import MemoryProvider, RecallStatus, ctx_bound
 
-from . import lcm, search
-from .identity import IdentityRegistry, SourceKey
-from .policy import load_policy, signals_for_turn
+from . import lcm, links, search, speaker
+from .identity import OWNER_HANDLE, IdentityRegistry, SourceKey
+from .policy import load_policy, signals_for_turn, turn_start_index
 from .record import TurnRecord, build_record, turn_rows
 
 logger = logging.getLogger(__name__)
@@ -101,7 +101,8 @@ class LinaMemoryProvider(MemoryProvider):
         next turn may have started and Honcho's own per-turn state names that turn's author. The turn starts at
         ``turn_start``, the row the runtime fixed when the turn began; a ``/steer`` or a stop-gate note it appended later
         is in the record, never its input or its route."""
-        history = local_messages if local_messages is not None else list(messages or ())
+        # A snapshot: the next turn appends to the transcript while this one is delivered.
+        history = list(local_messages if local_messages is not None else messages or ())
         author = dict(turn_author) if isinstance(turn_author, dict) else {}
         honcho_session = self._honcho.session_key if self._honcho_on else ""
         rule = self._policy.rule(self._policy.route_for(signals_for_turn(
@@ -109,13 +110,21 @@ class LinaMemoryProvider(MemoryProvider):
             turn_author=author or None, turn_start=turn_start)))
         lcm_conversation = lcm.conversation_id(session_id)
 
+        # The owner's words and the gateway's notes, from the egress-redacted copy Honcho may have.
+        sent = list(messages or ())
+        sent_index = turn_start_index(sent, turn_start)
+        notes = speaker.notes_of(sent[sent_index]) if sent_index is not None else None
+
         def deliver() -> None:
             record = self._record(rule, history, session_id=session_id, author=author, turn_start=turn_start,
-                                  honcho_session=honcho_session, lcm_conversation=lcm_conversation)
+                                  honcho_session=honcho_session, lcm_conversation=lcm_conversation,
+                                  gateway_notes=tuple((notes or {}).get("parts") or ()))
             if record.honcho and self._honcho_on:
-                self._honcho.sync_turn(user_content, assistant_content, session_id=session_id, turn_author=author,
-                                       messages=messages, turn_record=record, session_key=honcho_session)
+                self._honcho.sync_turn(notes["owner_text"] if notes else user_content, assistant_content,
+                                       session_id=session_id, turn_author=author, messages=messages,
+                                       turn_record=record, session_key=honcho_session)
             self._fill_conversation(record)
+            self._fill_speakers(record)
 
         self._submit(deliver)
 
@@ -135,19 +144,34 @@ class LinaMemoryProvider(MemoryProvider):
                 logger.warning("lina-memory: turns still queued at session end: %s", exc)
 
     def _record(self, rule, history, *, session_id: str, author: dict[str, Any], turn_start: Optional[int],
-                honcho_session: str, lcm_conversation: Optional[str]) -> TurnRecord:
+                honcho_session: str, lcm_conversation: Optional[str], gateway_notes: tuple = ()) -> TurnRecord:
         honcho_keys = self._honcho.source_keys(author, session_key=honcho_session) if self._honcho_on else {}
         agent = self._agent_name()
         person_id = None if author.get("is_bot") else self._registry.resolve(
             "person", self._person_keys(author, honcho_keys))
         agent_keys: list[SourceKey] = [("profile", agent), ("honcho_peer", honcho_keys.get("agent", ""))]
+        handle = self._author_handle(author)
+        speakers = speaker.turn_speakers(
+            self._policy, history, turn_start, agent_context=self._init.get("agent_context", ""),
+            platform=self._init.get("platform", ""), author=author, agent_ref=f"agent:{agent}",
+            person_ref=links.row_refs([handle])[0] if handle else None,
+            owner_handle=lambda: bool(handle) and self._registry.person_of(handle) == self._registry.person_of(
+                OWNER_HANDLE))
         return build_record(
             rule, turn_rows(history, turn_start), store_uid=self._store_uid, person_id=person_id,
             agent_id=self._registry.resolve("agent", agent_keys) or f"agent:{agent}",
             conversation_id=self._registry.resolve("conversation", self._conversation_keys(
                 session_id, honcho_keys, lcm_conversation)) or "", session_id=session_id, platform=self._init.get("platform", ""),
-            author_id=str(author.get("id") or "") or None,
+            author_id=str(author.get("id") or "") or None, speakers=speakers, gateway_notes=gateway_notes,
         )
+
+    def _author_handle(self, author: dict[str, Any]) -> Optional[SourceKey]:
+        """The turn author's handle: their gateway user, or the machine owner on a local surface."""
+        platform = self._init.get("platform", "")
+        user_id = str(author.get("id") or "") or self._init.get("user_id", "")
+        if user_id:
+            return ("gateway_user", f"{platform}:{user_id}")
+        return OWNER_HANDLE if platform in _LOCAL_PLATFORMS else None
 
     def _person_keys(self, author: dict[str, Any], honcho_keys: dict[str, str]) -> list[SourceKey]:
         platform = self._init.get("platform", "")
@@ -202,13 +226,26 @@ class LinaMemoryProvider(MemoryProvider):
         except Exception as exc:  # health: allow BLE001 -- the store being down must not cost the engines the turn
             logger.warning("lina-memory could not fill conversation_id: %s", exc)
 
-    # ── memory_search / memory_open ──
+    def _fill_speakers(self, record: TurnRecord) -> None:
+        if not record.speakers:
+            return
+        try:
+            self._message_store().set_speakers(record.speakers)
+        except Exception as exc:  # health: allow BLE001 -- the store being down must not cost the engines the turn
+            logger.warning("lina-memory could not fill the speakers of a turn: %s", exc)
+
+    # ── memory_search / memory_open / memory_link ──
 
     def _memory_search(self) -> search.MemorySearch:
         if self._search is None:
             self._search = search.MemorySearch(search.Readers(
-                store=self._message_store, honcho=self._honcho_reader, lcm=self._use_lcm, embedder=self._embedder))
+                store=self._message_store, honcho=self._honcho_reader, lcm=self._use_lcm, embedder=self._embedder,
+                person_refs=self._person_refs))
         return self._search
+
+    def _person_refs(self, person: str) -> list[str]:
+        """The row refs of every handle of *person* (a person id or a handle): its confirmed channels only."""
+        return links.row_refs(self._registry.handles(links.person_id(self._registry, person)))
 
     def _honcho_reader(self):
         if not self._honcho_on:
@@ -256,7 +293,7 @@ class LinaMemoryProvider(MemoryProvider):
     def _with_external_messages(self, honcho: str, query: str) -> str:
         """Per-turn and explicit recall both carry external-message hits; the source switch empties them (lina#23)."""
         found = self._memory_search().search(query, sources=["messages"])
-        messages = "\n".join(f"[{hit['ref']}] {hit['excerpt']}" for hit in found["results"])
+        messages = "\n".join(search.recall_line(hit) for hit in found["results"])
         return "\n\n".join(part for part in (honcho, messages) if part)
 
     def queue_prefetch(self, query: str, *, session_id: str = "") -> None:
@@ -268,11 +305,13 @@ class LinaMemoryProvider(MemoryProvider):
 
     def get_tool_schemas(self) -> list[dict[str, Any]]:
         honcho = self._honcho.get_tool_schemas() if self._honcho.is_available() else []
-        return [*honcho, search.SEARCH_SCHEMA, search.OPEN_SCHEMA]
+        return [*honcho, search.SEARCH_SCHEMA, search.OPEN_SCHEMA, links.LINK_SCHEMA]
 
     def handle_tool_call(self, tool_name: str, args: dict[str, Any], **kwargs) -> str:
         if tool_name in search.TOOL_NAMES:
             return search.handle_tool_call(self._memory_search(), tool_name, args)
+        if tool_name == links.LINK_TOOL:
+            return links.handle_tool_call(self._registry, args)
         return self._honcho.handle_tool_call(tool_name, args, **kwargs)
 
     def on_turn_start(self, turn_number: int, message: str, **kwargs) -> None:
