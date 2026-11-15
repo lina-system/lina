@@ -419,7 +419,7 @@ brain:
       atoms: {calls: 100, input_chars: 400000}
       patterns: {calls: 1, input_chars: 60000}
       drift: {calls: 20, input_chars: 100000}
-    report_dir: ""                 # "" = <HERMES_HOME>/brain/dream; never inside an imported wiki
+    report_dir: ""                 # "" = <HERMES_HOME>/brain-dream; never inside an imported wiki
     lock_ttl_minutes: 30
 ```
 
@@ -455,7 +455,8 @@ other kind becomes `accepted` and is carried out by hand. A proposal graded `ext
 The one line gives new links, atoms, proposals by phase, contradictions, orphans of all pages and the spend (model
 calls and input characters), plus every phase a budget stopped, a failure, or a held lock. The report page,
 `<report_dir>/<date>-cycle-<id>.md`, adds a table per phase and the orphan list. The cycle refuses a
-`report_dir` inside an imported directory.
+`report_dir` inside an imported directory. The default lies beside the brain work folder, not in it: that folder
+(`<LINA root>/brain`, see "Project pages from the ledger") is indexed, so a report there would become a page.
 
 Each finished cycle is a row of `brain.dream_cycles`. The view `brain.dream_metrics` gives per cycle: orphan
 rate, the share of pages first seen in that cycle (`brain.dream_pages_seen`) that had a link by its end, new

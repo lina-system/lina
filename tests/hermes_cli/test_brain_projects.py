@@ -157,6 +157,21 @@ def test_a_wiki_import_keeps_the_ledger_links_of_its_pages(home, _memory_store, 
     assert _edges(_memory_store) == linked
 
 
+def test_a_cycle_report_in_its_default_folder_is_never_a_page_of_the_default_work_folder(tmp_path, monkeypatch,
+                                                                                         _memory_store, capsys):
+    work = WorkEnv(tmp_path, monkeypatch)
+    work.ok("add", "목표", "--by", "alpha", "--area", "Dev", "--title", "빌드 기기 정리", "--basis", "정리해 줘",
+            "--done", "기기가 답한다", "--check", "false")
+    code, out = _brain(capsys, "dream", "--phase", "orphans")
+    assert code == 0, out
+
+    first = _json(capsys, "projects", "sync")
+    second = _json(capsys, "projects", "sync")
+
+    assert first["pages_created"] == ["goal-g1"] and second["pages_created"] == []
+    assert sorted(path.name for path in (work.root / "brain").rglob("*.md")) == ["goal-g1.md"]
+
+
 def test_sync_refuses_a_work_dir_that_overlaps_an_imported_wiki(home, _memory_store, capsys):
     inside = unicodedata.normalize("NFC", str(home.wiki.resolve() / "generated"))
     home.config(extra=f"brain: {{work_dir: {inside}}}\n")

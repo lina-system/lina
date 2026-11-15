@@ -1390,7 +1390,7 @@ DEFAULT_CONFIG = {
     # goal is satisfied, else a continuation prompt re-enters the session until done, budget
     # exhausted, or paused. Judge failures fail OPEN; the budget is the backstop.
     # The nightly brain cycle, `lina brain dream` (docs/brain.md): each model phase stops when its calls or input
-    # characters are spent; report_dir "" = <HERMES_HOME>/brain/dream. The model is auxiliary.brain_dream.
+    # characters are spent; report_dir "" = <HERMES_HOME>/brain-dream. The model is auxiliary.brain_dream.
     "brain": {
         "dream": {
             "budget": {

@@ -65,7 +65,7 @@ def settings(section: dict | None, home: Path) -> Settings:
         budgets[phase] = Budget(_count(spec["calls"], f"budget.{phase}.calls"),
                                 _count(spec["input_chars"], f"budget.{phase}.input_chars"))
     counts = {key: _count(section.get(key, defaults[key]), key) for key in _COUNTS}
-    report_dir = Path(section.get("report_dir") or home / "brain" / "dream").expanduser()
+    report_dir = Path(section.get("report_dir") or home / "brain-dream").expanduser()
     return Settings(budgets, report_dir, timedelta(minutes=counts["lock_ttl_minutes"]), counts["page_chars"],
                     counts["pattern_days"], counts["concept_min_group"], counts["consolidate_min_atoms"],
                     timedelta(hours=counts["consolidate_min_age_hours"]))
