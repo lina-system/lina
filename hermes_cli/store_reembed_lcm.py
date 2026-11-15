@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import importlib
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from psycopg import Connection
 
@@ -26,7 +26,7 @@ def _write_batch(conn: Connection, agent: str, model: str, identity: str,
         conn.execute(
             "UPDATE ctx.lcm_embedding_profile SET active = 0, archived_at = %s "
             "WHERE identity_hash <> %s AND replace(task, '+prefix', '') = 'summary' "
-            "AND active = 1 AND archived_at IS NULL", (datetime.now(timezone.utc).isoformat(), identity))
+            "AND active = 1 AND archived_at IS NULL", (datetime.now(UTC).isoformat(), identity))
         for (node, text, tokens), vector in zip((r for r in rows if r[1]), vectors, strict=True):
             conn.execute(
                 "INSERT INTO ctx.lcm_embedding_vectors (embedded_id, identity_hash, vec) "
