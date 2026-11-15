@@ -188,6 +188,24 @@ def test_detail_carries_the_owner_s_words_threads_decision_links_and_owner_done_
     assert (goal["state"], goal["closedAt"], goal["stateSince"]) == ("done", NOW + 60, NOW + 60)
 
 
+def test_an_answered_decision_reads_the_same_on_the_goal_s_children_the_item_and_the_cli_show(work, client):
+    # lina#720: the answer waits on the agent, not the owner, on every surface.
+    work.goal_and_todos()
+    work.ok("wait", "T1", "--decide", "어느 기기부터 볼까?", "--choice", "1번", "--choice", "2번")
+    work.ok("comment", "T1", "1번", "--answer")
+
+    child = next(row for row in _detail(client, "G1")["children"] if row["id"] == "T1")
+    todo = _detail(client, "T1")
+
+    assert todo["decision"]["answered"] is True
+    assert (child["state"], child["reason"]) == (todo["state"], todo["reason"]) == (_view_states(work)["T1"], None)
+    assert todo["state"] != "waiting"
+    assert "상태: 하는 중" in work.ok("show", "T1")
+
+    work.ok("reply", "T1", "c1", "어느 포트를 열까?", "--result", "needs-answer", "--by", "alpha")
+    assert (_detail(client, "T1")["state"], _view_states(work)["T1"]) == ("waiting", "waiting")
+
+
 def test_an_unknown_id_an_area_a_memo_and_a_dropped_item_answer_404(work, client):
     _record(work)
     assert {"A1", "M1", "T3"} <= {row["id"] for row in work.json("--all")["items"]}
