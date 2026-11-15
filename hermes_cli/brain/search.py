@@ -7,7 +7,7 @@ Two legs rank pages, each on its own; the agent's search fuses them with its oth
 - **semantic**: one vector per page in ``vec.embeddings`` (kind ``page``, ``item_id`` = ``brain.pages.page_id``,
   owner ``*``, migration 0014) of the page's search text (``search_text``: title, names, compiled truth), with the
   home's embedding model; nearest first.
-- **keyword**: BM25 over the page's keyword terms in ``brain.search_terms`` (migration 0021). Korean writes particles
+- **keyword**: BM25 over the page's keyword terms in ``brain.search_terms`` (migration 0020). Korean writes particles
   and endings onto words (서윤이, 푸른소리랑) and joins or spaces compounds at will (기타줄, 기타 줄), so a term is
   not a space-separated word: with Kiwi (the ``korean`` extra) it is a morpheme (a noun as written, a predicate in
   its dictionary form) or a run of nouns joined; without Kiwi it is a character bigram of each Hangul run. Both sets

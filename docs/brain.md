@@ -311,7 +311,7 @@ lina brain search-eval tests/fixtures/brain_search/queries.json
   links read as their words, at most 4,000 characters). A page with a vector of the model is skipped; a changed file
   has already lost its vector (trigger `pages_drop_vector`). Without an embedding endpoint no vectors are written and
   the report says so.
-- **Keyword terms** in `brain.search_docs` and `brain.search_terms` (migration `0021_brain_search.sql`, shared and
+- **Keyword terms** in `brain.search_docs` and `brain.search_terms` (migration `0020_brain_search.sql`, shared and
   SELECT-only for `lina_app` like the other brain tables). Korean writes particles and endings onto words (서윤이,
   푸른소리랑) and joins or spaces compounds at will (기타줄, 기타 줄), so a term is not a space-separated word.
   Two analyzers are kept side by side: `kiwi` (Kiwi, the `korean` extra: nouns as written, predicates in their
