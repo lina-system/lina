@@ -99,6 +99,12 @@ def list_context_file_sources(
             status = (_loaded_status(content, len(content), max_chars, user_authored=True) if content
                       else _empty_status(soul_path))
             sources.append(_entry("SOUL.md", soul_path, content, status))
+        overlay_path = home / _pb.COPY_OVERLAY_NAME
+        if _pb._exists_or_denied(overlay_path):
+            content = _pb._read_context_file(overlay_path)
+            status = (_loaded_status(content, len(content), max_chars) if content
+                      else _empty_status(overlay_path))
+            sources.append(_entry(_pb.COPY_OVERLAY_NAME, overlay_path, content, status))
     return sources
 
 

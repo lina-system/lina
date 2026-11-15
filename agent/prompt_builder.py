@@ -1566,6 +1566,27 @@ def load_soul_md(context_length: Optional[int] = None, home_override: Path | Non
         return None
 
 
+# Written by `lina migrate memory` into a migrated copy's home (hermes_cli/migrate_memory_overlay.py) and loaded
+# right after SOUL.md: the copy's own work record, which supersedes the copied lines naming the previous
+# machine's board, wrapper and hosts (lina#719).
+COPY_OVERLAY_NAME = "SOUL.overlay.md"
+
+
+def load_copy_overlay(context_length: Optional[int] = None, home_override: Path | None = None) -> Optional[str]:
+    """The migrated copy's work-record instruction from HERMES_HOME, or None. Scanned like a project context
+    file: a hit is BLOCKED, since the copy's own migration writes it and nothing else should."""
+    from agent.safe_worker_policy import safe_worker_enabled
+
+    if safe_worker_enabled():
+        return None
+    path = (Path(home_override) if home_override is not None else get_hermes_home()) / COPY_OVERLAY_NAME
+    content = _read_context_file(path)
+    if not content:
+        return None
+    return _truncate_content(_scan_context_content(content, COPY_OVERLAY_NAME), COPY_OVERLAY_NAME,
+                             context_length=context_length, read_path=str(path))
+
+
 def _read_context_file(path: Path) -> str:
     """Stripped text of *path*; "" when missing, empty or unreadable (logged at debug)."""
     if not path.exists():

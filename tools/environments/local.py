@@ -678,14 +678,39 @@ def _resolve_hermes_bin_dir() -> str | None:
     return _HERMES_BIN_DIR
 
 
+def install_command_dir() -> str | None:
+    """This install's own launcher dir: a sealed payload's, else the venv's console-script dir beside the
+    interpreter, else None. Never a PATH lookup, which can name another install's ``lina`` or an old
+    wrapper's ``hermes`` (lina#719)."""
+    from pm.environments import payload_command_dir
+
+    payload_dir = payload_command_dir(Path(__file__).resolve().parents[2])
+    if payload_dir is not None and payload_dir.is_dir():
+        return str(payload_dir)
+    exe_dir = os.path.dirname(sys.executable) if sys.executable else ""
+    shim = "hermes.exe" if _IS_WINDOWS else "hermes"
+    return exe_dir if exe_dir and os.path.isfile(os.path.join(exe_dir, shim)) else None
+
+
+def _copy_install_dir() -> str | None:
+    """The install dir a migrated copy's terminal puts first, or None. ``lina migrate memory`` scopes the
+    copy's terminal with ``terminal.home_mode: profile``; every other profile keeps its PATH order."""
+    from hermes_constants import _HOME_MODE_ALIASES
+    from tools.terminal_scope import terminal_env
+
+    mode = terminal_env("TERMINAL_HOME_MODE", "auto").strip().lower()
+    return install_command_dir() if _HOME_MODE_ALIASES.get(mode, mode) == "profile" else None
+
+
 def _prepend_hermes_bin_dir(existing_path: str) -> str:
     """Prepend the hermes install dir to ``existing_path`` if missing. A sealed payload's
-    launcher dir moves to the front even when already listed: a login PATH can list
-    another install's ``hermes`` ahead of it."""
+    launcher dir, and a migrated copy's own install dir, move to the front even when already
+    listed: a login PATH can list another install's ``hermes`` ahead of it."""
     bin_dir = _resolve_hermes_bin_dir()
-    if bin_dir and _HERMES_BIN_DIR_IS_PAYLOAD:
-        rest = [entry for entry in existing_path.split(os.pathsep) if entry and entry != bin_dir]
-        return os.pathsep.join([bin_dir, *rest])
+    first = bin_dir if bin_dir and _HERMES_BIN_DIR_IS_PAYLOAD else _copy_install_dir()
+    if first:
+        rest = [entry for entry in existing_path.split(os.pathsep) if entry and entry != first]
+        return os.pathsep.join([first, *rest])
     return _prepend_missing_path_entries(existing_path, [bin_dir] if bin_dir else [])
 
 
@@ -874,18 +899,28 @@ def _append_dropped_path_entries(cmd_string: str, parent_path: str) -> str:
     to the same binary (the user's nvm/pyenv keep precedence); only commands that had
     no match gain one. Present entries are never duplicated; missing absolute dirs are skipped.
     Background commands (``ProcessRegistry.spawn_local``, ``bash -lic``, no snapshot) use
-    this same prelude so the two paths cannot diverge."""
+    this same prelude so the two paths cannot diverge. In a migrated copy's terminal the
+    copy's own install dir then moves to the front, after the login profile ran: a user's
+    rc that puts an old wrapper's ``hermes`` first must not decide which ``lina`` the
+    copy's agent runs (lina#719)."""
     if _IS_WINDOWS:
         return cmd_string  # native PATH stays ``;``-joined; bash sees a converted copy
     # Relative entries resolve against the shell's cwd, not ours, so only absolute ones are checked.
     entries = [d for d in dict.fromkeys(parent_path.split(":"))
                if d and (not os.path.isabs(d) or os.path.isdir(d))]
-    if not entries:
-        return cmd_string
-    restore = (f"for __hermes_p in {' '.join(shlex.quote(d) for d in entries)}; do "
-               'case ":$PATH:" in *":$__hermes_p:"*) ;; *) PATH="${PATH:+$PATH:}$__hermes_p" ;; esac; '
-               "done; unset __hermes_p; export PATH")
-    return restore + "\n" + cmd_string
+    prelude = []
+    if entries:
+        prelude.append(f"for __hermes_p in {' '.join(shlex.quote(d) for d in entries)}; do "
+                       'case ":$PATH:" in *":$__hermes_p:"*) ;; *) PATH="${PATH:+$PATH:}$__hermes_p" ;; esac; '
+                       "done; unset __hermes_p; export PATH")
+    if first := _copy_install_dir():
+        # Drop every listed copy of the dir, then put it first.
+        prelude.append(f"__hermes_d={shlex.quote(first)}; __hermes_p=\":$PATH:\"; while :; do "
+                       'case "$__hermes_p" in *":$__hermes_d:"*) '
+                       '__hermes_p="${__hermes_p%%:"$__hermes_d":*}:${__hermes_p#*:"$__hermes_d":}" ;; '
+                       "*) break ;; esac; done; __hermes_p=${__hermes_p#:}; __hermes_p=${__hermes_p%:}; "
+                       'PATH="$__hermes_d${__hermes_p:+:$__hermes_p}"; unset __hermes_d __hermes_p; export PATH')
+    return "\n".join([*prelude, cmd_string]) if prelude else cmd_string
 
 
 # --- Process-group teardown (POSIX) ---

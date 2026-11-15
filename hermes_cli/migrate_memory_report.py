@@ -2,8 +2,15 @@
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import Sequence
+
+# The previous machine's work-status commands: its kanban wrapper (also `hermes -p <profile> kanban`) and queue.
+_OLD_WORK_COMMAND = re.compile(r"\bhermes\b(?:\s+-p\s+\S+)?\s+kanban\b|\bkanban\s+--board\b|\bsession-queue\b")
+_DATABASES = frozenset({"state.db", "lcm.db", "work.db"})
 
 
 @dataclass(frozen=True, order=True)
@@ -49,6 +56,38 @@ class SourceReport:
             "unexpected": [asdict(row) for row in sorted((destination - source).elements())],
             "ok": self.ok,
         }
+
+
+def _census_patterns(hosts: Sequence[str], source_home: Path) -> dict[str, re.Pattern | None]:
+    named = "|".join(re.escape(host) for host in hosts)
+    host = rf"(?<![\w.-])(?:{named})(?![\w-])"
+    paths = [str(source_home)]
+    if source_home.is_relative_to(Path.home()) and source_home != Path.home():
+        paths.append("~/" + source_home.relative_to(Path.home()).as_posix())
+    return {"old_work_command": _OLD_WORK_COMMAND,
+            "ssh_to_old_host": re.compile(rf"\bssh\b[^\n]*?{host}", re.IGNORECASE) if hosts else None,
+            "old_host_name": re.compile(host, re.IGNORECASE) if hosts else None,
+            "old_path": re.compile("|".join(re.escape(path) for path in paths))}
+
+
+def copy_census(profile_dir: Path, *, old_hosts: Sequence[str], source_home: Path, top: int = 5) -> dict:
+    """What the copied files still say about the previous machine, counted and never rewritten (lina#719): per
+    class the files with a hit, the hits and the files with most hits. The copy's ``SOUL.overlay.md``
+    supersedes their status lines; the rest are often still true of machines that exist."""
+    patterns = _census_patterns(old_hosts, source_home)
+    hits: dict[str, Counter] = {name: Counter() for name in patterns}
+    for path in sorted(profile_dir.rglob("*")):
+        if not path.is_file() or path.name in _DATABASES or path.relative_to(profile_dir) == Path("config.yaml"):
+            continue
+        text = path.read_bytes().decode("utf-8", errors="replace")
+        relative = path.relative_to(profile_dir).as_posix()
+        for name, pattern in patterns.items():
+            if pattern is not None and (count := sum(1 for _ in pattern.finditer(text))):
+                hits[name][relative] = count
+    return {name: {"files": len(counts), "hits": sum(counts.values()),
+                   "top": [{"file": file, "hits": count}
+                           for file, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:top]]}
+            for name, counts in hits.items()}
 
 
 def duplicate_report(agent: str) -> dict:

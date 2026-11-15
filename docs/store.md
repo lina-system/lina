@@ -324,6 +324,19 @@ from duplicate version identities. `ok` means the included migration checks pass
 step to be counted and ok, including explicit absence and deferred-vector accounting. It does not mean an
 embedding endpoint was called. An accounting mismatch exits nonzero.
 
+The copied persona, notes, skills and summaries still say where work status lived on the old machine (its kanban
+board, the `hermes kanban` wrapper, `session-queue`, ssh to its hosts), and are copied unchanged. The migration
+writes one file of its own instead, `SOUL.overlay.md` in the new agent's profile, loaded into the system prompt right
+after `SOUL.md` on every channel: the agent's work record is `lina work` (named by the absolute path of this
+install's own `lina`), the old board, `hermes kanban`, `session-queue` and each `--old-host` belong to the previous
+machine, and this replaces the copied status lines (lina#719). It is rewritten on every run and, like `SOUL.md`, a
+file-tool write to it needs approval. The report's `overlay` names the file, the `lina` it names and the hosts, and
+`census` counts, read-only, per class (`old_work_command`, `ssh_to_old_host`, `old_host_name`, `old_path`) the
+copied files with a hit, the hits and the files with the most hits. With `terminal.home_mode: profile` the copy's
+terminal also puts this install's own launcher directory first on `PATH`, after the login shell's profile ran, so
+`lina` and `hermes` resolve to this install even when the host user's profile puts another `lina` or an old wrapper
+first; profiles with another `home_mode` keep their `PATH` order.
+
 Repeating the same command verifies and reuses the same snapshots rather than capturing new source data;
 it inserts nothing and fails if copied destination messages were lost or changed. Use a new work directory
 to capture new source data. External ingestion keeps its cursor in the destination store under the original
