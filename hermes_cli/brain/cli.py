@@ -9,6 +9,8 @@ from pathlib import Path
 
 
 def build(subparsers) -> None:
+    from hermes_cli.brain.upkeep import run as run_upkeep
+
     importing = subparsers.add_parser(
         "import", help="Index a wiki directory into the brain; its files are read, never changed",
         description="Read every markdown file under DIR into schema brain of the LINA store: pages, aliases, links "
@@ -32,6 +34,10 @@ def build(subparsers) -> None:
     merge.set_defaults(brain_fn=run_merge)
     mapping = subparsers.add_parser("mapping", help="Print the built-in folder-to-type mapping as YAML")
     mapping.set_defaults(brain_fn=run_mapping)
+    upkeep = subparsers.add_parser("upkeep", help="Find links, repair indexed backlinks, report lint and orphans")
+    upkeep.add_argument("--root", metavar="DIR", help="One imported directory; default: all imported directories")
+    upkeep.add_argument("--json", action="store_true", help="Print the deterministic report as JSON")
+    upkeep.set_defaults(brain_fn=run_upkeep)
 
 
 def execute(args: argparse.Namespace) -> int:

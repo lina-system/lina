@@ -235,11 +235,60 @@ agent read them. A page's vector is deleted when the page is deleted or its file
 - **PARA.** The owner does not classify (structure paper, 11-11). The brain is to link areas, projects and goals
   behind the scenes. This issue only maps folders to page types. It does not fold PARA folders into brain folders,
   move any file, write `RESOLVER.md` or per-folder `README.md` files, or link ledger goals to project pages.
-- **The nightly cycle** (lina#443, lina#444): lint, backlinks, link upkeep, the orphan report after a cycle, atoms,
-  proposals and LLM phases. `atoms` and `proposals` exist but nothing writes them yet.
+- **The nightly cycle** (lina#444): scheduling, atoms, proposals and LLM phases. Deterministic upkeep is available
+  separately (below). `atoms` and `proposals` exist but nothing writes them yet.
 - **Grades** (lina#440): stored, defaulting to `external`. Injection and promotion do not read them yet.
 - **Honcho and person pages** (lina#445): which facts live in a person page and which in Honcho conclusions is
   still the owner's decision. Nothing here reads or writes Honcho.
 - **Search** (lina#446): page vectors and a Korean keyword index. No page is embedded yet.
 - **Frontmatter `type` labels** that are not page types (a wiki's own labels) are kept in the frontmatter copy but
   do not decide the type. An owner mapping for such labels could come later.
+
+## Deterministic upkeep
+
+```sh
+lina brain upkeep --root ./wiki
+lina brain upkeep --root ./wiki --json
+lina brain upkeep                         # every imported root, in path order
+```
+
+Upkeep reads the files and their existing index once, without a model, embeddings, external API calls or a cycle
+lock. It uses the mapping and merges recorded by import. All file reading and analysis happen outside database
+transactions; each missing edge is inserted in its own short transaction. Files are never written. Run
+`lina brain import DIR` first, and again after adding, removing or renaming pages: upkeep reports unindexed pages
+but does not create pages or remove existing indexed edges. An unknown `--root` is an error.
+
+The report separates `written_links` (wiki and Markdown links) from `inferred_mentions` (plain text naming an
+indexed title or alias). Both use type `mentions` and the source file's relative path as `source_ref`, exactly
+like import. If the same file has both forms for the same target, it is reported as written and stored once.
+Code spans, fenced blocks, frontmatter and the text inside written links do not infer mentions.
+
+Korean particles (`은/는/이/가/을/를/의/와/과/에/에서/으로/로/도/만/께/에게`, among others), compound particles
+such as `에게도`, and common name endings such as `입니다`, `이에요`, `예요`, `이세요`, `이군요` and `이네요`
+can follow a name. Names are NFC-normalized and case-folded; longer names are tried first, with word boundaries
+on both sides of the complete name and suffix. A short name inside a longer Hangul word is not a mention.
+Bracket links also accept these suffixes when the full name does not resolve.
+
+`new_links` counts rows actually inserted. `fixed_backlinks` counts newly inserted edges whose reverse already
+exists in the index. A reverse edge is inserted only when the reverse page's body supplies that link or mention.
+Otherwise `missing_backlinks` identifies the missing direction and the file that would need it; upkeep never
+invents reciprocal evidence. Orphans have no incoming or outgoing link in either the scanned graph or the existing
+index, including other typed edges and edges from another imported root.
+
+Lint is report-only. Every text finding is one line with the relative file path, rule name and detail:
+
+| Rule | Meaning |
+| --- | --- |
+| `missing-title` | No nonempty frontmatter title or level-one heading outside code; the filename fallback does not count |
+| `duplicate-slug` | Multiple files share the original filename slug, even when import disambiguated their paths |
+| `duplicate-alias` | One normalized name belongs to multiple pages |
+| `broken-link` | A `[[link]]` has no target or is ambiguous |
+| `timeline-order` | A dated heading below the timeline divider goes backwards; equal dates are allowed |
+| `unknown-type` | An explicit type is not a page type, or a folder fell through the mapping to its default |
+
+Upkeep uses the importer's scanner and its single set of exclusions. Conflict-copy directories are excluded as
+well as conflict-copy files; `@eaDir`, `#recycle` and the other exclusions in the import table apply to both.
+
+The JSON and text reports contain no timestamp or elapsed duration. On unchanged input a second run reports zero
+new links and zero fixed backlinks, with identical lint and orphan lines. Subsequent unchanged runs are byte-for-byte
+identical. The first report's change counters and added-edge lists naturally differ when it repaired the index.
