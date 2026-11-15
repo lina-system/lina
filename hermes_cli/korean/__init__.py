@@ -1,1 +1,1 @@
-"""Natural Korean for every agent (lina#376)."""
+"""Natural Korean in LINA's replies (lina#376): the owner's words and the labeled set that measures the checks."""
