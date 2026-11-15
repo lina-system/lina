@@ -407,7 +407,7 @@ class TestDialecticInputGuard:
         # Mock the peer to capture the query
         mock_peer = MagicMock()
         mock_peer.chat.return_value = "answer"
-        mgr._get_or_create_peer = MagicMock(return_value=mock_peer)
+        mgr._dialectic_peer = MagicMock(return_value=mock_peer)
 
         long_query = "word " * 100  # 500 chars, exceeds 100 limit
         mgr.dialectic_query("test", long_query)
@@ -435,7 +435,7 @@ class TestDialecticInjectionCap:
 
         mock_peer = MagicMock()
         mock_peer.chat.return_value = answer
-        mgr._get_or_create_peer = MagicMock(return_value=mock_peer)
+        mgr._dialectic_peer = MagicMock(return_value=mock_peer)
         return mgr
 
     def test_injection_path_truncates(self):

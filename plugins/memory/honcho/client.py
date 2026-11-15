@@ -674,8 +674,9 @@ def telemetry_headers() -> dict[str, str]:
     }
 
 
-def _build_client(config: HonchoClientConfig) -> Honcho:
-    """Construct the SDK client (runs inside the slot factory so racing callers share one)."""
+def _build_client(config: HonchoClientConfig, *, max_retries: int | None = None, http_client: Any = None) -> Honcho:
+    """Construct the SDK client (runs inside the slot factory so racing callers share one). ``max_retries``
+    and ``http_client`` override the SDK defaults for the dialectic client (dialectic_client.py)."""
     with contextlib.suppress(Exception):  # lazy-dep failures fall through to the canonical import error below
         from pm import ensure_import as _lazy_ensure
         _lazy_ensure("honcho")
@@ -716,6 +717,10 @@ def _build_client(config: HonchoClientConfig) -> Honcho:
                     "timeout": timeout}
     if config.telemetry:  # attribution ships only with the user's explicit honcho.json opt-in
         kwargs["default_headers"] = telemetry_headers()
+    if max_retries is not None:
+        kwargs["max_retries"] = max_retries
+    if http_client is not None:
+        kwargs["http_client"] = http_client
     if base_url:
         # The SDK's route builders already carry the version prefix ("/v3/..."), so
         # strip a trailing version segment from any base_url to avoid "/v3/v3/...".
