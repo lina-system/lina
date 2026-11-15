@@ -50,7 +50,7 @@ changes less often than the one after it, and only a compaction may rewrite byte
 | Part | Built in | Changes |
 | --- | --- | --- |
 | System and persona (identity, SOUL, guidance, context files, skills index, plugin sections (among them the self note and the agent's core tastes, after a line saying tastes never change reporting, honesty, permissions, verification, the owner's instructions or safety), profile line, the session's start date and model lines, runtime environment) | `agent/system_prompt.py` `build_system_prompt_parts` | frozen per session; rebuilt at a compaction; the self note and core tastes change at most daily and weekly and reach a running session only at that rebuild |
-| Notes and person card (MEMORY.md, USER.md, the memory provider's block, then its person card: Honcho's representation and peer card from `session_card_block()`), closing the prompt between `# Notes and person card` and its end marker | same, `_memory_parts` | frozen per session; reread at a compaction |
+| Notes and person card (MEMORY.md, USER.md, the memory provider's block, then its person card from `session_card_block()`: the person's brain page, then Honcho's session summary and the agent's own sections; Honcho's representation and peer card only while the person has no page), closing the prompt between `# Notes and person card` and its end marker | same, `_memory_parts` | frozen per session; reread at a compaction |
 | Upper summary DAG: LCM-X's condensed nodes (depth 1 and up), deepest first | LCM-X `_assemble_context` | appended to or rewritten only when they are themselves condensed |
 | Lower summary nodes (depth 0) and the recent turns | LCM-X, then the transcript | appended every turn; replaced at a compaction |
 | Found memory: the turn's recall as a `memory_recall` tool call and its result, after the user message. `memory_recall` is a real read-only tool (`agent/memory_recall_tool.py`) listed with the provider's tools, so strict providers accept the call | `agent/turn_context.py` `recall_tool_rows` | per turn |
@@ -63,6 +63,19 @@ into the user message instead of a tool result (off by default; lina#25 decides 
 The person card is fetched while the prompt is built, within Honcho's first-turn base wait (`firstTurnBaseWait`);
 a card that is not ready by then leaves the prompt without it until the next build, and the log says so. Per-turn
 recall then carries only dialectic and search results.
+
+## Person pages
+
+A person's facts live on their brain page (lina#445, [brain.md](brain.md), Person pages). The session's person is
+the one its author's handle is confirmed as (`local_user:owner` on local surfaces), else the handle's own identity.
+When a page names that person (`person_id` in its frontmatter), `session_card_block()` builds the card from the page:
+compiled truth and the newest timeline entries that fit, each with its grade and source, `external` ones only in the
+data block below. Honcho adds its session summary and the agent's own sections, never its representation or card of
+the person. With no page, or when the store cannot be read (logged), the card is Honcho's as before.
+
+When a session ends, lina-memory asks the Honcho adapter for every conclusion about the session's person
+(`person_conclusions`, `plugins/memory/honcho/person_facts.py`) and appends the ones not on the page yet as `agent`
+entries with source `honcho:<conclusion id>`. Honcho itself is only read; what it stores does not change.
 
 The owner's standing rules, how they differ from memory and where they are to enter this order: [design/standing-rules.md](design/standing-rules.md) (lina#323).
 

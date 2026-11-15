@@ -39,6 +39,8 @@ def build(subparsers) -> None:
     upkeep.add_argument("--root", metavar="DIR", help="One imported directory; default: all imported directories")
     upkeep.add_argument("--json", action="store_true", help="Print the deterministic report as JSON")
     upkeep.set_defaults(brain_fn=run_upkeep)
+    from hermes_cli.brain.people_cli import build as build_people
+    build_people(subparsers)
     _build_dream(subparsers)
     _build_projects(subparsers)
 

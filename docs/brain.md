@@ -54,8 +54,8 @@ One summary paragraph, then what is known now. Rewritten when new information ar
   with a date (`- 2026-03-04 ...`, `- **2026-03-04** ...`) is dated. Any other bullet is an undated entry.
   Entries are only ever appended (`hermes_cli/brain/page.py` `append`).
 - **Grade** (lina#439 section 1): `owner`, `agent` or `external`. An entry without one, which covers every
-  hand-written entry, is `external`, the least trusted grade. Nothing reads the grade yet; a later issue wires its
-  meaning into injection and promotion.
+  hand-written entry, is `external`, the least trusted grade. The person card reads it (Person pages, below);
+  promotion does not yet.
 
 The parser is lossless: every byte of a file lands in exactly one part, and `render(parse(text)) == text` holds for
 any file, hand-written or not. The importer never needs to rewrite a file, and it never does.
@@ -240,9 +240,9 @@ agent read them. A page's vector is deleted when the page is deleted or its file
   through `lina brain projects sync` (below), not through a folder.
 - **The nightly cycle** (lina#444): described below. Accepted proposals of kinds that would rewrite a file (a new
   page, an addition to compiled truth) are recorded, not carried out; no phase auto-applies yet.
-- **Grades** (lina#440): stored, defaulting to `external`. Injection and promotion do not read them yet.
-- **Honcho and person pages** (lina#445): which facts live in a person page and which in Honcho conclusions is
-  still the owner's decision. Nothing here reads or writes Honcho.
+- **Grades** (lina#440): stored, defaulting to `external`. The person card reads them (lina#445); promotion does
+  not yet.
+- **Honcho and person pages** (lina#445): done, see "Person pages" below.
 - **Search** (lina#446): page vectors and a Korean keyword index. No page is embedded yet.
 - **Frontmatter `type` labels** that are not page types (a wiki's own labels) are kept in the frontmatter copy but
   do not decide the type. An owner mapping for such labels could come later.
@@ -463,3 +463,38 @@ lina brain projects show goal-g1 --json
 - **The report** says goals, pages, pages created, updated and archived, links added from goals to pages and back,
   and links removed (a page the goal's text no longer names). The sync reads files and the ledger outside the store
   transaction, takes no model call, and an unchanged ledger reports `Changes: none.` with no file written.
+
+## Person pages
+
+A person's durable facts live in one place: their page of type `person` (lina#445, design lina#439 section 1).
+Honcho keeps conversation memory and goes on deriving conclusions, but it is not where a person's facts are kept
+or read from (`hermes_cli/brain/people.py`).
+
+```sh
+lina brain people link mina gateway_user:telegram:1001   # or local_user:owner, or a person id person:...
+lina brain people card local_user:owner                  # the card a new session injects
+lina brain people import-honcho [--json]                 # Honcho's existing conclusions, once
+```
+
+- **Which page is whose.** A page names its person in the frontmatter: `person_id: person:<hash>`, the id of the
+  identity registry ([memory-layer.md](memory-layer.md)). The link lives in the file, so it survives every reindex,
+  and no table holds it. `lina brain people link PAGE PERSON` writes the key (adding a frontmatter block when the
+  file has none; every other byte stays) and indexes the directory again. PERSON may be one of the person's handles:
+  it resolves to the person that handle is confirmed as. A person has one page: linking a second page is refused,
+  and when two files name one person by hand, neither is used and the log says which.
+- **Honcho's conclusions.** Each conclusion about the person is appended to the page's timeline as
+  `- <date it was made> | agent | honcho:<conclusion id> | <text on one line>`. An id already on the page is
+  never written again, so every write is idempotent. The file only grows: what was written stays byte for byte,
+  and compiled truth is never rewritten (a change to it is a proposal, lina#444). lina-memory writes the
+  conclusions of the session's person when a session ends; `lina brain people import-honcho` copies the existing
+  ones of every linked person once, reading the conclusions the person's Honcho peers (in this home's workspace)
+  hold about themselves and the ones the agent's own peer holds. Nothing in Honcho is changed or deleted. Writers of
+  one file take a lock in the store, and the directory is synced into the index as the store owner, as by `import`.
+- **The card.** The person card in the system prompt of a new session (`session_card_block`, the "Notes and
+  person card" part of the context order) is built from the indexed page: `## Person card: <title>`, the compiled
+  truth, then the newest timeline entries that fit in 2400 characters, oldest first. Owner and agent entries are
+  lines with their grade and source. An `external` entry, which covers every hand-written entry without a grade,
+  appears only inside the quoted `<external-data>` block ([memory-layer.md](memory-layer.md), Trust grades).
+  Honcho's session summary and the agent's own sections follow the card; Honcho's own representation and peer card
+  of the person are left out. A person with no page keeps Honcho's card until a page is linked. An edited file is
+  read after `lina brain import` or `reindex`, by the next session.

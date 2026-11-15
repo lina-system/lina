@@ -9,6 +9,8 @@ the Honcho adapter (``plugins/memory/honcho``, which keeps its code and is drive
 Every other provider call (recall, tools, session lifecycle) goes to the Honcho adapter when Honcho is configured,
 except ``memory_search`` and ``memory_open`` (``search.py``), lina-memory's own tools over every source (lina#22),
 ``memory_link`` (``links.py``) and ``owner_terms`` (``terms.py``, the owner's own words for a concept, lina#379).
+The person card comes from the session person's brain page, and Honcho's conclusions about that person are written
+to the page at session end (``hermes_cli/brain/people.py``, lina#445).
 """
 
 from __future__ import annotations
@@ -280,7 +282,49 @@ class LinaMemoryProvider(MemoryProvider):
         return self._honcho.system_prompt_block() if self._honcho_on else ""
 
     def session_card_block(self) -> str:
-        return self._honcho.session_card_block() if self._honcho_on else ""
+        """The person card from the session person's brain page (lina#445), with Honcho's session summary and the
+        agent's own sections; Honcho's card of the person only while the person has no page."""
+        page_card = self._page_card()
+        if page_card is None:
+            return self._honcho.session_card_block() if self._honcho_on else ""
+        rest = self._honcho.session_card_block(person=False) if self._honcho_on else ""
+        return "\n\n".join(part for part in (page_card, rest) if part)
+
+    def _session_person(self) -> Optional[str]:
+        """The person this session is with: the one its author's handle is confirmed as, else the handle's own."""
+        handle = self._author_handle({})
+        return self._registry.person_of(handle) if handle else None
+
+    def _page_card(self) -> Optional[str]:
+        try:
+            person = self._session_person()
+            if not person:
+                return None
+            import psycopg
+
+            import hermes_state_store
+            from hermes_cli.brain import people
+            with psycopg.connect(hermes_state_store.resolve_dsn()) as conn:
+                return people.card_for(conn, person)
+        except Exception as exc:  # health: allow BLE001 -- the store being down must not cost the prompt its card
+            logger.warning("lina-memory could not read the person's brain page; using Honcho's card: %s", exc)
+            return None
+
+    def _pages_from_honcho(self) -> None:
+        """Honcho's conclusions about the session's person, as ``agent`` entries on their brain page (lina#445)."""
+        try:
+            person = self._session_person()
+            found = self._honcho.person_conclusions() if person else []
+            if not found:
+                return
+            from hermes_cli.brain import people
+            from hermes_cli.brain.store import owner_connection
+            with owner_connection() as conn:
+                added = people.record_conclusions(conn, person, [people.conclusion_from(raw) for raw in found])
+            if added:
+                logger.info("lina-memory wrote %d Honcho conclusions to the person's brain page", added)
+        except Exception as exc:  # health: allow BLE001 -- a page write failing must not hold session end
+            logger.warning("lina-memory could not write Honcho's conclusions to the person's brain page: %s", exc)
 
     def prefetch(self, query: str, *, session_id: str = "") -> str:
         honcho = self._honcho.prefetch(query, session_id=session_id) if self._honcho_on else ""
@@ -329,6 +373,8 @@ class LinaMemoryProvider(MemoryProvider):
         self._drain()
         if self._honcho_on:
             self._honcho.on_session_end(messages)
+            self._submit(self._pages_from_honcho)
+            self._drain()
 
     def on_session_switch(self, new_session_id: str, **kwargs) -> None:
         self._claim(new_session_id)
