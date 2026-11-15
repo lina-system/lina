@@ -45,11 +45,18 @@ class WordPair:
 
 
 def word_list_pairs(conn) -> list[WordPair]:
-    """The flagged -> fixed pairs of the shared word list (lina#378), read from the store through *conn*.
+    """Read word-only samples backed by stored pairs through the evaluator's owner connection.
 
-    The word list does not exist yet, so there are none; reading it here is a later step. Each pair's ``avoid``
-    form counts as a flagged sentence whose whole text is the flagged phrase."""
-    return []
+    Each stored pair contributes its entry's avoid word as both sentence and phrase, preserving
+    this seam's WordPair contract without exposing private sentences outside the store.
+    """
+    from hermes_cli.korean import words
+    from hermes_cli.korean.checks import register_checks
+
+    entries = words.entries(conn)
+    register_checks(entries)
+    stored = words.pairs(conn)
+    return [WordPair(entry.avoid, entry.use) for entry in entries for _ in stored.get(entry.entry_id, [])]
 
 
 

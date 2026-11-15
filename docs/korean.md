@@ -80,9 +80,10 @@ lina#376 is measured against it.
 A reviewer's mark counts only from a model family other than the writer's; the table refuses the rest. A reply the
 owner simply let pass is not a clean label: letting it pass judges the content, not the language. Every row also
 carries `source` (a short label of where it came from), `agent_id` (the writing agent, empty when unknown) and
-`created_at`. The flagged -> fixed pairs of the shared word list (lina#378) join the set through
-`word_list_pairs()` in `hermes_cli/korean/eval.py`; until that list exists it gives none, so the report shows
-`0 word-list pairs`.
+`created_at`. The shared word list's stored correction pairs join through `word_list_pairs()` in
+`hermes_cli/korean/eval.py`. Each pair attached to an active entry contributes that entry's avoid word as
+a flagged sentence and phrase. These word-only samples measure vocabulary coverage; import a labeled
+sentence to measure the correction in context.
 
 ### Importing
 
@@ -107,8 +108,9 @@ same-family mark, the same text already labeled the other kind). The command exi
 ### Scoring
 
 A check is a callable from one text to the character spans it flags (`[start, end)`), registered with
-`hermes_cli.korean.eval.register(name, check)`. No check is registered yet (they are lina#381); the command then
-counts the set only. Per check the report gives, each as `k/n`, a rate and a 95% Wilson interval:
+`hermes_cli.korean.eval.register(name, check)`. The default registry contains `word-list`, `particles`,
+and `calques` (lina#381). A caller that explicitly configures its own registry keeps that selection.
+Per check the report gives, each as `k/n`, a rate and a 95% Wilson interval:
 
 - **flagged sentences caught**: flagged sentences with at least one span;
 - **flagged phrases caught**: flagged phrases that a span overlaps;
@@ -197,3 +199,61 @@ answers with an error naming `hermes pm install --extra korean`. Its license is 
 `kiwipiepy_model` on PyPI, the Kiwi repository's `LICENSE`), which may be combined with LINA's AGPL-3.0. The tests
 skip with a reason only where `kiwipiepy` is not installed; the test environment gets it with
 `source ./activate --test-extras all,korean`.
+## Deterministic reply checks
+
+`hermes_cli.korean.checks.check_reply(text, entries=None, *, names=None)` returns a `CheckResult` with
+`text`, applied `edits`, `dropped`, `reason`, and advisory `calques` spans. With no supplied entries it reads
+the active word list through the agent read API. It makes no model call. Pass the complete inventory of
+names from the writing context; `names=()` explicitly declares that there are none. Without an inventory,
+a proposed edit is dropped as `names_unavailable`: this checker does not pretend to recognize every
+proper name from its spelling.
+
+The scanner matches whole listed words or phrases, including an immediately attached particle, longest
+first. It recognizes both avoid and preferred words, so a preferred noun with a stale particle can be
+repaired too. It does not guess nouns from arbitrary suffixes: for example, the last character of
+`사과` alone is not evidence of a particle. Replacements are planned against original character offsets,
+never cascaded through the word list, and touch only their matched spans. An ambiguous avoid word with
+multiple preferred forms returns the original with `check_error`.
+
+Particle selection uses the final composed Hangul syllable's jongseong index, `(ord(last) - 0xAC00) % 28`,
+for `을/를`, `이/가`, `은/는`, `과/와`, and `으로/로`. Index 8 (final ㄹ) takes `로`, as does a vowel.
+A final character outside composed Hangul keeps the supplied particle; no pronunciation library is used.
+
+All edits are rejected together if they change a numeric expression, a negation, or a supplied name.
+The numeric guard includes digit expressions and common Korean counters; the negation guard covers
+`안`, `못`, inflected negative predicates, and prohibitions such as `마세요`. Numeric recognition also
+includes native number words without counters. These conservative lexical guards can reject homonyms.
+More than 30% changed characters also rejects the whole fix (`change_ratio`); exactly 30% is allowed.
+Each non-equal block inside a matched span counts the larger of its original and replacement lengths,
+including inserted characters, against the original text length. Unchanged surrounding text is preserved
+byte for byte. Any ordinary exception at this boundary returns the original with `check_error`; exception
+messages and input text are never logged. The caller sends the returned text regardless of `dropped`.
+
+### Calques and evaluation
+
+`hermes_cli/data/korean_calques.json` contains a small catalog written for LINA, with an original `before` and `after` example
+for every entry. Catalog tests require each example to be flagged and its rewrite to be clean. Catalog
+hits are advice only: they never rewrite the reply. The density gate is **at least 2 hits per 100 Unicode
+characters**, counting occurrences across the whole original text, including spaces. Below that density,
+the catalog returns no spans. Literal contexts can still match; these hints are not claims of an error.
+
+Evaluation loads defaults through `register` while loading the word-list samples. It refreshes the word
+snapshot on each evaluation and uses the existing owner connection to call `words.entries` and
+`words.pairs`. Agents do not gain access to private pairs. Evaluation detects proposed word and particle
+edits even when the reply safety boundary would decline to apply them, and prints counts only.
+
+### Report reader and integration boundary
+
+`read_report(Document(text, kind, writer_family), reader)` accepts the `Reader` protocol (`family` and
+`notes(text)`). It runs only when `kind == "report"`, the text has at least **1,000 characters**, and both
+families are nonempty and different after trimming and case folding. `StubReader` supplies explicit stub
+advice without calling a model. The result always retains the original text; its notes go to the writing
+agent, never to a rewriting pipeline.
+
+The existing final-answer boundary is `agent/turn_final_response.py`'s call to
+`agent.turn_finalizer.apply_llm_output_transform`, before publication and transcript persistence.
+This change exposes the documented callable only and does not wire it into that boundary or any send path.
+
+Run `python scripts/korean_checks_probe.py --synthetic` for the 20-reply synthetic demonstration,
+`--store` against a newly installed disposable store for word-list and CLI evaluation, and
+`--benchmark` for median added time on a 1,000-character reply. Timing is reported, never a CI limit.

@@ -49,6 +49,8 @@ Hermes Agent upstream changes are not listed here; see the upstream history on t
 
 - `lina brain upkeep [--root DIR] [--json]` performs deterministic link and backlink upkeep with separately reported Korean plain-text mentions, report-only lint, shared sync-artifact exclusions and stable orphan reports, without model calls or file writes (lina#443).
 
+- Deterministic Korean reply checks repair listed words and Hangul particles, reject unsafe or oversized edits, flag an original calque catalog above a density gate, score word-list samples with `lina eval korean`, and expose a report-only advisory reader stub without outbound wiring (lina#381).
+
 ### Fixed
 
 - `lina heart` works on a LINA home (lina#356): journal entries are `memory.messages` rows of source `heart` that only their agent reads, `--messages` takes `memory.messages` uids (refusing another agent's, a forgotten one, and a reaction with no owner message; `outcome` and `exposure` entries need none) with an optional `--pref-*` taste, `candidates` reads the v33 placements and the store instead of failing with `no such table: messages`, and `lina heart import --from <dir>` (also run by `lina migrate memory`) carries a trial agent's `SOUL.self.md` and heart files and turns its journal into rows, mapping each cited LCM `store_id` to the moved row's uid and listing the ones that did not move.
