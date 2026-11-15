@@ -449,8 +449,10 @@ def import_profile(archive_path: str, name: Optional[str] = None) -> Path:
                     shutil.rmtree(child)
                 else:
                     child.unlink()
-        _stage_profile_texts(final_source, profile_dir, staging_root / ".message-text")
-        shutil.move(str(final_source), str(profile_dir))
+        from hermes_cli.store_gc import profile_lifecycle
+        with profile_lifecycle(profile_dir / "state.db"):
+            _stage_profile_texts(final_source, profile_dir, staging_root / ".message-text")
+            shutil.move(str(final_source), str(profile_dir))
     return profile_dir
 
 

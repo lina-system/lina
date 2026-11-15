@@ -1232,7 +1232,9 @@ def create_profile(
             if stripped:
                 logger.info("profile %s: cloned without messaging channels %s", canon, stripped)
         finish_profile_layout(staging, name=canon, no_skills=no_skills, clone_all=clone_all, description=description, soul=soul)
-        os.rename(staging, profile_dir)
+        from hermes_cli.store_gc import profile_lifecycle
+        with profile_lifecycle(profile_dir / "state.db"):
+            os.rename(staging, profile_dir)
     except BaseException:
         discard_unpublished_vault_key(clone_key)
         shutil.rmtree(staging, ignore_errors=True)
@@ -1550,10 +1552,8 @@ def delete_profile(name: str, yes: bool = False) -> Path:
 
     # Tombstone before rmtree so a stale serve/logging mkdir cannot relist this name live.
     mark_named_profile_deleted(profile_dir)
-    # The multiplexer sees the tombstone, stops this profile's adapters and releases its handles
-    # into the directory before we remove it. Identity settlement is a separate delete-only
-    # operation below: an ordinary unserve must preserve identity, because a rename's old name
-    # leaves the served set exactly like a deleted one does (#111926, delete side).
+    # Unserve releases adapter handles before removal. Purge identity separately:
+    # renames also unserve their old name and must preserve its identity.
     _notify_multiplexer(canon)
     identity_settled = _purge_identity(canon)
 
@@ -1588,24 +1588,23 @@ def delete_profile(name: str, yes: bool = False) -> Path:
         if _released_logs:
             print(f"✓ Released {_released_logs} profile log handler(s) held by this process")
 
-    # 3. Remove wrapper script
     if wrapper_path and remove_wrapper_script(canon):
         print(f"✓ Removed {wrapper_path}")
 
-    # 4. Remove profile directory
     remove_error: Exception | None = None
     try:
         # A multiplexer still tearing the profile down holds its gateway.lock: never remove a home
         # a live runtime owns (its writers would recreate the tree under the tombstone).
         if not wait_profile_unowned(profile_dir):
             raise RuntimeError("a running gateway still owns this profile; retry the delete once it settles")
-        _rmtree_with_retry(profile_dir, _rmtree_make_writable)
+        from hermes_cli.store_gc import profile_lifecycle
+        with profile_lifecycle(profile_dir / "state.db", deleted=True):
+            _rmtree_with_retry(profile_dir, _rmtree_make_writable)
         print(f"✓ Removed {profile_dir}")
     except Exception as e:
         print(f"⚠ Could not remove {profile_dir}: {e}")
         remove_error = e
 
-    # 5. Clear active_profile if it pointed to this profile
     _retarget_active_profile(canon, "default", "✓ Active profile reset to default")
     if remove_error is not None:
         raise RuntimeError(f"Could not remove profile directory {profile_dir}: {remove_error}") from remove_error
@@ -1917,7 +1916,8 @@ def rename_profile(old_name: str, new_name: str) -> Path:
     try:
         if live_mux and not wait_profile_unowned(old_dir):  # same owner wait as delete_profile
             raise RuntimeError("a running gateway still owns this profile; retry the rename once it settles")
-        with text_moved_for_rename(old_dir, old_canon, new_canon):
+        from hermes_cli.store_gc import profile_lifecycle
+        with profile_lifecycle(new_dir / "state.db"), text_moved_for_rename(old_dir, old_canon, new_canon):
             old_dir.rename(new_dir)
     except Exception:
         if live_mux:

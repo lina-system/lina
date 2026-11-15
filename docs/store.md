@@ -171,6 +171,32 @@ Profile rename changes the agent and UID prefix in place, preserving `message_id
 reference; profile deletion removes local placements, not shared text. Backup restore inserts
 missing text and refuses a conflicting UID payload rather than replacing an existing shared row.
 
+Deleting a profile records `memory.agents.deleted_at` in the store owner's transaction.
+`lina store gc` also collects that agent's `memory.messages` rows, but only when the deletion
+time is **strictly older** than the grace period. Old message timestamps do not shorten this
+window: deleting a profile with years of history still preserves its text for the full period.
+At the exact boundary its rows remain. Agents with no recorded deletion are never selected
+by this sweep; live profiles continue to use the transcript, LCM-X and Honcho reference checks
+above. Other schemas keep their existing deletion/cascade rules.
+
+The setting is `sessions.message_text_grace_days` in `config.yaml`, default **30 days**, with
+the existing minimum of 2 days. `lina store gc --older-than-days 45` overrides it for that
+invocation, for both live-profile orphan text and deleted-profile text. For example:
+
+```yaml
+sessions:
+  message_text_grace_days: 30
+```
+
+Creating or renaming to the same profile name again, importing its profile archive, or restoring its
+`state.db` from a backup clears the deletion timestamp. Successful recovery also clears the
+filesystem tombstone. Recovery and collection lock the same agent row, so collection cannot
+remove text while it is being restored; a failed recovery rolls back the lifecycle change.
+The `lina_app` and `honcho` roles cannot change this owner-managed lifecycle table.
+Apply migration `0015_agent_deleted_at.sql` with `lina store upgrade` before using these
+operations on an existing store. Profiles deleted before this migration have no known deletion
+time and are retained; the collector does not infer one from message age or missing directories.
+
 ### External messages
 
 Configure `memory.external_messages.spool` in the LINA root's `config.yaml` to the collector's
