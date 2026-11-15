@@ -48,7 +48,7 @@ changes less often than the one after it, and only a compaction may rewrite byte
 
 | Part | Built in | Changes |
 | --- | --- | --- |
-| System and persona (identity, SOUL, guidance, context files, skills index, profile line, the session's start date and model lines, runtime environment) | `agent/system_prompt.py` `build_system_prompt_parts` | frozen per session; rebuilt at a compaction |
+| System and persona (identity, SOUL, guidance, context files, skills index, plugin sections (among them the self note and the agent's core tastes, after a line saying tastes never change reporting, honesty, permissions, verification, the owner's instructions or safety), profile line, the session's start date and model lines, runtime environment) | `agent/system_prompt.py` `build_system_prompt_parts` | frozen per session; rebuilt at a compaction; the self note and core tastes change at most daily and weekly and reach a running session only at that rebuild |
 | Notes and person card (MEMORY.md, USER.md, the memory provider's block, then its person card: Honcho's representation and peer card from `session_card_block()`), closing the prompt between `# Notes and person card` and its end marker | same, `_memory_parts` | frozen per session; reread at a compaction |
 | Upper summary DAG: LCM-X's condensed nodes (depth 1 and up), deepest first | LCM-X `_assemble_context` | appended to or rewritten only when they are themselves condensed |
 | Lower summary nodes (depth 0) and the recent turns | LCM-X, then the transcript | appended every turn; replaced at a compaction |
