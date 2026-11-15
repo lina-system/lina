@@ -25,11 +25,14 @@ def _collect_text(older_than_days) -> None:
     """Reclaim message text no profile's transcript points at any more (``MessageStore.collect_unreferenced``)."""
     from hermes_cli.config import load_config
     from hermes_cli.profiles import list_profiles
+    from hermes_cli.store_gc import collect_deleted_agents
     from hermes_state import SessionDB
     from hermes_state_store import DEFAULT_COLLECT_DAYS, collect_session_db_text
     if older_than_days is None:
         older_than_days = float((load_config().get("sessions") or {}).get("message_text_grace_days",
                                                                        DEFAULT_COLLECT_DAYS))
+    for agent, count in collect_deleted_agents(older_than_days=older_than_days).items():
+        print(f"{agent}: reclaimed {count} message texts after profile deletion")
     for profile in list_profiles(lazy_skill_count=True):
         db_path = profile.path / "state.db"
         if not db_path.exists():
