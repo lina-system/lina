@@ -15,6 +15,9 @@ from hermes_cli.brain.resolver import Mapping, mapping_from
 from hermes_cli.brain.scan import Index
 
 TABLES = ("pages", "aliases", "edges", "timeline")
+# The source_ref prefix of edges `lina brain projects sync` reads from a ledger goal (hermes_cli/brain/projects.py).
+# They are not derived from a directory's files, so a directory's sync neither counts nor removes them.
+LEDGER_REF = "ledger:"
 _PAGE_COLUMNS = ("slug", "page_id", "path", "type", "title", "dated", "frontmatter", "compiled_truth",
                  "content_sha256")
 _SELECT = {
@@ -22,7 +25,7 @@ _SELECT = {
     "aliases": "SELECT a.alias_key, a.slug, a.alias, a.origin FROM brain.aliases AS a "
                "JOIN brain.pages AS p USING (slug) WHERE p.root_id = %s",
     "edges": "SELECT e.from_slug, e.to_slug, e.type, e.source_ref FROM brain.edges AS e "
-             "JOIN brain.pages AS p ON p.slug = e.from_slug WHERE p.root_id = %s",
+             f"JOIN brain.pages AS p ON p.slug = e.from_slug WHERE p.root_id = %s AND e.source_ref NOT LIKE '{LEDGER_REF}%%'",
     "timeline": "SELECT page_slug, path, line, entry_date, grade, source_ref, text FROM brain.timeline "
                 "WHERE root_id = %s",
 }

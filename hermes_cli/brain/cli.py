@@ -40,6 +40,7 @@ def build(subparsers) -> None:
     upkeep.add_argument("--json", action="store_true", help="Print the deterministic report as JSON")
     upkeep.set_defaults(brain_fn=run_upkeep)
     _build_dream(subparsers)
+    _build_projects(subparsers)
 
 
 def _build_dream(subparsers) -> None:
@@ -74,6 +75,24 @@ def _build_dream(subparsers) -> None:
         parser.add_argument("id", type=int)
         parser.add_argument("--by", default="owner", help="Who decided (default: owner)")
     proposals.set_defaults(brain_fn=run_proposals)
+
+
+def _build_projects(subparsers) -> None:
+    from hermes_cli.brain.projects import run_show, run_sync
+
+    projects = subparsers.add_parser(
+        "projects", help="Ledger goals as generated project pages; status is read from the ledger only")
+    actions = projects.add_subparsers(dest="projects_command", required=True)
+    sync = actions.add_parser(
+        "sync", help="Write and index one project page per ledger goal, linked both ways to the pages it names",
+        description="Deterministic and idempotent, no model call. Pages go under projects/ of brain.work_dir; a "
+                    "goal gone from the ledger keeps its page, marked archived.")
+    sync.add_argument("--json", action="store_true", help="Print the report as JSON")
+    sync.set_defaults(brain_fn=run_sync)
+    show = actions.add_parser("show", help="A project page with the ledger's current status and its links")
+    show.add_argument("goal", help="The goal id (G1) or the page slug (goal-g1)")
+    show.add_argument("--json", action="store_true", help="Print the page as JSON")
+    show.set_defaults(brain_fn=run_show)
 
 
 def execute(args: argparse.Namespace) -> int:

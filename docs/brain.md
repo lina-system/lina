@@ -65,7 +65,9 @@ any file, hand-written or not. The importer never needs to rewrite a file, and i
 The work ledger (`lina work`) is the only authority for status and deadlines. A page never stores them. The
 renderer refuses `status`, `deadline`, `due` and `due_date` in new pages, and the frontmatter copy in
 `brain.pages` leaves those keys out (a check constraint enforces it). A hand-written file that has them keeps them;
-the import counts such files and indexes the rest of their frontmatter.
+the import counts such files and indexes the rest of their frontmatter. A project page generated from a ledger goal
+holds placeholders where it would name a status or a deadline, resolved from the ledger at read time (see "Project
+pages from the ledger").
 
 ### Slugs and names
 
@@ -200,7 +202,7 @@ Migration `services/store/migrations/0014_brain.sql`, schema `brain`:
 | `roots` | each imported directory and the mapping it was imported with | shared |
 | `pages` | one row per page: slug, `page_id`, path, type, title, date, frontmatter (no ledger keys), compiled truth, file SHA-256 | shared |
 | `aliases` | names of each page (`alias_key`, `alias`, origin `slug`/`title`/`frontmatter`/`merge`) | shared |
-| `edges` | `from_slug`, `to_slug`, `type`, `source_ref`, `valid_from`, `valid_until` | shared |
+| `edges` | `from_slug`, `to_slug`, `type`, `source_ref` (the file the link is written in, or `ledger:<goal id>` for a project page's link), `valid_from`, `valid_until` | shared |
 | `timeline` | one row per timeline entry: page, path and line, date, `grade` (`owner`/`agent`/`external`, default `external`), source ref, text | shared |
 | `atoms` | short claims a later cycle extracts from a page, with grade and source ref | shared |
 | `merges` | recorded merges, replayed by every import and reindex | shared |
@@ -234,7 +236,8 @@ agent read them. A page's vector is deleted when the page is deleted or its file
 
 - **PARA.** The owner does not classify (structure paper, 11-11). The brain is to link areas, projects and goals
   behind the scenes. This issue only maps folders to page types. It does not fold PARA folders into brain folders,
-  move any file, write `RESOLVER.md` or per-folder `README.md` files, or link ledger goals to project pages.
+  move any file, or write `RESOLVER.md` or per-folder `README.md` files. Ledger goals become project pages
+  through `lina brain projects sync` (below), not through a folder.
 - **The nightly cycle** (lina#444): described below. Accepted proposals of kinds that would rewrite a file (a new
   page, an addition to compiled truth) are recorded, not carried out; no phase auto-applies yet.
 - **Grades** (lina#440): stored, defaulting to `external`. Injection and promotion do not read them yet.
@@ -419,3 +422,44 @@ WantedBy=timers.target
 ```
 
 enabled with `systemctl --user enable --now lina-brain-dream.timer`.
+
+## Project pages from the ledger
+
+A ledger goal (`lina work`) is a `project` page. The page is generated, never hand-written:
+
+```sh
+lina brain projects sync            # write and index one page per goal, link it both ways
+lina brain projects sync --json     # the full report
+lina brain projects show G1         # the page as read now: ledger status, tasks, links both ways
+lina brain projects show goal-g1 --json
+```
+
+- **Where.** Pages are files under `projects/` of the brain work folder: `brain.work_dir` in the root
+  `config.yaml` (`~` expanded, a relative path is under the LINA root), default `<LINA root>/brain`. The folder is
+  indexed as one more brain root with the importer's own scanner, so `lina brain import` of it agrees with the sync.
+  The sync refuses a work folder that lies inside an imported wiki, holds one, or is one: no file of an imported
+  directory is ever written. The Desk wiki stays the original for hand-written pages.
+- **Shape.** Slug `goal-<id>` (`goal-g1`); frontmatter `type: project`, `title` (the goal's title), `aliases:
+  [<id>]` (so `[[G1]]` names it) and `ledger_goal: <id>`; compiled truth: the goal's why and done text and its task
+  list (every task of the goal, whatever its state, so a state change never changes the list). A `[[link]]` in the
+  goal's text is written as its plain label: the page's links are the edges below, and a written link to a page of
+  another root would read as broken to the work folder's own lint. A timeline a page gains later is kept when the
+  page is generated again.
+- **Status is read, never stored.** Where the page would say a status or a deadline it holds a placeholder,
+  `{{ledger:G1:status}}`, `{{ledger:G1:deadline}}`, `{{ledger:T3:status}}`. `show` resolves them at read time from
+  the ledger's own state views (`v_goal`, `v_todo`), so a status change through `lina work` shows on the next read
+  with no page edit and no sync. Placeholders were chosen over index columns because a column is a second copy that
+  is only as fresh as the last sync; a placeholder has no copy to go stale, and neither the file, `brain.pages`, nor
+  compiled truth ever holds a status.
+- **Links both ways.** The goal's text (title, why, done, and each task's title, why and done) is matched against the
+  names of every page outside the project folder with the upkeep matching: `[[links]]`, and plain names with Korean
+  particles and endings (`미나와` names `미나`). Project pages are not targets, so a goal's own title never hides a
+  shorter page name inside it. Each named page gets two `mentions` edges, project to page and page to project, with
+  `source_ref` `ledger:<goal id>`; no wiki file is written for the backlink. An import or upkeep of a directory never
+  counts or removes these edges (they are not derived from its files); a `reindex` of a wiki deletes its pages and
+  their edges with them, and the next `projects sync` adds them again.
+- **Goals gone from the ledger.** A page whose goal the ledger no longer has keeps its file, row and links and is
+  marked `archived: true`; `show` says `gone from the ledger` for its status.
+- **The report** says goals, pages, pages created, updated and archived, links added from goals to pages and back,
+  and links removed (a page the goal's text no longer names). The sync reads files and the ledger outside the store
+  transaction, takes no model call, and an unchanged ledger reports `Changes: none.` with no file written.
