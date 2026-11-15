@@ -782,6 +782,7 @@ DEFAULT_CONFIG = {
         "kanban_decomposer": _aux(180),
         "profile_describer": _aux(60), "board_lines": _aux(60),  # profile blurb; board card lines (lina#151)
         "goal_judge": _aux(60),          # /goal satisfaction + contract drafting; JSON calls
+        "brain_dream": _aux(30), "brain_extract": _aux(30),  # lina brain dream / extract (docs/brain.md)
         # Curator skill-usage review can take minutes on reasoning models (umbrellas over hundreds
         # of skills); route cheaper via `hermes model` → auxiliary → Curator.
         "curator": _aux(600),
