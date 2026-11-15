@@ -8,16 +8,12 @@ import contextlib
 import logging
 import sqlite3
 
+from hermes_cli.profile_assets import ASSET_EXTS as _ASSET_EXTS, asset_file as _asset_file, sniff as _sniff_asset
+
 from .method_ctx import HandlerRegistry, bind_module
 
 _registry = HandlerRegistry()
 method = _registry.method
-
-# ext -> mime; iteration order is the on-disk lookup order for assets.
-_ASSET_EXTS = {"png": "image/png", "jpg": "image/jpeg", "webp": "image/webp"}
-# ext -> [(start, end, magic bytes)]; format is sniffed, the declared mime is never trusted.
-_ASSET_MAGIC = {"png": [(0, 8, b"\x89PNG\r\n\x1a\n")], "jpg": [(0, 3, b"\xff\xd8\xff")],
-                "webp": [(0, 4, b"RIFF"), (8, 12, b"WEBP")]}
 
 
 def _profile_handler(name: str, code: int):
@@ -276,7 +272,7 @@ def _profile_ui_meta_fields(row: dict, profile_dir) -> None:
 
     row.update(cached_ui_meta_fields(profile_dir, _read))
     # Cheap existence flag so rosters skip a get_asset probe per paint.
-    row["has_avatar"] = _try(lambda: any((profile_dir / "assets" / f"avatar.{e}").is_file() for e in _ASSET_EXTS), False)
+    row["has_avatar"] = _try(lambda: _asset_file(profile_dir, "avatar") is not None, False)
 
 
 @_profile_handler("profiles.list", 5061)
@@ -436,7 +432,7 @@ def _(rid, params: dict) -> dict:
         return _err(rid, 4068, "data is not valid base64")
     if len(blob) > 2_000_000:
         return _err(rid, 4069, f"asset too large ({len(blob)} bytes; max 2MB)")
-    ext = next((e for e, magic in _ASSET_MAGIC.items() if all(blob[a:b] == m for a, b, m in magic)), None)
+    ext = _sniff_asset(blob)
     if ext is None:
         return _err(rid, 4070, "unsupported image format (PNG/JPEG/WebP only)")
     assets_dir.mkdir(parents=True, exist_ok=True)
@@ -455,13 +451,13 @@ def _(rid, params: dict) -> dict:
     _name, profile_dir, err = _resolve_profile(rid, params)
     if err is not None:
         return err
-    for ext, mime in _ASSET_EXTS.items():
-        target = profile_dir / "assets" / f"{asset}.{ext}"
-        if target.is_file():
-            blob = target.read_bytes()
-            return _ok(rid, {"found": True, "mime": mime, "size": len(blob),
-                             "data": f"data:{mime};base64,{base64.b64encode(blob).decode('ascii')}"})
-    return _ok(rid, {"found": False})
+    target = _asset_file(profile_dir, asset)
+    if target is None:
+        return _ok(rid, {"found": False})
+    mime = _ASSET_EXTS[target.suffix[1:]]
+    blob = target.read_bytes()
+    return _ok(rid, {"found": True, "mime": mime, "size": len(blob),
+                     "data": f"data:{mime};base64,{base64.b64encode(blob).decode('ascii')}"})
 
 
 def _mirror_secret(path, launch_home, name: str, wanted) -> bool:

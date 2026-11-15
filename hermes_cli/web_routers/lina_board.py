@@ -7,7 +7,8 @@ and ``/api/lina/work/items/{id}`` (lina#166) serve the goals and to-dos with the
 ``/api/lina/work/runs/{id}/record`` (lina#201) one worker run's record, round by round; ``/api/lina/status/checks``
 (lina#233) the hub's own health checks from ``<LINA root>/status/*.json`` (``lina_status.py``). ``POST
 /api/lina/devices/{name}/restart`` and ``…/sign-in`` (lina#234) are the owner's device actions, behind the work
-settings' owner-device gate. ``POST /api/lina/work/items`` (lina#693) makes the owner's own to-do. Like
+settings' owner-device gate. ``POST /api/lina/work/items`` (lina#693) makes the owner's own to-do.
+``/api/lina/agents/{agent}/avatar`` (lina#738) is an agent's picture (``lina_avatar.py``), cached privately. Like
 ``lina_models.py`` every response carries an ``ETag`` and a matching ``If-None-Match`` answers 304; the tag leaves out
 the snapshot time ``at``, so it changes only when the data does. Mounted through ``lina_models.router``, so the
 dashboard's auth gate applies the same way.
@@ -69,6 +70,19 @@ async def lina_work_item(item_id: str, if_none_match: Optional[str] = Header(def
         raise HTTPException(status_code=404, detail=f"no goal or to-do {item_id}") from exc
     except RecordUnreadable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.get("/api/lina/agents/{agent}/avatar")
+async def lina_agent_avatar(agent: str, if_none_match: Optional[str] = Header(default=None)):
+    from hermes_cli import lina_avatar
+    found = await run_in_threadpool(lina_avatar.source, agent)
+    picture = None if found is None else await run_in_threadpool(lina_avatar.downsized, found.blob)
+    if picture is None:
+        raise HTTPException(status_code=404, detail=f"no picture for agent {agent}")
+    headers = {"ETag": found.etag, "Cache-Control": "private, max-age=3600"}
+    if if_none_match == found.etag:
+        return Response(status_code=304, headers=headers)
+    return Response(content=picture[0], media_type=picture[1], headers=headers)
 
 
 @router.get("/api/lina/work/runs/{run_id}/record")

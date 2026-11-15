@@ -236,8 +236,10 @@ class _Record:
         }
 
     def people(self) -> dict:
+        from hermes_cli.lina_avatar import has_picture
         return {"owner": {"id": self.env.owner, "name": self.env.owner_name},
-                "agents": [{"id": k, "name": v} for k, v in self.env.agents.items()]}
+                "agents": [dict(id=k, name=v, **({"avatar": True} if has_picture(k) else {}))
+                           for k, v in self.env.agents.items()]}
 
     def listing(self, agent: str | None, now: float) -> dict:
         rows = []

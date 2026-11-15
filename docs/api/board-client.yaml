@@ -1,7 +1,7 @@
 # Board endpoints the app reads beyond docs/api/work-client.yaml (lina#112): the owner's to-dos, decisions and due
 # groups from the work record, `lina worker` runs that are not kanban work cards, devices, quota and the inbox
 # notices; each agent's goals and to-dos (lina#166); one worker run's record, round by round (lina#201); the owner's
-# writes and read marks (lina#149) and own to-dos (lina#693); the
+# writes and read marks (lina#149) and own to-dos (lina#693); each agent's picture (lina#738); the
 # change stream's messages (lina#150, a WebSocket: see ChangeMessage). Served by hermes_cli/web_routers/lina_board.py
 # behind the dashboard auth gate (session token).
 # tests/hermes_cli/test_lina_board_api.py validates served JSON against it, so a shape change here and in the code
@@ -339,6 +339,46 @@ paths:
           description: No such goal or to-do (an unknown id, an area, a memo or a dropped item).
         "503":
           description: The work record failed to read.
+  /agents/{agent}/avatar:
+    get:
+      operationId: getAgentAvatar
+      summary: >
+        One agent's picture (lina#738): its profile's stored assets/avatar.png, .jpg or .webp, at most 128 px on
+        the long side (a smaller PNG or JPEG as stored; a JPEG stays a JPEG, the rest come as PNG). Cached
+        privately for an hour; the ETag answers 304. Ask only for an agent whose Person has `avatar: true`.
+      parameters:
+        - name: agent
+          in: path
+          required: true
+          description: An id from the people list's `agents`.
+          schema:
+            type: string
+        - $ref: "#/components/parameters/IfNoneMatch"
+      responses:
+        "200":
+          description: The picture.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+            Cache-Control:
+              schema:
+                type: string
+                enum: ["private, max-age=3600"]
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+        "304":
+          description: Unchanged since the ETag sent.
+        "404":
+          description: >
+            Not one of the record's agents, or no picture: none stored, or one that is empty, over 1 MB, not an
+            image, or a link out of the profile's assets folder.
   /work/runs/{id}/record:
     get:
       operationId: getWorkRunRecord
@@ -1691,6 +1731,10 @@ components:
           type: string
         name:
           type: string
+        avatar:
+          type: boolean
+          enum: [true]
+          description: Present only when the agent has a picture (GET /agents/{id}/avatar); never on the owner.
     TodoCount:
       type: object
       additionalProperties: false
