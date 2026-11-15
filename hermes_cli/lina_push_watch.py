@@ -16,7 +16,7 @@ are kept in ``$LINA_HOME/push/state.json``, so a restart neither repeats nor mis
 records what is open as sent. A source that cannot be read keeps its items as they were (no close, no resend).
 
 The sender is one thread per LINA root (a lock file in ``push/``), started with the web server. It tails the change
-stream's three sources (``lina_board_events.Stream``) and sweeps when one moves, every ``SWEEP_SECONDS`` anyway, and
+stream's sources (``lina_board_events.Stream``) and sweeps when one moves, every ``SWEEP_SECONDS`` anyway, and
 when a device's backoff runs out. 404 and 410 drop that subscription; other failures back off per device and are
 logged with the endpoint's host only.
 """
@@ -231,7 +231,7 @@ class Sender:
         _save(self.root, state)
 
     def run(self, stop: threading.Event) -> None:
-        """The thread body: a sweep now, then one on every change of the three stores, every SWEEP_SECONDS and when
+        """The thread body: a sweep now, then one on every change of the stream's stores, every SWEEP_SECONDS and when
         a backoff runs out."""
         from hermes_cli.lina_board_events import Stream
         self.stop = stop
