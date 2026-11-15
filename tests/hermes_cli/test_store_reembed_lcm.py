@@ -51,6 +51,31 @@ def test_deferred_summaries_use_global_keys_and_isolated_profiles(_memory_store,
     print("LCM DB evidence:", rows)
 
 
+def test_reembed_archives_the_migrated_active_profile_of_its_task(_memory_store, memory_store_sql):
+    sql = memory_store_sql
+    _summary(sql, "alpha", 1, "alpha summary")
+    # What `lina migrate memory` leaves: the source's active profiles, copied without their vectors.
+    sql("INSERT INTO ctx.lcm_embedding_profile (agent_id, identity_hash, provider, model_name, dim, task) "
+        "VALUES ('alpha', 'copied-summary', 'old-provider', 'old-model', 768, 'summary'), "
+        "('alpha', 'copied-chunk', 'old-provider', 'old-model', 768, 'chunk')")
+    client = _Client()
+    assert reembed(_connect(_memory_store), client, ["memory"], batch_size=2)[0].embedded == 1
+
+    def profiles():
+        return sql("SELECT identity_hash, model_name, active, archived_at FROM ctx.lcm_embedding_profile "
+                   "WHERE agent_id = 'alpha' AND task = %s ORDER BY identity_hash", ("summary",))
+
+    live = [row for row in profiles() if row[2] == 1 and row[3] is None]
+    assert [row[1] for row in live] == [client.model]
+    archived = [row for row in profiles() if row[0] == "copied-summary"]
+    assert archived[0][2] == 0 and archived[0][3] is not None
+    # Other tasks keep their own active profile.
+    assert sql("SELECT active, archived_at FROM ctx.lcm_embedding_profile "
+               "WHERE identity_hash = 'copied-chunk'") == [(1, None)]
+    assert reembed(_connect(_memory_store), client, ["memory"], batch_size=2, from_start=True)[0].embedded == 1
+    assert profiles() == sorted(live + archived)
+
+
 def test_summary_batches_resume_and_failed_embedding_does_not_advance(_memory_store, memory_store_sql):
     sql = memory_store_sql
     for node, text in ((1, "first summary"), (2, "   "), (3, "last summary")):
