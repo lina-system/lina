@@ -67,6 +67,21 @@ def test_one_owner_sentence_confirms_and_one_undoes_a_link(agent):
     assert "error" in _tool(agent, "memory_link", action="confirm", handle=MINA_LINE, person=MINA_KAKAO)
 
 
+def test_a_handle_confirmed_as_another_person_leaves_its_first_identity_until_undone(agent):
+    registry = next(p for p in agent._memory_manager.providers if p.name == "lina-memory")._registry
+    first = registry.person_of(("messenger_author", "line:u-5"))  # registered under its own identity
+    assert _picnic(agent, first) == {"msg:messages:x3"}
+
+    _tool(agent, "memory_link", action="confirm", handle=MINA_LINE, person=MINA_KAKAO,
+          said="Mina on LINE is the same Mina as on KakaoTalk")
+    moved = (_picnic(agent, first), _picnic(agent, MINA_KAKAO))
+    _tool(agent, "memory_link", action="undo", handle=MINA_LINE, person=MINA_KAKAO, said="No, they are not")
+
+    assert moved == (set(), {"msg:messages:x1", "msg:messages:x3"})
+    assert _picnic(agent, first) == {"msg:messages:x3"}
+    assert _picnic(agent, MINA_KAKAO) == {"msg:messages:x1"}
+
+
 def test_an_alias_list_imports_as_confirmed_links(agent, tmp_path):
     aliases = tmp_path / "aliases.txt"
     aliases.write_text(f"# Mina, by hand\n{MINA_KAKAO}  {MINA_LINE}\n\n", encoding="utf-8")

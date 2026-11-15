@@ -94,11 +94,14 @@ class IdentityRegistry:
             return row[0] if row else self._resolve("person", [handle])
 
     def handles(self, person_id: str) -> list[SourceKey]:
-        """Every handle of *person_id*: the keys it was registered under and the handles confirmed-linked to it."""
+        """Every handle of *person_id*: the keys it was registered under, except one the owner confirmed as another
+        person (it is theirs until that link is undone), and the handles confirmed-linked to it."""
         with self._lock, self._connection().cursor() as cur:
-            cur.execute("SELECT source, key FROM memory.identity_keys WHERE kind = 'person' AND identity_id = %s"
+            cur.execute("SELECT k.source, k.key FROM memory.identity_keys AS k WHERE k.kind = 'person'"
+                        " AND k.identity_id = %s AND NOT EXISTS (SELECT 1 FROM memory.identity_links AS l"
+                        " WHERE l.source = k.source AND l.key = k.key AND l.status = 'confirmed' AND l.person_id <> %s)"
                         " UNION SELECT source, key FROM memory.identity_links WHERE person_id = %s"
-                        " AND status = 'confirmed' ORDER BY 1, 2", (person_id, person_id))
+                        " AND status = 'confirmed' ORDER BY 1, 2", (person_id, person_id, person_id))
             return [tuple(row) for row in cur.fetchall()]
 
     def link(self, handle: SourceKey, person_id: str, *, status: str, evidence: str) -> str:
