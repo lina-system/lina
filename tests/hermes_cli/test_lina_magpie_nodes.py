@@ -170,3 +170,50 @@ def test_the_daily_sync_reads_the_hubs_magpie_and_lists_the_nodes_that_differ(tm
         "- magpie: short model list differs from the hub's (missing hub/p/m1)"]
     assert "- magpie: away unknown (node did not answer)" in notes
     assert not [line for line in issues + notes if "magpie: same" in line]
+
+
+def listing(monkeypatch, rows: list[dict]) -> None:
+    monkeypatch.setattr(lina_magpie_nodes.lina_magpie, "get", lambda proxy, path: {"object": "list", "data": rows})
+
+
+def test_a_model_listed_under_the_callers_alias_is_the_same_model_as_its_canonical_name(monkeypatch):
+    # the hub's caller key aliases qwen/x -> nous/qwen/x; a node's key (remote_id hub/) lists the canonical name
+    from hermes_cli.worker import proxy as proxies
+    hub_proxy, node_proxy = proxies.Proxy(remote_id=""), proxies.Proxy(remote_id="hub")
+    listing(monkeypatch, [{"id": "claude/claude-opus-5-5", "owned_by": "claude"},
+                          {"id": "qwen/qwen3-embedding-8b", "owned_by": "nous"}])
+    hub_names = lina_magpie_nodes.names(hub_proxy)
+    listing(monkeypatch, [{"id": "hub/claude/claude-opus-5-5", "owned_by": "claude"},
+                          {"id": "hub/nous/qwen/qwen3-embedding-8b", "owned_by": "nous"}])
+    node_names = lina_magpie_nodes.names(node_proxy)
+
+    assert hub_names == node_names == ["claude/claude-opus-5-5", "nous/qwen/qwen3-embedding-8b"]
+    assert compared({"names": node_names, "version": "0.1.3903"}, hub={"version": "0.1.3903", "names": hub_names}) \
+        == ([], [])
+
+
+def test_a_row_without_an_owner_is_listed_as_it_is(monkeypatch):
+    from hermes_cli.worker import proxy as proxies
+    listing(monkeypatch, [{"id": "p/m0"}, {"id": "p/m1", "owned_by": ""}, {"id": "p/m2", "owned_by": 3}])
+    assert lina_magpie_nodes.names(proxies.Proxy(remote_id="")) == ["p/m0", "p/m1", "p/m2"]
+
+
+def test_a_model_only_one_side_lists_still_differs_whatever_it_is_listed_as(monkeypatch):
+    from hermes_cli.worker import proxy as proxies
+    listing(monkeypatch, [{"id": "qwen/qwen3-embedding-8b", "owned_by": "nous"}, {"id": "claude/a", "owned_by": "claude"}])
+    hub = {"version": "0.1.3903", "names": lina_magpie_nodes.names(proxies.Proxy(remote_id=""))}
+
+    issues, _ = compared({"names": ["claude/a", "nous/qwen/other"], "version": "0.1.3903"}, hub=hub)
+
+    assert issues == ["- magpie: build-a model list differs from the hub's "
+                      "(missing nous/qwen/qwen3-embedding-8b; extra nous/qwen/other)"]
+
+
+@pytest.mark.parametrize("proxy, why", [
+    ({"version": "0.1.3903"}, "the node runs older LINA code (hello has no names)"),
+    ({}, "the node runs older LINA code (hello has no names)"),
+    ({"names": None, "version": None}, "the node's magpie gave no list"),
+], ids=["no-names-key", "no-proxy-facts", "magpie-silent"])
+def test_a_node_without_a_list_says_whether_its_code_is_old_or_its_magpie_silent(proxy, why):
+    _, notes = compared(proxy)
+    assert f"- magpie: build-a model list unknown ({why})" in notes
