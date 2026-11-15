@@ -165,3 +165,15 @@ def test_lina_migrate_carries_the_heart_after_the_lcm_rows(tmp_path, _memory_sto
     assert again.returncode == 0, again.stdout + again.stderr
     assert json.loads(again.stdout)["heart"]["written"] == 0
     assert len(heart_rows(memory_store_sql, "alpha-copy")) == 1
+
+
+def test_lina_migrate_fails_when_a_journal_line_is_lost(tmp_path, _memory_store, memory_store_sql):
+    from tests.hermes_cli.test_migrate_memory import _command, _run
+
+    command = _command(tmp_path, _memory_store)
+    trial_home(tmp_path / "hermes/profiles/alpha", journal=[line("Moved", [1])], extra_lines=["{not json"])
+    done = _run(command, tmp_path)
+    assert done.returncode == 1, done.stdout + done.stderr
+    report = json.loads(done.stdout)
+    assert report["steps"]["heart"]["ok"] is False
+    assert report["heart"]["ok"] is False and report["ok"] is False and report["complete"] is False

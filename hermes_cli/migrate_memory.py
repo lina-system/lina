@@ -201,7 +201,7 @@ def _profile(args) -> dict:
             "steps": steps,
             "embeddings": {"status": "deferred", "counted": True, "ok": True, "command": "lina store reembed",
                            "reason": "No embedding endpoint is called; Honcho reports legacy vector disposition."},
-            "ok": lcm["ok"] and all(report["ok"] for report in reports) and duplicates["ok"]
+            "ok": lcm["ok"] and heart["ok"] and all(report["ok"] for report in reports) and duplicates["ok"]
                   and honcho.get("ok", honcho.get("status") == "not_supplied")
                   and work_report.get("ok", work_report.get("status") == "not_supplied")}
 
