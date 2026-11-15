@@ -987,6 +987,8 @@ DEFAULT_CONFIG = {
     "dashboard": {
         # theme: "default" | "midnight" | "ember" | "mono" | "cyberpunk" | "rose"; app_dist: lina-app build at /app/
         "theme": "default", "app_dist": "", "host": "127.0.0.1", "port": 9119,  # host/port: `lina services` web
+        # app_label: one line naming this install on the /app/ page ("" = none); app_label_kind: "real" | "test"
+        "app_label": "", "app_label_kind": "",
         # Process-isolation rollout controls. Read via the raw config loader, so tui_gateway.server
         # also owns explicit defaults.
         "turn_isolation": False,

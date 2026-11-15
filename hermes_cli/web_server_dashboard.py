@@ -9,6 +9,7 @@ import os
 import sys
 import threading
 import time
+import unicodedata
 from contextlib import contextmanager
 import hermes_yaml as yaml
 from fastapi import Depends, FastAPI, HTTPException, Request, WebSocketException
@@ -318,6 +319,28 @@ def _web_app_dist() -> Optional[Path]:
     return dist if dist.is_dir() else None
 
 
+_APP_LABEL_MAX = 20
+_APP_LABEL_KINDS = ("real", "test")
+
+
+def _web_app_label_script() -> str:
+    """The inline script handing ``/app/`` the install label (``dashboard.app_label`` / ``app_label_kind``, lina#730),
+    or ``""`` when none is set. Read per request like ``_web_app_dist``; ``<`` is escaped so no text closes the tag."""
+    from hermes_cli.config import load_config
+    config = load_config()
+    raw = cfg_get(config, "dashboard", "app_label", default="")
+    raw = raw if isinstance(raw, str) else ""
+    text = "".join(ch for ch in raw if unicodedata.category(ch) != "Cc").strip()[:_APP_LABEL_MAX]
+    if not text:
+        return ""
+    label = {"text": text}
+    kind = cfg_get(config, "dashboard", "app_label_kind", default="")
+    if kind in _APP_LABEL_KINDS:
+        label["kind"] = kind
+    payload = json.dumps(label, ensure_ascii=False).replace("<", "\\u003c")
+    return f"<script>window.__LINA_APP_LABEL__={payload};</script>"
+
+
 def _mount_web_app(application: FastAPI, bootstrap_script, asset_files_cls) -> None:
     """``/app/``: the lina-app build on the client API's origin, handed the dashboard page's own bootstrap so it
     calls ``/api/lina/*`` with the same credential (lina#168). Mounted before the SPA catch-all; the folder is
@@ -360,7 +383,7 @@ def _mount_web_app(application: FastAPI, bootstrap_script, asset_files_cls) -> N
         if prefix:
             for attr in ('href="/app/', 'src="/app/'):
                 html = html.replace(attr, attr.replace('"/', f'"{prefix}/', 1))
-        html = html.replace("</head>", f"{bootstrap_script(prefix)}</head>", 1)
+        html = html.replace("</head>", f"{bootstrap_script(prefix)}{_web_app_label_script()}</head>", 1)
         return HTMLResponse(html, headers=page_headers(request, html, _NO_STORE))
 
 

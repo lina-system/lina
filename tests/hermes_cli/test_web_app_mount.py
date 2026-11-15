@@ -5,6 +5,8 @@ The page gets the dashboard's own bootstrap script, so the credential it reads i
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import re
 
@@ -145,3 +147,64 @@ def test_only_the_dashboard_serves_the_app_never_the_headless_backend(tmp_path, 
 
     response = TestClient(app).get("/app/")
     assert (response.status_code, '<div id="root">' in response.text) == ((404, False) if headless else (200, True))
+
+
+LABEL = re.compile(r"<script>window\.__LINA_APP_LABEL__=(.*?);</script>")
+
+
+def _label(page_text):
+    """The label the page hands the app, or ``None`` when the page carries no label script."""
+    found = LABEL.findall(page_text)
+    assert len(found) <= 1
+    return json.loads(found[0]) if found else None
+
+
+def test_no_label_leaves_the_page_as_it_was(work, tmp_path, dashboard):
+    build = _build(tmp_path / "lina-app")
+    work.config(extra=DEVICES + f"dashboard: {{app_dist: {build}}}\n")
+
+    page = dashboard.get("/app/").text
+    bootstrap = re.search(r"<script>window\.__HERMES_.*?</script>", page).group(0)
+    assert page == APP_HTML.replace("</head>", f"{bootstrap}</head>")
+
+
+@pytest.mark.parametrize(("label", "kind", "expected"), [
+    ("시험 사본", "test", {"text": "시험 사본", "kind": "test"}),
+    ("실제 · 읽기 전용", "real", {"text": "실제 · 읽기 전용", "kind": "real"}),
+    ("hub", "staging", {"text": "hub"}),
+    ("  a\tb\u0007c  ", "", {"text": "abc"}),
+    ("x" * 30, "test", {"text": "x" * 20, "kind": "test"}),
+    ("</script><script>x", "test", {"text": "</script><script>x", "kind": "test"}),
+    ("   ", "test", None),
+], ids=["test", "real", "bad-kind", "controls", "long", "hostile", "blank"])
+def test_the_label_reaches_the_page_trimmed_and_unbreakable(work, tmp_path, dashboard, label, kind, expected):
+    build = _build(tmp_path / "lina-app")
+    work.config(extra=DEVICES + "dashboard:\n"
+                f"  app_dist: {build}\n  app_label: {json.dumps(label)}\n  app_label_kind: {json.dumps(kind)}\n")
+
+    page = dashboard.get("/app/some/route").text
+    assert _label(page) == expected
+    assert page.count("</script>") == (3 if expected else 2)
+    assert page.index("__HERMES_SESSION_TOKEN__") < page.index("</head>")
+    if expected:
+        assert page.index("__LINA_APP_LABEL__") < page.index("</head>")
+
+
+def test_a_label_change_reaches_the_next_request_without_restart(work, tmp_path, dashboard):
+    build = _build(tmp_path / "lina-app")
+    work.config(extra=DEVICES + f"dashboard: {{app_dist: {build}, app_label: one}}\n")
+    assert _label(dashboard.get("/app/").text) == {"text": "one"}
+
+    work.config(extra=DEVICES + f"dashboard: {{app_dist: {build}, app_label: two, app_label_kind: real}}\n")
+    assert _label(dashboard.get("/app/").text) == {"text": "two", "kind": "real"}
+
+
+def test_the_webapp_page_policy_hashes_the_label_script(work, tmp_path, monkeypatch, dashboard):
+    build = _build(tmp_path / "lina-app")
+    work.config(extra=DEVICES + f"dashboard: {{app_dist: {build}, app_label: 시험 사본, app_label_kind: test}}\n")
+    monkeypatch.setattr(web_server.app.state, "ui_surface", "webapp", raising=False)
+
+    page = dashboard.get("/app/")
+    script = re.search(r"<script>(window\.__LINA_APP_LABEL__=.*?)</script>", page.text).group(1)
+    digest = base64.b64encode(hashlib.sha256(script.encode("utf-8")).digest()).decode("ascii")
+    assert f"'sha256-{digest}'" in page.headers["content-security-policy"]
