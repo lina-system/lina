@@ -12,6 +12,7 @@ from typing import Any, TYPE_CHECKING
 
 from .client import spawn_context_thread
 from .client import get_honcho_client
+from .dialectic_client import DialecticClient
 from .session_auth import HonchoAuthError, SessionAuthMixin
 from .session_context import SessionContextMixin
 from .session_migration import SessionMigrationMixin
@@ -84,6 +85,10 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
         # Bumped (under _cache_lock) whenever _force_reauth rebuilds the client, so an
         # in-flight resolver never stores an object bound to the discarded client.
         self._client_generation = 0
+        # Every no-retry dialectic client built, the newest last: one per shared client it followed, all
+        # closed by close_dialectic().
+        self._dialectic_clients: list[DialecticClient] = []
+        self._dialectic_closed = False
 
         # Set when a call still fails auth after a forced token refresh; cleared on the next success.
         self._auth_failure: str | None = None
@@ -162,6 +167,28 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
         """Get or create a Honcho peer (one get-or-create API call, then cached)."""
         return self._cached_sdk_object(
             self._peers_cache, peer_id, lambda: self._authed_call("peer setup", lambda: self.honcho.peer(peer_id)))
+
+    def _dialectic_peer(self, peer_id: str) -> Any:
+        """``peer_id`` on the no-retry dialectic client. That client follows the shared one: rebuilt when the
+        shared client is rebuilt, and handed its current bearer on every call."""
+        shared = self.honcho
+        with self._cache_lock:
+            if self._dialectic_closed:
+                raise RuntimeError("Honcho dialectic client is closed")
+            client = self._dialectic_clients[-1] if self._dialectic_clients else None
+            if client is None or client.source is not shared:
+                client = DialecticClient(self._config, shared)
+                self._dialectic_clients.append(client)
+        client.sync_token()
+        return self._cached_sdk_object(client.peers, peer_id, lambda: client.honcho.peer(peer_id))
+
+    def close_dialectic(self) -> None:
+        """Abort the dialectic queries in flight and refuse new ones, so shutdown never waits on one (#712)."""
+        with self._cache_lock:
+            self._dialectic_closed = True
+            clients = list(self._dialectic_clients)
+        for client in clients:
+            client.close()
 
     # ----- Observation config (per session) -----
 
@@ -290,11 +317,12 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
         for session_id in [sid for sid in self._session_observation if sid not in live_ids]:
             del self._session_observation[session_id]
         live_peers = {p for s in self._cache.values() for p in (s.user_peer_id, s.assistant_peer_id)}
-        for peer_id in list(self._peers_cache):
-            if len(self._peers_cache) <= _PEERS_CACHE_MAX_SIZE:
-                break
-            if peer_id not in live_peers:
-                del self._peers_cache[peer_id]
+        for peers in (self._peers_cache, *(c.peers for c in self._dialectic_clients)):
+            for peer_id in list(peers):
+                if len(peers) <= _PEERS_CACHE_MAX_SIZE:
+                    break
+                if peer_id not in live_peers:
+                    del peers[peer_id]
         with self._prefetch_cache_lock:
             for key in [k for k in self._context_cache if k not in self._cache]:
                 del self._context_cache[key]
