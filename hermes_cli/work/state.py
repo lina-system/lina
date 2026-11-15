@@ -10,6 +10,7 @@ with no job file reads stopped once it is older than ``work.run_never_started_s`
 
 from __future__ import annotations
 
+import contextvars
 from concurrent.futures import ThreadPoolExecutor
 
 from hermes_cli.work import ledger
@@ -100,10 +101,11 @@ def worker_runs(recs: dict, rows) -> dict:
 def _evaluate_all(recs: dict, ids: list[str], ctx: dict, st: dict) -> dict:
     out = dict(st.get("items", {}))
     tier = {k: [i for i in ids if kind_now(recs[i]["kind"]) == k] for k in (TODO, "목표")}
+    bound = contextvars.copy_context()  # the pool's threads read this command's binding (env._CURRENT)
     with ThreadPoolExecutor(6) as ex:
-        out.update(dict(zip(tier[TODO], ex.map(lambda i: evaluate(recs[i], ctx), tier[TODO]))))
+        out.update(dict(zip(tier[TODO], ex.map(lambda i: bound.copy().run(evaluate, recs[i], ctx), tier[TODO]))))
         ctx["prev"] = out
-        out.update(dict(zip(tier["목표"], ex.map(lambda i: evaluate(recs[i], ctx), tier["목표"]))))
+        out.update(dict(zip(tier["목표"], ex.map(lambda i: bound.copy().run(evaluate, recs[i], ctx), tier["목표"]))))
     for i in ids:
         if recs[i]["kind"] in ("영역", "메모"):
             out[i] = evaluate(recs[i], ctx)

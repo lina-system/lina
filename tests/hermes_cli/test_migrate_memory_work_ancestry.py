@@ -12,7 +12,7 @@ from tests.hermes_cli.work_pg_fixture import pg_db
 
 @pytest.fixture(params=["sqlite", "postgres"])
 def target(request, tmp_path, monkeypatch):
-    previous = env._CURRENT[:]
+    previous = env._CURRENT.get()
     home = tmp_path / "destination"
     home.mkdir()
     backend = {"backend": request.param}
@@ -25,7 +25,7 @@ def target(request, tmp_path, monkeypatch):
         if request.param == "postgres":
             db.execute("TRUNCATE area, project, goal, todo, run, event, link, wait, decision, run_todo CASCADE")
     yield home
-    env._CURRENT[:] = previous
+    env._CURRENT.set(previous)
 
 
 def ancestry_source(path):

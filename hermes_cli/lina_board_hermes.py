@@ -509,7 +509,7 @@ def stop() -> None:
 def _record_rows(reply: dict, root: Path) -> dict:
     """``lina_board.work_read``'s shape over the old record, by the board's own rules (``work.board``), with the old
     record's owner and agents bound in place of LINA's for the read; ids are prefixed and rows marked read only."""
-    from hermes_cli.lina_board import _WORK_LOCK, _item_row
+    from hermes_cli.lina_board import _item_row
     from hermes_cli.work import env
     from hermes_cli.work.board import due_groups, inbox
     from hermes_cli.work.notify import owner_today
@@ -517,27 +517,26 @@ def _record_rows(reply: dict, root: Path) -> dict:
     recs = {str(x["id"]): x for x in items}
     agents = {str(k): str(v) for k, v in (reply.get("bots") or {}).items()}
     owner = next((str(x["owner"]) for x in items if x.get("owner")), None)
-    with _WORK_LOCK:
-        mine = env.load(root)
-        env.bind(dataclasses.replace(mine, owner=owner or mine.owner, agents=agents))
-        try:
-            today = owner_today()
-            asks, todos = inbox(recs, list(recs), today)
-            groups = due_groups(recs, list(recs), today)
+    mine = env.load(root)
+    env.bind(dataclasses.replace(mine, owner=owner or mine.owner, agents=agents))
+    try:
+        today = owner_today()
+        asks, todos = inbox(recs, list(recs), today)
+        groups = due_groups(recs, list(recs), today)
 
-            def row(item: dict) -> dict:
-                return dict(_item_row(item, recs), id=hermes_id(item["id"]), readOnly=True)
-            return {
-                "agents": agents, "today": today.isoformat(),
-                "decide": [{"target": hermes_id(a["item"]["id"]), "title": row(a["item"])["title"],
-                            "agent": a["agent"] or None, "kind": a["kind"], "text": a["text"], "at": a["at"],
-                            "answered": a["answered"], "readOnly": True} for a in asks],
-                "mine": [dict(row(item), waiting=waiting, createdAt=int(item.get("created") or 0))
-                         for item, waiting in todos],
-                "due": {name: [row(item) for item in rows] for name, rows in groups.items()},
-            }
-        finally:
-            env.reset()
+        def row(item: dict) -> dict:
+            return dict(_item_row(item, recs), id=hermes_id(item["id"]), readOnly=True)
+        return {
+            "agents": agents, "today": today.isoformat(),
+            "decide": [{"target": hermes_id(a["item"]["id"]), "title": row(a["item"])["title"],
+                        "agent": a["agent"] or None, "kind": a["kind"], "text": a["text"], "at": a["at"],
+                        "answered": a["answered"], "readOnly": True} for a in asks],
+            "mine": [dict(row(item), waiting=waiting, createdAt=int(item.get("created") or 0))
+                     for item, waiting in todos],
+            "due": {name: [row(item) for item in rows] for name, rows in groups.items()},
+        }
+    finally:
+        env.reset()
 
 
 def merge(work: dict | None, errors: list[dict], root: Path) -> dict | None:

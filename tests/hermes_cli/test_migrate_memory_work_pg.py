@@ -16,7 +16,7 @@ pg_db = work_pg_fixture.pg_db
 
 @pytest.fixture
 def destination(tmp_path, monkeypatch, pg_db):
-    previous = env._CURRENT[:]
+    previous = env._CURRENT.get()
     home = tmp_path / "destination"
     home.mkdir()
     config = {"work": {"store": {"backend": "postgres", "psql": pg_db.argv},
@@ -26,7 +26,7 @@ def destination(tmp_path, monkeypatch, pg_db):
     with closing(ledger.open_db()) as db:
         db.execute("TRUNCATE area, project, goal, todo, run, event, link, wait, decision, run_todo CASCADE")
     yield home
-    env._CURRENT[:] = previous
+    env._CURRENT.set(previous)
 
 
 def rich_source(path):

@@ -12,12 +12,12 @@ from hermes_cli.work.cmd_store import _import_line
 
 @pytest.fixture
 def work_env(tmp_path, monkeypatch):
-    previous = env._CURRENT[:]
+    previous = env._CURRENT.get()
     config = {"work": {"store": {"backend": "sqlite"}, "agents": {"alpha": "Alpha"}}}
     monkeypatch.setattr(env, "_root_config", lambda base: config)
     env.bind(env.Env(tmp_path, config, "en", "owner", "Owner", {"alpha": "Alpha"}))
     yield tmp_path
-    env._CURRENT[:] = previous
+    env._CURRENT.set(previous)
 
 
 def _append(db, number, **fields):

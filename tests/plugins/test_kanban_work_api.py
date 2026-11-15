@@ -593,3 +593,42 @@ def test_a_card_parked_on_a_finished_worker_a_time_or_a_card_stays_planned(clien
     assert (rows[unjudged]["state"], rows[unjudged]["now"]) == ("in_progress", "Synthetic widget fix 3")
     running = _valid("WorkCardList", client.get(f"{WORK}/cards", params={"state": "in_progress"}).json())["cards"]
     assert [c["id"] for c in running] == [unjudged]
+
+
+
+def test_finished_cards_come_as_a_newest_first_page_and_a_total_beside_every_unfinished_card(client, conn):
+    """lina#729: ``finished_limit``/``finished_offset`` page the done cards newest-completed first, every unfinished
+    card is always served, ``finishedTotal`` counts every done card whatever the page, and no parameter is the old
+    reply. A page keeps the list's order: it is the whole list without the done cards outside the page."""
+    planned, stopped = _card(conn, "planned"), _card(conn, "stopped")
+    assert kb.block_task(conn, stopped, reason="which colour?", kind="needs_input")
+    done = [_card(conn, f"done {n}") for n in range(5)]
+    base = int(time.time()) - 3600
+    for n, tid in enumerate(done):
+        _running(conn, tid)
+        assert kb.complete_task(conn, tid, summary="shipped")
+        with kb.write_txn(conn):  # done 4 is the newest completion, created last only by chance
+            conn.execute("UPDATE tasks SET completed_at = ? WHERE id = ?", (base + [3, 0, 4, 1, 2][n] * 60, tid))
+    newest = [done[2], done[0], done[4], done[3], done[1]]
+
+    def page(**params):
+        r = client.get(f"{WORK}/cards", params=params)
+        assert r.status_code == 200, r.text
+        reply = _valid("WorkCardList", r.json())
+        assert reply["finishedTotal"] == 5
+        ids = [c["id"] for c in reply["cards"]]
+        assert [i for i in ids if i not in done] == [planned, stopped]
+        return {i for i in ids if i in done}
+
+    whole = client.get(f"{WORK}/cards").json()
+    assert set(whole) == {"cards"} and {c["id"] for c in whole["cards"]} == {planned, stopped, *done}
+    assert page(finished_limit=0) == set()
+    assert page(finished_limit=2) == set(newest[:2])
+    assert page(finished_limit=2, finished_offset=2) == set(newest[2:4])
+    assert page(finished_limit=2, finished_offset=4) == set(newest[4:])
+    assert page(finished_limit=2, finished_offset=9) == set()
+    assert page(finished_offset=3) == set(newest[3:])
+    assert client.get(f"{WORK}/cards", params={"finished_limit": 1000}).json() == {**whole, "finishedTotal": 5}
+    for bad in ({"finished_limit": -1}, {"finished_limit": "x"}, {"finished_offset": -1},
+                {"finished_offset": "1.5"}, {"finished_limit": ""}):
+        assert client.get(f"{WORK}/cards", params=bad).status_code == 422, bad
