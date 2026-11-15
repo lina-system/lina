@@ -277,9 +277,15 @@ def _project_wait(db, r, col, at):
                     utc(held.get("since")) or at, None if w else (utc(rel.get("at")) or at), by))
     db.execute(f"DELETE FROM decision WHERE {col} = ? AND run_id IS NULL", (i,))
     if r.get("decide"):
-        db.execute(f"INSERT INTO decision ({col}, kind, prompt, options, asked_by, asked_at, agent_id) "
-                   "VALUES (?, 'question', ?, ?, ?, ?, ?)",
-                   (i, str(r["decide"]), json.dumps(r.get("decide_choices") or [], ensure_ascii=False), by, at, by))
+        from hermes_cli.work.board import answer_of
+        # The owner's answer settles the ask (lina#720); an agent's "답변 필요" reply asks again with a new sentence.
+        answer = answer_of(r)
+        answered = (str(answer.get("text") or ""), actor(db, answer.get("by")), utc(answer.get("at")) or at) \
+            if answer else (None, None, None)
+        db.execute(f"INSERT INTO decision ({col}, kind, prompt, options, asked_by, asked_at, answer, answered_by, "
+                   "answered_at, agent_id) VALUES (?, 'question', ?, ?, ?, ?, ?, ?, ?, ?)",
+                   (i, str(r["decide"]), json.dumps(r.get("decide_choices") or [], ensure_ascii=False), by, at,
+                    *answered, by))
 
 
 def project_item(db, r, info, prev=None):
