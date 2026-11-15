@@ -179,6 +179,17 @@ def test_an_agent_reads_only_its_own_texts_of_the_set(_memory_store, memory_stor
         assert conn.execute("SELECT text FROM memory.korean_eval_texts").fetchall() == [("가 에이전트 문장",)]
 
 
+def test_an_agent_cannot_write_the_set_or_read_the_baselines(_memory_store, memory_store_sql):
+    memory_store_sql("INSERT INTO memory.korean_eval_baselines (name, counts) VALUES ('b', '{}'::jsonb)")
+    with psycopg.connect(_memory_store.app_dsn(), autocommit=True) as conn:
+        conn.execute("SET lina.agent_id = 'a'")
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            conn.execute("INSERT INTO memory.korean_eval_texts (kind, text, text_sha256, marked_by, agent_id, source) "
+                         "VALUES ('clean', 'x', md5('x'), 'owner', 'a', 'test')")
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            conn.execute("SELECT name FROM memory.korean_eval_baselines")
+
+
 def test_the_migration_runs_again_without_change(memory_store_sql):
     memory_store_sql((MIGRATIONS_DIR / "0017_eval_korean.sql").read_text(encoding="utf-8"))
     assert memory_store_sql("SELECT version FROM memory.schema_migrations WHERE version = '0017'") == [("0017",)]

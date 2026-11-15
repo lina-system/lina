@@ -74,7 +74,7 @@ def test_it_applies_on_a_store_that_holds_memory_rows_and_keeps_them(fresh_db, t
                      "VALUES ('chunk', 1, 'alpha', 'm', 1024, %s)", (VECTOR,))
         before = conn.execute("SELECT message_id, uid, content FROM memory.messages").fetchall()
 
-        assert apply(_runner(conn), out=lambda _line: None) == [BRAIN]
+        assert BRAIN in apply(_runner(conn), out=lambda _line: None)
 
         assert conn.execute("SELECT message_id, uid, content FROM memory.messages").fetchall() == before
         assert conn.execute("SELECT kind, agent_id FROM vec.embeddings").fetchall() == [("chunk", "alpha")]

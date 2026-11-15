@@ -33,9 +33,14 @@ CREATE TABLE IF NOT EXISTS memory.korean_eval_texts (
 CREATE UNIQUE INDEX IF NOT EXISTS korean_eval_texts_once
     ON memory.korean_eval_texts (kind, text_sha256, coalesce(phrase, ''));
 
+-- The set is the owner's yardstick: an agent reads its own texts and never writes one (the owner role `lina`
+-- imports them), so no agent can label its own reply clean.
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON memory.korean_eval_texts FROM lina_app;
+
 -- Saved per-check numbers of one run (`lina eval korean --save-baseline NAME`): counts only, never text.
 CREATE TABLE IF NOT EXISTS memory.korean_eval_baselines (
     name text PRIMARY KEY CHECK (name <> ''),
     counts jsonb NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now()
 );
+REVOKE ALL ON memory.korean_eval_baselines FROM lina_app;
