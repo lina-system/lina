@@ -189,3 +189,17 @@ def test_an_oversized_note_is_truncated_and_still_frozen(home):
     assert len(content) <= MAX_SYSTEM_PROMPT_SECTION_CHARS
     assert content.startswith(SELF_NOTE_BOUNDARY) and "head line" in content and "last line" in content
     assert "[...truncated SOUL.self.md" in content and content in prompt
+
+
+def test_a_long_marker_still_leaves_the_notes_tail_inside_the_section_limit(home):
+    # Given an oversized note whose omitted middle holds many long headings, so the marker is large
+    headings = "".join(f"## {i:02d} " + "h" * 185 + "\nbody line\n" for i in range(15))
+    _write_note(home, "# Head\n" + "head line\n" * 300 + headings + "x" * 4000 + "\n# Tail\nfinal line one\nfinal line two")
+    agent = _agent("20261115_090000_aaaaaa")
+    build_system_prompt(agent)
+
+    content = agent._plugin_system_prompt_sections_snapshot[0].content
+    # Then the section fits, the marker is whole, and the last lines of the note survive
+    assert len(content) <= MAX_SYSTEM_PROMPT_SECTION_CHARS
+    assert "If you need the full instructions" in content
+    assert content.rstrip().endswith("final line two")

@@ -48,8 +48,15 @@ def render_self_note_section(home: Path) -> tuple:
         logger.warning("Self note %s contains a reserved prompt marker and is left out of the prompt", path)
         return ()
     budget = MAX_SYSTEM_PROMPT_SECTION_CHARS - len(SELF_NOTE_BOUNDARY) - 2
-    note = _truncate_content(note, SELF_NOTE_FILENAME, max_chars=budget, read_path=str(path))
-    # The truncation marker lists omitted headings, so it can outgrow the head/tail split's slack.
+    full = note
+    note = _truncate_content(full, SELF_NOTE_FILENAME, max_chars=budget, read_path=str(path))
+    # The marker lists the omitted headings, so the head/tail split does not cover it: shrink the split by the
+    # overshoot until head, marker and tail fit together, so the tail is kept rather than sliced off.
+    split = budget
+    while len(note) > budget and split > 0:
+        split = max(split - (len(note) - budget), 0)
+        note = _truncate_content(full, SELF_NOTE_FILENAME, max_chars=split, read_path=str(path), queue_warning=False)
+    # Headings are unbounded, so a marker alone can still exceed the section: the cap is the last resort.
     content = f"{SELF_NOTE_BOUNDARY}\n\n{note}"[:MAX_SYSTEM_PROMPT_SECTION_CHARS]
     return (RenderedPluginSystemPromptSection(
         id=SELF_NOTE_SECTION_ID, content=content, position="after_memory", plugin="core"),)
