@@ -714,11 +714,15 @@ def _own_inbox(board: Optional[str], now: int) -> dict[str, list]:
         return {"blocked": blocked, "questions": questions}
 
 
-@router.get("/inbox")
-def get_inbox(board: Optional[str] = Query(None)):
+def get_inbox(board: Optional[str] = Query(None)) -> dict:
+    """The inbox as a dict: the push sender reads it directly; the route renders it."""
     now = int(time.time())
-    return JSONResponse(hermes_rows.add(_own_inbox(board, now), board,
-                                        lambda src, _src_board: hermes_rows.inbox(src, now)))
+    return hermes_rows.add(_own_inbox(board, now), board, lambda src, _src_board: hermes_rows.inbox(src, now))
+
+
+@router.get("/inbox")
+def list_inbox(board: Optional[str] = Query(None)):
+    return JSONResponse(get_inbox(board))
 
 
 class AnswerBody(BaseModel):
