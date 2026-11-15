@@ -11,6 +11,9 @@ except ``memory_search`` and ``memory_open`` (``search.py``), lina-memory's own 
 ``memory_link`` (``links.py``) and ``owner_terms`` (``terms.py``, the owner's own words for a concept, lina#379).
 The person card comes from the session person's brain page, and Honcho's conclusions about that person are written
 to the page at session end (``hermes_cli/brain/people.py``, lina#445).
+
+``brain_search``, ``brain_get`` and ``brain_links`` (``search.py``, lina#446) are the one search over the brain, the
+work record, repos and memory; ``memory_search`` and ``memory_open`` forward to them for one release.
 """
 
 from __future__ import annotations
@@ -53,6 +56,7 @@ class LinaMemoryProvider(MemoryProvider):
         self._session_id = ""
         self._search: Optional[search.MemorySearch] = None
         self._embedding = None
+        self._brain = None
 
     @property
     def name(self) -> str:
@@ -243,8 +247,37 @@ class LinaMemoryProvider(MemoryProvider):
         if self._search is None:
             self._search = search.MemorySearch(search.Readers(
                 store=self._message_store, honcho=self._honcho_reader, lcm=self._use_lcm, embedder=self._embedder,
-                person_refs=self._person_refs))
+                person_refs=self._person_refs, brain=self._brain_reader, work=self._work_items))
         return self._search
+
+    def _brain_reader(self):
+        if self._brain is None:
+            from hermes_cli.brain.search import BrainReader
+            self._brain = BrainReader(self._brain_connection)
+        return self._brain
+
+    def _brain_connection(self):
+        """A read connection as this agent (role ``lina_app``): it may read the shared brain and page vectors."""
+        import psycopg
+
+        from hermes_state_store import StoreUnavailableError, resolve_dsn
+        try:
+            conn = psycopg.connect(resolve_dsn(), autocommit=True)
+        except psycopg.OperationalError as exc:
+            raise StoreUnavailableError(f"cannot reach the memory store: {exc}".strip()) from exc
+        conn.execute("SELECT set_config('lina.agent_id', %s, false)", (self._agent_name(),))
+        return conn
+
+    @staticmethod
+    def _work_items() -> dict[str, dict[str, Any]]:
+        """The work record's items, on a connection of their own: the ledger's per-context one would outlive the
+        tool call."""
+        from hermes_cli.work import ledger, store
+        db = ledger.open_db()
+        try:
+            return store.read_all(db)[0]
+        finally:
+            db.close()
 
     def _person_refs(self, person: str) -> list[str]:
         """The row refs of every handle of *person* (a person id or a handle): its confirmed channels only."""
@@ -351,7 +384,7 @@ class LinaMemoryProvider(MemoryProvider):
 
     def get_tool_schemas(self) -> list[dict[str, Any]]:
         honcho = self._honcho.get_tool_schemas() if self._honcho.is_available() else []
-        return [*honcho, search.SEARCH_SCHEMA, search.OPEN_SCHEMA, links.LINK_SCHEMA, terms.TERMS_SCHEMA]
+        return [*honcho, *search.SCHEMAS, links.LINK_SCHEMA, terms.TERMS_SCHEMA]
 
     def handle_tool_call(self, tool_name: str, args: dict[str, Any], **kwargs) -> str:
         if tool_name in search.TOOL_NAMES:
@@ -414,6 +447,9 @@ class LinaMemoryProvider(MemoryProvider):
         if self._embedding:
             self._embedding.close()
             self._embedding = None
+        if self._brain is not None:
+            self._brain.close()
+            self._brain = None
         if self._store is not None:
             self._store.close()
 

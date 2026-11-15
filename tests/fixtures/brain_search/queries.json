@@ -1,0 +1,166 @@
+{
+ "k": 5,
+ "queries": [
+  {
+   "id": "q01",
+   "kind": "paraphrase",
+   "query": "소리가 너무 울리는 걸 줄이는 방법",
+   "relevant": [
+    "리버브"
+   ]
+  },
+  {
+   "id": "q02",
+   "kind": "paraphrase",
+   "query": "음원 수익을 나눠 받는 기준",
+   "relevant": [
+    "음원-정산"
+   ]
+  },
+  {
+   "id": "q03",
+   "kind": "paraphrase",
+   "query": "해외 공연 갈 때 필요한 서류",
+   "relevant": [
+    "비자-서류"
+   ]
+  },
+  {
+   "id": "q04",
+   "kind": "paraphrase",
+   "query": "녹음 전날 챙겨야 할 것들",
+   "relevant": [
+    "녹음-체크리스트"
+   ]
+  },
+  {
+   "id": "q05",
+   "kind": "paraphrase",
+   "query": "큰 소리와 작은 소리 차이를 줄이는 장비",
+   "relevant": [
+    "컴프레서"
+   ]
+  },
+  {
+   "id": "q06",
+   "kind": "paraphrase",
+   "query": "스트리밍에서 곡 음량을 맞추는 기준",
+   "relevant": [
+    "라우드니스-노멀라이제이션"
+   ]
+  },
+  {
+   "id": "q07",
+   "kind": "paraphrase",
+   "query": "남의 녹음 일부를 곡에 써도 되는지 허락받기",
+   "relevant": [
+    "샘플-클리어런스"
+   ]
+  },
+  {
+   "id": "q08",
+   "kind": "name",
+   "query": "Summer Garden 앨범 진행 상황",
+   "relevant": [
+    "여름-정원"
+   ]
+  },
+  {
+   "id": "q09",
+   "kind": "name",
+   "query": "서윤이 맡은 일",
+   "relevant": [
+    "한서윤"
+   ]
+  },
+  {
+   "id": "q10",
+   "kind": "name",
+   "query": "달빛스튜디오 대관료",
+   "relevant": [
+    "달빛-스튜디오"
+   ]
+  },
+  {
+   "id": "q11",
+   "kind": "name",
+   "query": "ISRC 코드 발급",
+   "relevant": [
+    "메타데이터"
+   ]
+  },
+  {
+   "id": "q12",
+   "kind": "name",
+   "query": "푸른소리랑 맺은 계약",
+   "relevant": [
+    "푸른소리-레이블"
+   ]
+  },
+  {
+   "id": "q13",
+   "kind": "name",
+   "query": "도현 씨한테 연락하는 방법",
+   "relevant": [
+    "박도현"
+   ]
+  },
+  {
+   "id": "q14",
+   "kind": "morph",
+   "query": "사이드체인을 걸어서 킥이랑 베이스 정리하기",
+   "relevant": [
+    "사이드체인"
+   ]
+  },
+  {
+   "id": "q15",
+   "kind": "morph",
+   "query": "원천징수로 떼인 세금 돌려받기",
+   "relevant": [
+    "원천징수"
+   ]
+  },
+  {
+   "id": "q16",
+   "kind": "morph",
+   "query": "인이어 모니터링이 끊길 때",
+   "relevant": [
+    "인이어-모니터"
+   ]
+  },
+  {
+   "id": "q17",
+   "kind": "morph",
+   "query": "프로젝트파일 이름 붙이는 규칙",
+   "relevant": [
+    "프로젝트-파일-정리"
+   ]
+  },
+  {
+   "id": "q18",
+   "kind": "morph",
+   "query": "3월 4일 정산 회의에서 정한 것",
+   "relevant": [
+    "260304-레이블-정산-회의"
+   ]
+  },
+  {
+   "id": "q19",
+   "kind": "morph",
+   "query": "겨울투어 숙소 예약",
+   "relevant": [
+    "투어-숙소",
+    "겨울-투어-2026"
+   ]
+  },
+  {
+   "id": "q20",
+   "kind": "morph",
+   "query": "기타줄 바꾸는 주기",
+   "relevant": [
+    "기타-줄-교체"
+   ]
+  }
+ ]
+}

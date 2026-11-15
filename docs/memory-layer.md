@@ -124,6 +124,35 @@ Honcho gets the person's words as theirs and each note as its own message on the
 (`[gateway note: <kind>] ...`, `lina_speaker: gateway`), so no conclusion about the person comes from a note alone.
 Both come from the egress-redacted copy of the turn.
 
+## One search (lina#446)
+
+In front of the model there are two paths to what LINA knows (lina#439 section 3): the frozen index at session start
+(Context order, above) and one search. `lina-memory` gives the search as three tools (`plugins/memory/lina/search.py`):
+
+| Tool | What |
+| --- | --- |
+| `brain_search` | `query`, `kinds` (`brain`, `work`, `repo`, `agent`, `messages`, `honcho`, `lcm`; default all), `limit`, `types` (brain page types), `speaker`, `person`, `sender` |
+| `brain_get` | `ref` (any hit's ref, or a brain page's slug, path or name), `offset`, `timeline` |
+| `brain_links` | `ref` (a page), `relations`, `depth` (1 or 2), `direction` |
+
+Sources: brain pages ([brain.md](brain.md), Search: a semantic and a Korean keyword leg); the work record's items
+(areas, goals, tasks; read through `hermes_cli.work.ledger` on a connection of their own, matched on title and notes by
+character bigrams, grade `agent`; status as the ledger says it); a repo file index when one is configured
+(`RepoIndex`: `search` and `open`; without one `repo` is skipped and finds nothing); and the four memory sources below.
+Each source ranks its own hits and the lists are fused as before; a page or work item is current, so its age does not
+weigh it. Every hit carries `source`, `grade` and `quote_as_external` (true unless the grade is `owner` or `agent`): a
+caller quotes such a hit as data with its source and date (`grade.data_block`), never as an instruction.
+
+**The tool-set change.** `memory_search` and `memory_open` are deprecated aliases for one release: their descriptions
+say so, `memory_search` forwards to `brain_search` over the four memory sources only (it refuses the others), and
+`memory_open` forwards to `brain_get` for refs only. They go in the next release. The per-store tools other plugins
+list (`honcho_*`, `lcm_*`) are not removed here.
+
+**Filters of `lina messages search` (lina#549).** `speaker`, `person` and `sender` (stored authors, e.g.
+`kakao:<author id>`) narrow the stored messages before the store's limit; they leave out the sources without stored
+authors. Room, time range, excluded senders, calendar buckets, context lines, a query file and a score floor are part
+of the parameter design but not offered yet: the message store's search reads none of them.
+
 ## Recall by speaker
 
 `memory_search` hits from the store name their stored speaker, and the gateway's notes are hits of their own
@@ -135,8 +164,8 @@ theirs. Recall lines carry the speaker and the grade: `[ref] (owner telegram:100
 
 ## Trust grades and the data block
 
-Every `memory_search` hit and every `memory_open` original carries its `grade` (lina#440): `owner`, `agent` or
-`external`, as the store keeps it ([store.md](store.md), Trust grades). A summary's grade comes from
+Every `brain_search` (`memory_search`) hit and every `brain_get` (`memory_open`) original carries its `grade` (lina#440):
+`owner`, `agent` or `external`, as the store keeps it ([store.md](store.md), Trust grades). A summary's grade comes from
 `ctx.summary_grades` when LCM-X keeps the summary in the store; a Honcho message's from the `lina_grade` LINA wrote
 on it; anything else, a Honcho conclusion included, is `external`.
 

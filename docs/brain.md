@@ -243,7 +243,7 @@ agent read them. A page's vector is deleted when the page is deleted or its file
 - **Grades** (lina#440): stored, defaulting to `external`. The person card reads them (lina#445); promotion does
   not yet.
 - **Honcho and person pages** (lina#445): done, see "Person pages" below.
-- **Search** (lina#446): page vectors and a Korean keyword index. No page is embedded yet.
+- **Search** (lina#446): see "Search" below.
 - **Frontmatter `type` labels** that are not page types (a wiki's own labels) are kept in the frontmatter copy but
   do not decide the type. An owner mapping for such labels could come later.
 
@@ -291,6 +291,72 @@ Lint is report-only. Every text finding is one line with the relative file path,
 
 Upkeep uses the importer's scanner and its single set of exclusions. Conflict-copy directories are excluded as
 well as conflict-copy files; `@eaDir`, `#recycle` and the other exclusions in the import table apply to both.
+
+## Search
+
+Agents look the brain up first (lina#438 item 6, lina#439 section 3) with three tools of `lina-memory`
+([memory-layer.md](memory-layer.md), One search): `brain_search` finds pages (and work items, repo files and
+memory), `brain_get` opens a page, `brain_links` walks its links. The brain side is `hermes_cli/brain/search.py`.
+
+```sh
+lina brain import ~/Desk/Wiki
+lina brain search-index            # after every import; --root DIR for one directory, --json for the report
+lina brain search-eval tests/fixtures/brain_search/queries.json
+```
+
+`search-index` runs as the store owner and writes only what is out of date:
+
+- **Page vectors** in `vec.embeddings` (kind `page`, owner `*`, migration 0014), one per page, with the home's
+  embedding model (`embedding:` in config.yaml), of the page's title, its other names and its compiled truth (wiki
+  links read as their words, at most 4,000 characters). A page with a vector of the model is skipped; a changed file
+  has already lost its vector (trigger `pages_drop_vector`). Without an embedding endpoint no vectors are written and
+  the report says so.
+- **Keyword terms** in `brain.search_docs` and `brain.search_terms` (migration `0021_brain_search.sql`, shared and
+  SELECT-only for `lina_app` like the other brain tables). Korean writes particles and endings onto words (서윤이,
+  푸른소리랑) and joins or spaces compounds at will (기타줄, 기타 줄), so a term is not a space-separated word.
+  Two analyzers are kept side by side: `kiwi` (Kiwi, the `korean` extra: nouns as written, predicates in their
+  dictionary form, and each run of nouns joined) when Kiwi can be imported, and `bigram` (character bigrams of
+  every Hangul run, other words whole) always. A page's title and names count three times. A page whose
+  `content_sha256` changed is indexed again; a page that goes takes its terms with it.
+
+`brain_search` ranks pages by two legs and fuses them with reciprocal rank fusion, with the other sources'
+lists: the semantic leg (nearest page vectors to the query's vector) and the keyword leg (BM25, k1 1.2, b 0.75,
+over the analyzer this process can produce: Kiwi when importable and indexed, else bigrams). Kiwi is never
+installed inside a turn. A leg with no index is named in `skipped`; with neither, the brain is skipped with the
+hint to run `search-index`. A page is current knowledge, so its age does not lower its rank.
+
+A page hit's ref is `page:<slug>`, with its `title`, `type` and `path`. Its grade (lina#440) is the frontmatter
+`grade` when that is `owner`, `agent` or `external`, else `external`: nothing else grades compiled truth yet, and an
+item of unknown origin is the least trusted. `quote_as_external` is true for every hit and timeline entry not graded
+`owner` or `agent`.
+
+`brain_get` takes a ref, a slug, a path (with or without `.md`) or any name of a page (a name of two pages is an
+error that lists both). It returns the compiled truth (paged like every original, `offset`), the page's names, its
+root, and its newest timeline entries (`timeline`, default 20, at most 100) with `timeline_total` and
+`timeline_truncated`; each entry carries its date, grade, source ref and `quote_as_external`. `brain_links` returns
+the pages one or two links away (`depth`), by edge type (`relations`) and direction (`out`, `in`, `both`), nearest
+first, with the edges between them; an edge whose `valid_until` has passed is not walked.
+
+### Measured: the 20-query Korean set
+
+`tests/fixtures/brain_search/` holds a synthetic wiki of 193 pages (Korean titles and aliases; people,
+organizations, projects, programs, concepts, ideas, sources, 48 dated meetings, writing) and 20 queries with the
+pages each should find: 7 paraphrases, 6 names and aliases written with particles or other spacing, 7 Korean forms
+(particles, endings, compounds written together, a date). `lina brain search-eval` runs every query through
+`brain_search` for each leg configuration and prints recall@5 and the queries each misses. On 2026-11-15, with
+Qwen3-Embedding-0.6B (Q8, the small sibling of the default model) for the semantic leg:
+
+| Legs | recall@5 | hit@1 | MRR@5 | misses |
+| --- | --- | --- | --- | --- |
+| semantic | 0.950 | 0.85 | 0.887 | q18 ("3월 4일 정산 회의에서 정한 것": three other 정산 meetings ranked first) |
+| keyword, Kiwi | 1.000 | 0.95 | 0.975 | none |
+| keyword, bigrams | 1.000 | 0.85 | 0.917 | none |
+| semantic + keyword (Kiwi) | 1.000 | 0.90 | 0.935 | none |
+| semantic + keyword (bigrams) | 1.000 | 0.90 | 0.935 | none |
+
+The semantic leg alone misses a query, so the keyword leg is on. The pages and the queries were written together,
+so they share more words than an owner's own wiki and questions will; measure again with the home's own model and a
+set drawn from real questions before tuning weights.
 
 The JSON and text reports contain no timestamp or elapsed duration. On unchanged input a second run reports zero
 new links and zero fixed backlinks, with identical lint and orphan lines. Subsequent unchanged runs are byte-for-byte

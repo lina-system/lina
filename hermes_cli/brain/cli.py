@@ -10,6 +10,7 @@ from pathlib import Path
 
 
 def build(subparsers) -> None:
+    from hermes_cli.brain.search import run_eval, run_index
     from hermes_cli.brain.upkeep import run as run_upkeep
 
     importing = subparsers.add_parser(
@@ -39,6 +40,22 @@ def build(subparsers) -> None:
     upkeep.add_argument("--root", metavar="DIR", help="One imported directory; default: all imported directories")
     upkeep.add_argument("--json", action="store_true", help="Print the deterministic report as JSON")
     upkeep.set_defaults(brain_fn=run_upkeep)
+    search_index = subparsers.add_parser(
+        "search-index", help="Write the keyword terms and page vectors brain_search reads",
+        description="Index the pages for brain_search: Korean keyword terms (Kiwi when the korean extra is "
+                    "installed, character bigrams always) and one vector per page with the home's embedding model. "
+                    "Only pages whose file changed, or that have no vector of the model, are written.")
+    search_index.add_argument("--root", metavar="DIR", help="One imported directory; default: every page")
+    search_index.add_argument("--json", action="store_true", help="Print the report as JSON")
+    search_index.set_defaults(brain_fn=run_index)
+    search_eval = subparsers.add_parser(
+        "search-eval", help="Measure recall@k of brain_search on a fixed query set, per retrieval leg",
+        description="Run every query of FILE (JSON: k, queries with id, query and relevant slugs) through "
+                    "brain_search with the semantic leg, the keyword leg (Kiwi, bigrams) and both, and print "
+                    "recall@k and the queries each misses.")
+    search_eval.add_argument("queries", metavar="FILE")
+    search_eval.add_argument("--json", action="store_true", help="Print every query's hits as JSON")
+    search_eval.set_defaults(brain_fn=run_eval)
     from hermes_cli.brain.people_cli import build as build_people
     build_people(subparsers)
     _build_dream(subparsers)

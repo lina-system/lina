@@ -20,7 +20,7 @@ from tests._fixtures.memory_store import _as_app, _initdb_sql, _with_db
 BRAIN = "0014_brain.sql"
 PROPOSALS = "0019_brain_proposals.sql"
 BRAIN_TABLES = {"roots", "pages", "aliases", "edges", "timeline", "atoms", "merges", "proposals",
-                "dream_cycles", "dream_pages_seen", "dream_inputs", "cycle_lock"}
+                "dream_cycles", "dream_pages_seen", "dream_inputs", "cycle_lock", "search_docs", "search_terms"}
 VECTOR = "[" + ",".join(["1"] + ["0"] * 1023) + "]"
 
 
