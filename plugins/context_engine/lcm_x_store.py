@@ -576,6 +576,58 @@ def _messages_target(masked: str) -> str:
     return re.sub(r"^(\s*DELETE\s+FROM\s+)messages\b", r"\1ctx.lcm_messages AS messages", masked, flags=re.IGNORECASE)
 
 
+def _top_level(masked: str) -> str:
+    """*masked* with everything inside parentheses blanked, positions kept: what is left is the statement's own
+    clauses."""
+    out, depth = [], 0
+    for c in masked:
+        if c == ")":
+            depth -= 1
+        out.append(c if depth == 0 else " ")
+        if c == "(":
+            depth += 1
+    return "".join(out)
+
+
+_LIKE_TERM = r"content\s+ILIKE\s+(\x01\d+\x01)\s+ESCAPE\s+(\x00\d+\x00)"
+_LIKE_GROUP = re.compile(rf"\(\s*{_LIKE_TERM}(?:\s+OR\s+{_LIKE_TERM})*\s*\)", re.IGNORECASE)
+_WHERE_END = re.compile(r"\b(?:ORDER\s+BY|GROUP\s+BY|HAVING|WINDOW|LIMIT|OFFSET|UNION|EXCEPT|INTERSECT)\b", re.IGNORECASE)
+
+
+def _like_lookup(masked: str, literals: list[str]) -> str:
+    """LCM-X's LIKE search, ``SELECT ... FROM messages WHERE ... AND (content LIKE ? ESCAPE '\\' OR ...)``, reads
+    its rows through 0012's ctx.lcm_like_match (lina#711): under row-level security Postgres uses no index for
+    ILIKE, and the view's content is computed again for each reference in the WHERE and the ranking ORDER BY, so a
+    search on a large store scanned every message and ranked the matches for tens of seconds. The matching rows
+    come from the function and are read once, with their lowered content (``OFFSET 0`` keeps the planner from
+    inlining them): the ranking's ``LOWER(content)``, dozens per row, reads that column, as Postgres's Unicode
+    lower() costs far more than SQLite's ASCII one. The statement's own conditions, its ILIKE included, still
+    decide which of the rows it returns."""
+    top = _top_level(masked)
+    sources = list(re.finditer(r"\bJOIN\b|(?<!DISTINCT )\bFROM\b", top, re.IGNORECASE))
+    source = re.match(r"\s*SELECT\b.*?\b(FROM\s+messages\s+)WHERE\b", top, re.IGNORECASE | re.DOTALL)
+    if source is None or len(sources) != 1:
+        return masked
+    where = source.end()
+    end = _WHERE_END.search(top, where)
+    clause = slice(where, end.start() if end else len(top))
+    if re.search(r"\bOR\b", top[clause], re.IGNORECASE):
+        return masked
+    for group in _LIKE_GROUP.finditer(masked, clause.start, clause.stop):
+        if top[group.start()] != "(" or not re.search(r"(?:\bWHERE|\bAND)\s*$", top[:group.start()], re.IGNORECASE):
+            continue
+        terms = re.findall(_LIKE_TERM, group.group(0), re.IGNORECASE)
+        if any(literals[int(escape.strip("\x00"))] != "'\\'" for _, escape in terms):
+            return masked
+        patterns = ", ".join(slot for slot, _ in terms)
+        lookup = ("FROM (SELECT *, lower(content) AS lcm_content_lower FROM messages WHERE rowid IN "
+                  f"(SELECT ctx.lcm_like_match(ARRAY[{patterns}]::text[])) OFFSET 0) AS messages ")
+        head, rest = (re.sub(r"\bLOWER\s*\(\s*content\s*\)", "lcm_content_lower", part, flags=re.IGNORECASE)
+                      for part in (masked[:source.start(1)], masked[source.end(1):]))
+        return head + lookup + rest
+    return masked
+
+
 def _fts_aliases(masked: str) -> dict[str, str]:
     """FTS view name → the alias it has in this statement (or its own name)."""
     aliases = {}
@@ -799,7 +851,7 @@ def _translate_cached(sql: str, catalog_key: int) -> Template:
     for alias in re.findall(r"ctx\.json_each\([^()]*\)\s+(?:AS\s+)?(\w+)", masked, re.IGNORECASE):
         masked = re.sub(rf"\b{alias}\.value(?=\s*(?:<=|>=|<|>)\s*\x01)",
                         f"CAST({alias}.value AS numeric)", masked)
-    masked = masked.rstrip().rstrip(";")
+    masked = _like_lookup(masked, literals).rstrip().rstrip(";")
     returning = None
     m = re.match(r"\s*INSERT\s+INTO\s+(\w+)", masked, re.IGNORECASE)
     if m and not re.search(r"\bRETURNING\b", masked, re.IGNORECASE):
