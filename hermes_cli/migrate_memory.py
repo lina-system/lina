@@ -14,7 +14,8 @@ from hermes_cli.lina_gateway_key import provision, same_env_but_key
 from hermes_cli.migrate_memory_agent import migrate_agent
 from hermes_cli.migrate_memory_copy import _safe, snapshot
 from hermes_cli.migrate_memory_external import migrate_external
-from hermes_cli.migrate_memory_report import duplicate_report
+from hermes_cli.migrate_memory_overlay import old_hosts, write_overlay
+from hermes_cli.migrate_memory_report import copy_census, duplicate_report
 from hermes_cli.migrate_memory_lcm import migrate_lcm
 from hermes_state_store import StoreUnavailableError, _owner_connection
 
@@ -110,6 +111,7 @@ def _publish_honcho_config(selection: Path, destination: Path, profile: str, age
 
 def _profile(args) -> dict:
     source, home, work = _paths(args)
+    hosts = old_hosts(args.old_hosts)
     spool = Path(args.spool).expanduser() if args.spool else None
     if spool is not None and spool.is_dir():
         spool = spool / "events.jsonl"
@@ -167,6 +169,9 @@ def _profile(args) -> dict:
         _publish_honcho_config(copied.root / "external/honcho-config.json", destination,
                                args.profile, args.agent, home / "store", args.owner_ids)
         files.append("honcho.json")
+    overlay = write_overlay(destination, hosts)
+    files.append(overlay["file"])
+    census = copy_census(copied.profile_dir, old_hosts=hosts, source_home=source)
     duplicates = duplicate_report(args.agent)
     steps = {"identity": {"counted": True, "ok": agent.ok}, "agent": {"counted": True, "ok": agent.ok},
              "lcm": {"counted": lcm["counted"], "ok": lcm["ok"]},
@@ -178,7 +183,8 @@ def _profile(args) -> dict:
     return {"format": 1, "round": 2, "profile": args.profile, "agent": args.agent,
             "destination_home": str(destination), "copies": [asdict(row) for row in copied.receipt],
             "sources": reports, "lcm": lcm, "honcho": honcho, "work": work_report,
-            "files": files, "skipped_symlinks": list(copied.skipped_symlinks), "duplicates": duplicates,
+            "files": files, "overlay": overlay, "census": census,
+            "skipped_symlinks": list(copied.skipped_symlinks), "duplicates": duplicates,
             "complete": duplicates["ok"] and all(s["counted"] and s["ok"] for s in steps.values()),
             "steps": steps,
             "embeddings": {"status": "deferred", "counted": True, "ok": True, "command": "lina store reembed",

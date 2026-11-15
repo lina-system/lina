@@ -39,6 +39,10 @@ Add `--spool` and `--work-db` when the old agent has collected messages or a wor
 `$LINA_HOME/profiles/<copy name>`. Read `migration-report.json` in the work directory: `ok` and `complete` must both
 be `true`. Details: [store.md, Copying legacy memory into a new agent](store.md#copying-legacy-memory-into-a-new-agent).
 
+Name each host of the old setup with `--old-host <name>` (repeatable): the copy's `SOUL.overlay.md` tells it that
+those hosts, the old kanban board, `hermes kanban` and `session-queue` are not where its work status lives, and that
+its own record is `lina work`. The report's `census` lists the copied files that still name them.
+
 ## 3. Copy the cron jobs
 
 ```sh

@@ -654,7 +654,7 @@ class TestProtectedInstructionFiles:
     # ---- core behavior -------------------------------------------------
 
     @pytest.mark.parametrize(
-        "name", ["AGENTS.md", "CLAUDE.md", "SOUL.md", ".cursorrules"]
+        "name", ["AGENTS.md", "CLAUDE.md", "SOUL.md", "SOUL.overlay.md", ".cursorrules"]
     )
     def test_deny_blocks_write(self, tmp_path, approvals, name):
         target = tmp_path / name

@@ -62,6 +62,9 @@ def _build_memory_parser(subparsers) -> None:
                              "uid-<n> for the CLI); repeatable. Written as a Honcho userPeerAliases entry to peerName")
     parser.add_argument("--spool", help="Copied collector input, events.jsonl or its directory")
     parser.add_argument("--work-db", help="Old work-ledger work.db to copy and filter")
+    parser.add_argument("--old-host", dest="old_hosts", action="append", default=[],
+                        help="A host of the previous setup the copied files may name or ssh to; repeatable. The "
+                             "copy is told these are not where its work status lives, and the report counts them")
     parser.set_defaults(func=_cmd_migrate_memory)
 
 

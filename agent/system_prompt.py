@@ -561,11 +561,16 @@ def _memory_parts(agent: Any) -> list[str]:
 
 def _identity_parts(agent: Any, ctx_len: Optional[int]) -> tuple[list[str], bool]:
     """SOUL.md (primary identity; cron keeps the persona while skipping cwd
-    instructions, scoped to the agent's OWN home) or the default identity.
-    Returns ``(parts, soul_loaded)``."""
+    instructions, scoped to the agent's OWN home) or the default identity, then a
+    migrated copy's work-record overlay, which supersedes the copied persona's status
+    lines. Returns ``(parts, soul_loaded)``."""
     wants_soul = agent.load_soul_identity or not agent.skip_context_files
-    _soul_content = _pb.load_soul_md(ctx_len, home_override=_agent_home(agent)) if wants_soul else None
-    return ([_soul_content], True) if _soul_content else ([DEFAULT_AGENT_IDENTITY], False)
+    if not wants_soul:
+        return [DEFAULT_AGENT_IDENTITY], False
+    home = _agent_home(agent)
+    _soul_content = _pb.load_soul_md(ctx_len, home_override=home)
+    parts = [_soul_content or DEFAULT_AGENT_IDENTITY, _pb.load_copy_overlay(ctx_len, home_override=home)]
+    return parts, bool(_soul_content)
 
 
 def _guidance_parts(agent: Any) -> list[str]:
