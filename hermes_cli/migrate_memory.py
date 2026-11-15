@@ -43,8 +43,12 @@ def _paths(args) -> tuple[Path, Path, Path]:
 def _publish_config(copied: Path | None, destination: Path, *, lcm_store: bool) -> None:
     """The copy's config.yaml: the copied memory settings, LCM on the store when its history moved there, and a
     terminal scoped to the copy (lina#706). Without the scope its terminal starts in the host user's real home
-    with that user's HOME and shell profile, where the original runtime's files are one command away."""
+    with that user's HOME and shell profile, where the original runtime's files are one command away.
+    It carries the current schema stamp, as any config Hermes writes does: unstamped, every boot of the copy
+    warns that it predates the support floor (lina#713)."""
     from hermes_cli.config import atomic_config_write
+    from hermes_cli.config_defaults import DEFAULT_CONFIG
+    from hermes_cli.config_version_stamp import note_first_stamp
 
     config = json.loads(copied.read_text()) if copied is not None else {}
     if lcm_store:
@@ -52,6 +56,8 @@ def _publish_config(copied: Path | None, destination: Path, *, lcm_store: bool) 
     # home_mode "profile" points HOME at <copy>/home only when that directory exists.
     _safe(destination / "home").mkdir(exist_ok=True)
     config["terminal"] = {"cwd": str(destination), "home_mode": "profile", "auto_source_bashrc": False}
+    config["_config_version"] = DEFAULT_CONFIG["_config_version"]
+    note_first_stamp(destination, {}, config)
     atomic_config_write(_safe(destination / "config.yaml"), config)
 
 

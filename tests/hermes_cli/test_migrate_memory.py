@@ -74,6 +74,26 @@ def test_real_cli_copy_terminal_is_scoped_to_the_copy(tmp_path, _memory_store):
     assert again.returncode == 0, again.stdout + again.stderr
 
 
+def test_real_cli_copy_config_passes_the_startup_migration_check(tmp_path, _memory_store, monkeypatch, caplog):
+    # Given a copy written twice by the real command (lina#713).
+    command = _command(tmp_path, _memory_store)
+    for _ in range(2):
+        done = _run(command, tmp_path)
+        assert done.returncode == 0, done.stdout + done.stderr
+    copy = tmp_path / "lina/profiles/alpha-copy"
+
+    # When the copy boots, its config is read by the same start-up migration check.
+    from hermes_cli.post_update import step_migrate_config
+    monkeypatch.setenv("HERMES_HOME", str(copy))
+    with caplog.at_level("WARNING"):
+        result = step_migrate_config()
+
+    # Then it is current: nothing is skipped as predating the support floor.
+    assert result == {"ok": True, "skipped": "up-to-date"}
+    assert "predates version" not in caplog.text
+    assert (copy / "config.yaml").read_text().count("_config_version") == 1
+
+
 def test_real_cli_owner_id_without_honcho_dump_is_refused(tmp_path, _memory_store, memory_store_sql):
     command = _command(tmp_path, _memory_store)
     command.extend(["--owner-id", "7000001"])
