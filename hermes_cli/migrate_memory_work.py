@@ -22,19 +22,17 @@ def _destination_db():
 
 
 def register_profiles(destination_home: Path, mappings: dict[str, str]) -> None:
-    previous = env._CURRENT[:]
-    env.bind(env.load(destination_home))
+    previous = env._CURRENT.set(env.load(destination_home))
     try:
         with closing(_destination_db()) as db, store.transaction(db):
             receipts.save(db, receipts.load(db, mappings))
     finally:
-        env._CURRENT[:] = previous
+        env._CURRENT.reset(previous)
 
 
 def migrate_work(copied_db: Path, destination_home: Path, profile: str, agent: str) -> dict:
     """Import a selected graph atomically, refusing different-content ID collisions."""
-    previous = env._CURRENT[:]
-    env.bind(env.load(destination_home))
+    previous = env._CURRENT.set(env.load(destination_home))
     try:
         with closing(Source(copied_db)) as source:
             if source.db is None:
@@ -82,4 +80,4 @@ def migrate_work(copied_db: Path, destination_home: Path, profile: str, agent: s
                                    if row["id"] not in {r["id"] for r in selected[kind]}],
                 "source_manifest": expected, "destination_manifest": observed}
     finally:
-        env._CURRENT[:] = previous
+        env._CURRENT.reset(previous)

@@ -16,7 +16,7 @@ import time
 from pathlib import Path
 from typing import Callable
 
-from hermes_cli.lina_board import _WORK_LOCK, API_VERSION, _root, _source
+from hermes_cli.lina_board import API_VERSION, _root, _source
 from hermes_cli.work.kinds import TODO, kind_now
 
 KINDS = {"목표": "goal", TODO: "todo"}
@@ -271,14 +271,13 @@ class _Record:
 
 def _read(root: Path, use: Callable[[_Record], dict | None]) -> dict | None:
     from hermes_cli.work import env, ledger
-    with _WORK_LOCK:
-        env.bind(env.load(root))
-        try:
-            recs, order = ledger.read_all()
-            return use(_Record(recs, order, _store(ledger.db()), env.current()))
-        finally:
-            ledger.close()
-            env.reset()
+    env.bind(env.load(root))
+    try:
+        recs, order = ledger.read_all()
+        return use(_Record(recs, order, _store(ledger.db()), env.current()))
+    finally:
+        ledger.close()
+        env.reset()
 
 
 def items(agent: str | None = None, now: float | None = None) -> dict:

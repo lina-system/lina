@@ -98,6 +98,8 @@ def _render_active_theme_bootstrap_css() -> str:
 # Hashed bundle assets are immutable by construction (content hash in the filename; index.html
 # is served ``no-store`` and always references the current hashes).
 _IMMUTABLE_ASSET_CACHE_CONTROL = "public, max-age=31536000, immutable"
+# A build file without a content hash (manifest, icons, fonts) may change under the same name: revalidate it.
+_REVALIDATE = {"Cache-Control": "no-cache"}
 _NO_STORE = {"Cache-Control": "no-store, no-cache, must-revalidate"}
 _HEADLESS_MSG = (
     "Headless backend (hermes serve): web UI disabled — use "
@@ -296,11 +298,11 @@ def mount_spa(application: FastAPI):
             and file_path.exists()
             and file_path.is_file()
         ):
-            return FileResponse(file_path)
+            return FileResponse(file_path, headers=_REVALIDATE)
         if is_static_asset_path(full_path):
             font = public_font_file(dist, WEB_DIST, full_path)
             if font is not None:
-                return FileResponse(font)
+                return FileResponse(font, headers=_REVALIDATE)
             return JSONResponse({"error": "not found"}, status_code=404)
         return _serve_index(request, prefix)
 
@@ -374,7 +376,7 @@ def _mount_web_app(application: FastAPI, bootstrap_script, asset_files_cls) -> N
         index = dist / "index.html"
         if (full_path and file_path.is_file() and file_path.resolve().is_relative_to(dist.resolve())
                 and not (index.is_file() and file_path.samefile(index))):
-            return FileResponse(file_path)
+            return FileResponse(file_path, headers=_REVALIDATE)
         try:
             html = index.read_text(encoding="utf-8-sig")
         except OSError:

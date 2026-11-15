@@ -208,8 +208,12 @@ def _get_pty_active_session_files(app: FastAPI) -> dict[str, Path]:
 app = FastAPI(title="Hermes Agent", version=get_version_info().base_version, lifespan=app_lifespan)
 
 from hermes_cli.dashboard_auth.body_limit import AuthBodyLimitMiddleware
+from hermes_cli.web_server_compression import add_compression
 
-# Register first (innermost): auth gates run before this, JSON parsing after it.
+# Innermost of all (lina#729): it sees each reply as the route sent it, before an ``@app.middleware`` turns the body
+# into a stream, so a small reply keeps its Content-Length and goes out as it is.
+add_compression(app)
+# Inside every gate: auth gates run before this, JSON parsing after it.
 app.add_middleware(AuthBodyLimitMiddleware)
 
 

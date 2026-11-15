@@ -22,10 +22,14 @@ The values are read once per command (``bind``), never at import time.
 
 from __future__ import annotations
 
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
 
-_CURRENT: list[Env] = []
+# Per context, not per process: the web server's worker threads each bind their own, so record reads run side by side
+# instead of taking turns on one binding (lina#729). A thread that needs the caller's binding runs in a copy of its
+# context.
+_CURRENT: ContextVar[Env | None] = ContextVar("work_env", default=None)
 
 
 @dataclass
@@ -104,15 +108,14 @@ def load(base: Path | None = None) -> Env:
 
 
 def bind(env: Env) -> Env:
-    _CURRENT[:] = [env]
+    _CURRENT.set(env)
     return env
 
 
 def current() -> Env:
-    if not _CURRENT:
-        bind(load())
-    return _CURRENT[0]
+    env = _CURRENT.get()
+    return bind(load()) if env is None else env
 
 
 def reset() -> None:
-    _CURRENT.clear()
+    _CURRENT.set(None)

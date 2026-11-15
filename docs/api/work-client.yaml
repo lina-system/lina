@@ -61,6 +61,23 @@ paths:
           schema:
             $ref: "#/components/schemas/WorkState"
         - $ref: "#/components/parameters/Board"
+        - name: finished_limit
+          in: query
+          required: false
+          description: >-
+            Serve only this many done cards, newest completion first, after skipping `finished_offset` (lina#729).
+            Every unfinished card is always served. With this or `finished_offset` the reply carries `finishedTotal`;
+            with neither the reply is unchanged.
+          schema:
+            type: integer
+            minimum: 0
+        - name: finished_offset
+          in: query
+          required: false
+          description: Done cards to skip, newest completion first, before `finished_limit` applies (all of the rest without it).
+          schema:
+            type: integer
+            minimum: 0
       responses:
         "200":
           description: Work card summaries.
@@ -70,6 +87,8 @@ paths:
                 $ref: "#/components/schemas/WorkCardList"
         "400":
           description: Unknown state.
+        "422":
+          description: "`finished_limit` or `finished_offset` is not a whole number of zero or more."
   /work/cards/{id}:
     get:
       operationId: getWorkCard
@@ -332,6 +351,12 @@ components:
           $ref: "#/components/schemas/SourceErrors"
         hermesAt:
           $ref: "#/components/schemas/HermesAt"
+        finishedTotal:
+          type: integer
+          minimum: 0
+          description: >-
+            Every done card the filters select, whatever the page; present only when `finished_limit` or
+            `finished_offset` was given.
         cards:
           type: array
           items:

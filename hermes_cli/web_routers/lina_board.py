@@ -26,14 +26,20 @@ router = APIRouter()
 router.include_router(lina_status.router)  # lina#233: the hub's own status checks
 
 
-async def _serve(read: Callable[[], dict], if_none_match: Optional[str]) -> Response:
-    data = await run_in_threadpool(read)
+def _render(read: Callable[[], dict]) -> tuple[str, str]:
+    """``(etag, body)``. Both dumps run in the worker thread with the read: on the event loop a large reply held every
+    other request while it was encoded (lina#729)."""
+    data = read()
     tagged = json.dumps({k: v for k, v in data.items() if k != "at"}, sort_keys=True, separators=(",", ":"))
-    etag = '"' + hashlib.sha256(tagged.encode()).hexdigest()[:32] + '"'
+    return '"' + hashlib.sha256(tagged.encode()).hexdigest()[:32] + '"', json.dumps(data, ensure_ascii=False)
+
+
+async def _serve(read: Callable[[], dict], if_none_match: Optional[str]) -> Response:
+    etag, body = await run_in_threadpool(_render, read)
     headers = {"ETag": etag, "Cache-Control": "no-cache"}
     if if_none_match == etag:
         return Response(status_code=304, headers=headers)
-    return Response(content=json.dumps(data, ensure_ascii=False), media_type="application/json", headers=headers)
+    return Response(content=body, media_type="application/json", headers=headers)
 
 
 @router.get("/api/lina/board")

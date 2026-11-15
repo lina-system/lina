@@ -158,30 +158,30 @@ def _item_row(item: dict, recs: dict) -> dict:
 
 
 def work_read(root: Path) -> dict:
-    """The work record's part: decisions, the owner's to-dos and the due groups, in one bound read of the record
-    (the work package keeps its config and store connection per process, so reads take turns)."""
+    """The work record's part: decisions, the owner's to-dos and the due groups, in one bound read of the record. The
+    binding and its store connection are this context's (``work.env``), so the read takes no turn with the others
+    (lina#729); the record's writes still take ``_WORK_LOCK``."""
     from hermes_cli.work import env, ledger
     from hermes_cli.work.board import due_groups, inbox
     from hermes_cli.work.notify import owner_today
-    with _WORK_LOCK:
-        env.bind(env.load(root))
-        try:
-            recs, order = ledger.read_all()
-            today = owner_today()
-            asks, todos = inbox(recs, order, today)
-            groups = due_groups(recs, order, today)
-            return {
-                "agents": dict(env.current().agents), "today": today.isoformat(),
-                "decide": [{"target": row["item"]["id"], "title": _item_row(row["item"], recs)["title"],
-                            "agent": row["agent"] or None, "kind": row["kind"], "text": row["text"], "at": row["at"],
-                            "answered": row["answered"]} for row in asks],
-                "mine": [dict(_item_row(item, recs), waiting=waiting, createdAt=int(item.get("created") or 0))
-                         for item, waiting in todos],
-                "due": {name: [_item_row(item, recs) for item in rows] for name, rows in groups.items()},
-            }
-        finally:
-            ledger.close()
-            env.reset()
+    env.bind(env.load(root))
+    try:
+        recs, order = ledger.read_all()
+        today = owner_today()
+        asks, todos = inbox(recs, order, today)
+        groups = due_groups(recs, order, today)
+        return {
+            "agents": dict(env.current().agents), "today": today.isoformat(),
+            "decide": [{"target": row["item"]["id"], "title": _item_row(row["item"], recs)["title"],
+                        "agent": row["agent"] or None, "kind": row["kind"], "text": row["text"], "at": row["at"],
+                        "answered": row["answered"]} for row in asks],
+            "mine": [dict(_item_row(item, recs), waiting=waiting, createdAt=int(item.get("created") or 0))
+                     for item, waiting in todos],
+            "due": {name: [_item_row(item, recs) for item in rows] for name, rows in groups.items()},
+        }
+    finally:
+        ledger.close()
+        env.reset()
 
 
 def worker_read(_board_root: Path, now: float) -> list[dict]:
@@ -356,8 +356,7 @@ def board(now: float | None = None) -> dict:
     counted = None if _own_failed(errors) else work
     machines = (found or {}).get("machines")
     review = [c for c in cards or [] if c["state"] == "waiting" and _verdict_agent(c) is None]
-    with _WORK_LOCK:
-        lines = _source("work", errors, lambda: _notices_in_locale(root, work, review))
+    lines = _source("work", errors, lambda: _notices_in_locale(root, work, review))
     counts = _counts(counted, cards, review, now)
     if lines is not None:
         from hermes_cli.lina_board_write import read_marks

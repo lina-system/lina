@@ -8,12 +8,15 @@ on first use, reached with ``psql`` inside the store's container or ``work.store
 
 from __future__ import annotations
 
+from contextvars import ContextVar
+
 from hermes_cli.work import store
 from hermes_cli.work.common import iso, now, paths, writer_profile
 from hermes_cli.work.env import current
 from hermes_cli.work.locale import LABELS
 
-_DB: dict[str, object] = {}
+# One connection per context, as the binding it was opened for (``env._CURRENT``).
+_DB: ContextVar[object | None] = ContextVar("work_db", default=None)
 DEFAULT_BACKEND = "postgres"
 
 
@@ -46,14 +49,17 @@ def open_db(kind: str | None = None):
 
 
 def db():
-    if "db" not in _DB:
-        _DB["db"] = open_db()
-    return _DB["db"]
+    conn = _DB.get()
+    if conn is None:
+        conn = open_db()
+        _DB.set(conn)
+    return conn
 
 
 def close() -> None:
-    conn = _DB.pop("db", None)
+    conn = _DB.get()
     if conn is not None:
+        _DB.set(None)
         conn.close()
 
 

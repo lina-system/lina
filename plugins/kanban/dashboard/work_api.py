@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Iterator, Optional
 
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from hermes_cli import kanban_db
@@ -157,13 +158,8 @@ def _work_cards(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     whose body has a ``## To-dos`` section, or a blocked or triage card — with or without a goal card above
     it. The checked-line writer selects the same cards (``hermes_cli.lina_board_plain._board_cards``)."""
     from hermes_cli.lina_board_plain import is_work_card
-    rows = conn.execute("SELECT id, goal_mode, body, status FROM tasks "
-                        "ORDER BY created_at, rowid").fetchall()
+    rows = conn.execute("SELECT * FROM tasks ORDER BY created_at, rowid").fetchall()
     return [r for r in rows if is_work_card(r["goal_mode"], r["body"], r["status"])]
-
-
-def _work_card_ids(conn: sqlite3.Connection) -> list[str]:
-    return [r["id"] for r in _work_cards(conn)]
 
 
 def _goal_work_cards(conn: sqlite3.Connection) -> dict[str, list[str]]:
@@ -457,15 +453,19 @@ def card_times(facts: CardFacts) -> dict[str, Optional[int]]:
             "lastHeartbeatAt": max(beats, default=None)}
 
 
-def card_summary(facts: CardFacts, now: int, goal_title: Optional[str] = None) -> dict[str, Any]:
+def card_summary(facts: CardFacts, now: int, goal_title: Optional[str] = None,
+                 plain: Optional[dict[str, dict]] = None) -> dict[str, Any]:
+    """One list row; *plain* is the checked lines of many cards read at once (``lookup``), else this card's are read."""
     from hermes_cli.lina_board_plain import board_key, lookup  # checked model-written lines (lina#151), cache only
+    if plain is None:
+        plain = lookup("card", [facts.task.id], board=board_key(facts.board))
     todos = parse_todos(facts.task.body, _latest_gate_results(facts.events))
     return {
         "id": facts.task.id, "title": facts.task.title, "goalTitle": goal_title, **_agent_fields(facts),
         **card_stop(facts, now),
         "elapsedSeconds": _elapsed_seconds(facts.task, now), "todoProgress": {"done": sum(t["done"] for t in todos), "total": len(todos)},
         "now": now_line(facts), **card_times(facts),
-        "plain": lookup("card", [facts.task.id], board=board_key(facts.board))[facts.task.id],
+        "plain": plain[facts.task.id],
     }
 
 
@@ -559,12 +559,14 @@ def _with_record_errors(reply: dict, titles: GoalTitles) -> dict:
     return dict(reply, errors=[*reply.get("errors", []), *titles.errors]) if titles.errors else reply
 
 
+# The list routes answer a rendered JSONResponse: FastAPI encodes a returned dict on the event loop (jsonable_encoder,
+# then json.dumps), which held every other request for the length of a large list (lina#729). The bytes are the same.
 @router.get("/goals")
 def list_goals(board: Optional[str] = Query(None)):
     now, board, titles = int(time.time()), _board_slug(board), GoalTitles()
     reply = hermes_rows.add(_own_goals(board, now), board,
                             lambda src, src_board: hermes_rows.goals(src, now, titles, src_board))
-    return _with_record_errors(reply, titles)
+    return JSONResponse(_with_record_errors(reply, titles))
 
 
 @router.get("/goals/{goal_id}")
@@ -581,15 +583,33 @@ def get_goal(goal_id: str, board: Optional[str] = Query(None)):
         return _goal_dict(conn, goal, work_ids, int(time.time()), board)
 
 
+def _finished_page(reply: dict, limit: Optional[int], offset: Optional[int], unbuilt: int = 0) -> dict:
+    """*reply* without the done cards outside the page (lina#729): skip *offset* of them newest-completed first, then
+    keep *limit* (all when None); unfinished cards and the list's order stay. ``finishedTotal`` counts every done card
+    of the reply and the *unbuilt* ones :func:`_own_cards` left out, whatever the page. Without either parameter the
+    reply is unchanged."""
+    if limit is None and offset is None:
+        return reply
+    finished = sorted((c for c in reply["cards"] if c["state"] == "done"), key=lambda c: c["endedAt"] or 0,
+                      reverse=True)
+    start = offset or 0
+    kept = {id(c) for c in finished[start:None if limit is None else start + limit]}
+    return dict(reply, cards=[c for c in reply["cards"] if c["state"] != "done" or id(c) in kept],
+                finishedTotal=len(finished) + unbuilt)
+
+
 @router.get("/cards")
 def list_cards(agent: Optional[str] = Query(None), state: Optional[str] = Query(None),
-               board: Optional[str] = Query(None)):
+               board: Optional[str] = Query(None), finished_limit: Optional[int] = Query(None, ge=0),
+               finished_offset: Optional[int] = Query(None, ge=0)):
     if state is not None and state not in WORK_STATES:
         raise HTTPException(status_code=400, detail=f"state must be one of {list(WORK_STATES)}")
     now, board, titles = int(time.time()), _board_slug(board), GoalTitles()
-    reply = hermes_rows.add(_own_cards(board, now, agent, state, titles), board,
+    keep_done = None if finished_limit is None else (finished_offset or 0) + finished_limit
+    own, unbuilt = _own_cards(board, now, agent, state, titles, keep_done)
+    reply = hermes_rows.add(own, board,
                             lambda src, src_board: hermes_rows.cards(src, now, agent, state, titles, src_board))
-    return _with_record_errors(reply, titles)
+    return JSONResponse(_finished_page(_with_record_errors(reply, titles), finished_limit, finished_offset, unbuilt))
 
 
 def _record_goal_titles() -> dict[tuple[str, str], str]:
@@ -597,27 +617,26 @@ def _record_goal_titles() -> dict[tuple[str, str], str]:
     without a board is the default board's) gives the card its goal's title, a goal its own and a to-do its parent
     goal's; the first such item in record order wins (one goal is one to-do, lina#655). Dropped items give none. Read
     the way ``/api/lina/work/items`` reads the record (``lina_board_items._read``)."""
-    from hermes_cli.lina_board import _WORK_LOCK, _root
+    from hermes_cli.lina_board import _root
     from hermes_cli.work import env, ledger
     from hermes_cli.work.evaluate import item_name
     from hermes_cli.work.links import kanban_parts
     titles: dict[tuple[str, str], str] = {}
-    with _WORK_LOCK:
-        env.bind(env.load(_root()))
-        try:
-            recs, order = ledger.read_all()
-            for i in order:
-                r = recs[i]
-                goal = r if r.get("kind") == "목표" else recs.get(r.get("parent") or "")
-                if r.get("state") == "dropped" or not goal or goal.get("kind") != "목표":
-                    continue
-                for link in r.get("links") or []:
-                    link_board, card = kanban_parts(str(link))
-                    if card:
-                        titles.setdefault((link_board or kanban_db.DEFAULT_BOARD, card.lower()), item_name(goal))
-        finally:
-            ledger.close()
-            env.reset()
+    env.bind(env.load(_root()))
+    try:
+        recs, order = ledger.read_all()
+        for i in order:
+            r = recs[i]
+            goal = r if r.get("kind") == "목표" else recs.get(r.get("parent") or "")
+            if r.get("state") == "dropped" or not goal or goal.get("kind") != "목표":
+                continue
+            for link in r.get("links") or []:
+                link_board, card = kanban_parts(str(link))
+                if card:
+                    titles.setdefault((link_board or kanban_db.DEFAULT_BOARD, card.lower()), item_name(goal))
+    finally:
+        ledger.close()
+        env.reset()
     return titles
 
 
@@ -640,20 +659,30 @@ class GoalTitles:
         return next((title for title in found if title is not None), None)
 
 
-def _own_cards(board: Optional[str], now: int, agent: Optional[str], state: Optional[str],
-               titles: GoalTitles) -> dict[str, list]:
+def _completed(task: kanban_db.Task) -> int:
+    return kanban_db._to_epoch(task.completed_at) or 0
+
+
+def _own_cards(board: Optional[str], now: int, agent: Optional[str], state: Optional[str], titles: GoalTitles,
+               keep_done: Optional[int] = None) -> tuple[dict[str, list], int]:
+    """LINA's board's rows, and how many done cards were left unbuilt: with *keep_done* (lina#729) only the newest
+    *keep_done* done cards are read and built, since a page never reaches past them (done is the task's status alone,
+    :func:`work_state`); an *agent* filter needs every card's runs, so then all are built."""
+    from hermes_cli.lina_board_plain import board_key, lookup
     with _read_conn(board) as conn:
         if conn is None:
-            return {"cards": []}
-        cards = []
-        for task in filter(None, (kanban_db.get_task(conn, i) for i in _work_card_ids(conn))):
-            facts = _facts(conn, task, board)
-            if agent is not None and _implementer(facts) != agent:
-                continue
-            summary = card_summary(facts, now, titles.get(task.id, board))
-            if state is None or summary["state"] == state:
-                cards.append(summary)
-        return {"cards": cards}
+            return {"cards": []}, 0
+        tasks = [kanban_db.Task.from_row(row) for row in _work_cards(conn)]
+        unbuilt: set[str] = set()
+        if keep_done is not None and agent is None:
+            done = sorted((t for t in tasks if t.status == "done"), key=_completed, reverse=True)
+            unbuilt = {t.id for t in done[keep_done:]}
+        every = (_facts(conn, task, board) for task in tasks if task.id not in unbuilt)
+        listed = [facts for facts in every if agent is None or _implementer(facts) == agent]
+        plain = lookup("card", [facts.task.id for facts in listed], board=board_key(board))
+        summaries = (card_summary(facts, now, titles.get(facts.task.id, board), plain) for facts in listed)
+        cards = [summary for summary in summaries if state is None or summary["state"] == state]
+        return {"cards": cards}, len(unbuilt) if state in (None, "done") else 0
 
 
 @router.get("/cards/{card_id}")
@@ -688,7 +717,8 @@ def _own_inbox(board: Optional[str], now: int) -> dict[str, list]:
 @router.get("/inbox")
 def get_inbox(board: Optional[str] = Query(None)):
     now = int(time.time())
-    return hermes_rows.add(_own_inbox(board, now), board, lambda src, _src_board: hermes_rows.inbox(src, now))
+    return JSONResponse(hermes_rows.add(_own_inbox(board, now), board,
+                                        lambda src, _src_board: hermes_rows.inbox(src, now)))
 
 
 class AnswerBody(BaseModel):
