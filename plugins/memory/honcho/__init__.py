@@ -52,8 +52,21 @@ def _record_metadata(turn_record: Any) -> tuple[dict[str, Any], dict[str, Any]]:
         return {}, {}
     shared = {"lina_agent": turn_record.agent_id, "lina_conversation": turn_record.conversation_id,
               "lina_person": turn_record.person_id, "lina_route": turn_record.route}
-    return ({"metadata": {**shared, "lina_uid": turn_record.user_uid}},
-            {"metadata": {**shared, "lina_uid": turn_record.reply_uid, "lina_route": "agent_reply"}})
+    return ({"metadata": {**shared, "lina_uid": turn_record.user_uid, "lina_speaker": turn_record.user_speaker}},
+            {"metadata": {**shared, "lina_uid": turn_record.reply_uid, "lina_route": "agent_reply",
+                          "lina_speaker": "agent"}})
+
+
+def _note_messages(turn_record: Any) -> list[tuple[str, dict[str, Any]]]:
+    """The gateway's notes on a lina-memory turn's user message (lina#324): each its own message on the agent's side,
+    never the person's words, so no conclusion about the person comes from a note alone."""
+    if turn_record is None:
+        return []
+    shared = {"lina_agent": turn_record.agent_id, "lina_conversation": turn_record.conversation_id,
+              "lina_person": turn_record.person_id, "lina_route": turn_record.route, "lina_uid": turn_record.user_uid,
+              "lina_speaker": "gateway"}
+    return [(f"[gateway note: {note['kind']}] {note['text']}", {"metadata": {**shared, "lina_note": note["kind"]}})
+            for note in getattr(turn_record, "gateway_notes", ()) if note.get("text")]
 
 
 def _cfg_usable(cfg) -> bool:
@@ -951,9 +964,13 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
             author_peer_id = self._manager.resolve_author_peer_id(target_key, author.get("id"), author.get("name"))
 
         user_meta, reply_meta = _record_metadata(turn_record)
+        notes = _note_messages(turn_record)
 
         def _sync():
             session = self._manager.get_or_create(target_key, **session_kwargs)
+            for text, note_meta in notes:
+                for chunk in self._chunk_message(sanitize_context(text).strip(), msg_limit):
+                    session.add_message("assistant", chunk, **note_meta)
             for chunk in self._chunk_message(clean_user_content, msg_limit) if clean_user_content else ():
                 session.add_message("user", chunk, author_peer_id=author_peer_id, **user_meta)
             for chunk in self._chunk_message(clean_assistant_content, msg_limit) if clean_assistant_content else ():

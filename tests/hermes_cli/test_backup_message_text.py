@@ -63,7 +63,7 @@ def test_full_backup_import_restores_empty_message_store(home, tmp_path, memory_
     _seed(home, sid)
     archive = tmp_path / "backup.zip"
     assert backup.run_backup(Namespace(output=str(archive)))
-    memory_store_sql("TRUNCATE memory.messages")
+    memory_store_sql("TRUNCATE memory.message_parts, memory.messages")
     TEXT_CACHE.clear()
 
     # When the CLI import path restores the archive.
@@ -83,7 +83,7 @@ def test_named_profile_archive_restores_under_imported_agent(home, tmp_path, mon
     (source / "config.yaml").write_text("model: test\n", encoding="utf-8")
     _seed(source, "profile-collected")
     archive = profiles.export_profile("original", str(tmp_path / "profile.tar.gz"))
-    memory_store_sql("TRUNCATE memory.messages")
+    memory_store_sql("TRUNCATE memory.message_parts, memory.messages")
     TEXT_CACHE.clear()
 
     # When imported with a different profile identity.
@@ -103,7 +103,7 @@ def test_full_backup_restores_named_profile_text(home, tmp_path, monkeypatch, me
     monkeypatch.setattr(profiles, "create_wrapper_script", lambda name: None)
     archive = tmp_path / "nested.zip"
     assert backup.run_backup(Namespace(output=str(archive)))
-    memory_store_sql("TRUNCATE memory.messages")
+    memory_store_sql("TRUNCATE memory.message_parts, memory.messages")
     TEXT_CACHE.clear()
 
     # When imported into an empty text store.
@@ -120,7 +120,7 @@ def test_emergency_preflight_restores_collected_text(home, memory_store_sql):
     # Given a modern emergency image followed by external text collection.
     _seed(home, "emergency-collected")
     image = Path(preflight_state_db(home)["path"])
-    memory_store_sql("TRUNCATE memory.messages")
+    memory_store_sql("TRUNCATE memory.message_parts, memory.messages")
     TEXT_CACHE.clear()
 
     # When the emergency image is restored through the shared primitive.
@@ -201,7 +201,7 @@ def test_restore_whose_text_is_missing_a_referenced_row_fails(home, memory_store
     lines = sidecar.read_text(encoding="utf-8").splitlines()
     assert len(lines) == 2
     sidecar.write_text(lines[0] + "\n", encoding="utf-8")
-    memory_store_sql("TRUNCATE memory.messages")
+    memory_store_sql("TRUNCATE memory.message_parts, memory.messages")
     TEXT_CACHE.clear()
 
     with pytest.raises(MessageTextRestoreError, match="1 message text"):

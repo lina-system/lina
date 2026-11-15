@@ -27,8 +27,10 @@ STAMP = dt.datetime.fromtimestamp(NOW, dt.UTC).isoformat(timespec="seconds")
 DAY = STAMP[:10]
 START = dt.datetime.fromisoformat(DAY).timestamp()
 SESSIONS = {"owner": "telegram", "other": "webhook"}
-ROWS = [("owner", "user", "Synthetic owner", NOW - 3000), ("owner", "assistant", "Synthetic reply", NOW - 2900),
-        ("owner", "user", "[Cron delivery] Synthetic", NOW - 2800), ("other", "user", "Synthetic webhook", NOW - 2700)]
+# The last field is the speaker kind lina-memory stores for the row when its turn finishes (lina#324).
+ROWS = [("owner", "user", "Synthetic owner", NOW - 3000, "owner"), ("owner", "assistant", "Synthetic reply", NOW - 2900),
+        ("owner", "user", "[Cron delivery] Synthetic", NOW - 2800, "gateway"),
+        ("other", "user", "Synthetic webhook", NOW - 2700, "outside")]
 
 
 @pytest.fixture
@@ -51,16 +53,29 @@ def sandbox(tmp_path, monkeypatch):
 
 
 def database(home: Path, messages=None) -> list[str]:
-    """A v33 conversation written through SessionDB; returns the memory.messages uids in write order."""
+    """A v33 conversation written through SessionDB, each row with the speaker kind given after its timestamp; returns
+    the memory.messages uids in write order."""
+    messages = messages or ROWS
     db = SessionDB(home / "state.db")
     try:
         for session, source in SESSIONS.items():
             db.create_session(session, source)
-        for session, role, content, timestamp in messages or ROWS:
+        for session, role, content, timestamp, *_ in messages:
             db.append_message(session, role, content=content, timestamp=timestamp)
     finally:
         db.close()
-    return uids(home)
+    written = uids(home)
+    speak(home, {uid: row[4] for uid, row in zip(written, messages) if len(row) > 4})
+    return written
+
+
+def speak(home: Path, kinds: dict[str, str]) -> None:
+    """Store each row's speaker kind, as lina-memory does when the row's turn finishes."""
+    store = MessageStore(home.name if home.parent.name == "profiles" else "default")
+    try:
+        store.set_speakers((uid, kind, None) for uid, kind in kinds.items())
+    finally:
+        store.close()
 
 
 def uids(home: Path) -> list[str]:
@@ -227,17 +242,22 @@ CONVERSATION = [
     (26, "owner", "user", "x" * 320, START + 80),
     (27, "owner", "assistant", "y" * 320, START + 86401),
     (28, "other", "user", "Other source", START + 90)]
+SPOKEN = {20: "owner", 22: "gateway", 25: "owner", 26: "owner", 28: "outside"}
 
 
 def live(sandbox, tmp_path) -> dict[int, str]:
     written = database(sandbox["alpha"], [row[1:] for row in CONVERSATION])
-    return dict(zip((row[0] for row in CONVERSATION), written))
+    uid_of = dict(zip((row[0] for row in CONVERSATION), written))
+    speak(sandbox["alpha"], {uid_of[row]: kind for row, kind in SPOKEN.items()})
+    return uid_of
 
 
 def moved(sandbox, tmp_path) -> dict[int, str]:
     migrate_agent(legacy(tmp_path / "legacy.db", CONVERSATION), sandbox["alpha"] / "state.db", "alpha")
     with closing(sqlite3.connect(sandbox["alpha"] / "state.db")) as connection:
-        return dict(connection.execute("SELECT id, text_uid FROM transcript_rows"))
+        uid_of = dict(connection.execute("SELECT id, text_uid FROM transcript_rows"))
+    speak(sandbox["alpha"], {uid_of[row]: kind for row, kind in SPOKEN.items()})
+    return uid_of
 
 
 @pytest.mark.parametrize("build", [live, moved])
@@ -270,17 +290,18 @@ def test_candidates_reject_invalid_arguments(sandbox, args):
     assert invoke("candidates", *args)[0] == 2
 
 
-def test_candidates_limit_date_and_configured_sources(sandbox):
-    webhook = database(sandbox["alpha"])[3]
-    env.current().config["heart"] = {"owner_sources": ["webhook"]}
-    found = json.loads(invoke("candidates", "--limit", "1", "--json")[1])
-    assert [row["uid"] for row in found] == [webhook]
+def test_candidates_limit_date_and_stored_speaker(sandbox):
+    # Given a webhook row stored as the owner's words, whatever its session's source
+    written = database(sandbox["alpha"], [(*row[:4], "owner") if row[0] == "other" else row for row in ROWS])
+    found = json.loads(invoke("candidates", "--limit", "2", "--json")[1])
+    assert [row["uid"] for row in found] == [written[0], written[3]]
+    assert [row["uid"] for row in json.loads(invoke("candidates", "--limit", "1", "--json")[1])] == [written[0]]
     assert json.loads(invoke("candidates", "--date", "2020-01-01", "--json")[1]) == []
 
 
 @pytest.mark.platforms("posix")
 def test_candidates_use_local_calendar_day(sandbox, monkeypatch):
-    [owner] = database(sandbox["alpha"], [("owner", "user", "Before UTC midnight", START - 600)])
+    [owner] = database(sandbox["alpha"], [("owner", "user", "Before UTC midnight", START - 600, "owner")])
     monkeypatch.setenv("TZ", "KST-9")
     time.tzset()
     try:

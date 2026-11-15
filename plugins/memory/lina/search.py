@@ -9,6 +9,12 @@ The sources:
 - ``lcm``: the LCM-X summaries of this agent's session, through LCM-X's own tools (``lcm_grep``, ``lcm_expand_query``,
   ``lcm_expand``), so the search does not care which database LCM-X keeps them in.
 
+A store hit names its speaker as stored (lina#324): ``owner``, ``agent``, ``gateway``, ``outside`` or ``unknown``, never
+guessed from the text. The gateway's notes on the owner's messages (an image reading, a reply quote, ...) are hits of
+their own, speaker ``gateway`` with the note's kind and whose words it quotes, never the owner's message.
+``speaker`` keeps only hits of those kinds; ``person`` keeps the messages of one person on every channel the owner
+confirmed as theirs (``links.py``).
+
 Each source ranks its own hits; the lists are merged by reciprocal rank fusion, weighted by each hit's age the way the
 store ranks its rows (lina#726). A source that is off or fails is left
 out and named in ``skipped``: the search never fails because one source did. Every hit carries an opaque ``ref`` that
@@ -36,6 +42,7 @@ from tools.budget_config import DEFAULT_RESULT_SIZE_CHARS
 logger = logging.getLogger(__name__)
 
 SOURCES = ("agent", "messages", "honcho", "lcm")
+SPEAKERS = ("owner", "agent", "gateway", "outside", "unknown")
 _STORE_SOURCES = ("agent", "messages")
 RRF_K = 60
 EXCERPT_CHARS = 240
@@ -66,6 +73,12 @@ SEARCH_SCHEMA = {
                         "description": "Only these sources (default: all)."},
             "limit": {"type": "integer", "minimum": 1, "maximum": MAX_LIMIT,
                       "description": f"Most hits to return (default {DEFAULT_LIMIT})."},
+            "speaker": {"type": "array", "items": {"type": "string", "enum": list(SPEAKERS)},
+                        "description": "Only messages and notes of these speakers, e.g. [\"owner\"] for the owner's "
+                                       "own words (default: all)."},
+            "person": {"type": "string",
+                       "description": "Only this person's messages, on every channel the owner confirmed as theirs: "
+                                      "a person id or a handle such as messenger_author:<platform>:<author id>."},
         },
         "required": ["query"],
     },
@@ -108,7 +121,8 @@ class Hit:
     excerpt: str
     time: Optional[str]
     author: Optional[str]
-    speaker: str  # person | agent | conclusion | summary
+    speaker: str  # a stored kind (SPEAKERS) for store hits; person | agent | conclusion | summary for the others
+    note: Optional[dict[str, Any]] = None  # a gateway note: its kind, the message it is on, whose words it quotes
 
 
 @dataclass(frozen=True)
@@ -122,6 +136,7 @@ class Readers:
     honcho: Callable[[], tuple[Any, str]]
     lcm: Callable[[Callable[[Any], Any]], Any]
     embedder: Callable[[], Any]
+    person_refs: Callable[[str], list[str]] = lambda person: []
 
 
 def utc_iso(value: Any) -> Optional[str]:
@@ -179,16 +194,34 @@ def fuse(lists: Sequence[Sequence[Hit]], limit: int, now: datetime) -> list[dict
     newest_first = sorted(hits, key=lambda ref: hits[ref].time or "", reverse=True)
     ordered = sorted(newest_first, key=lambda ref: scores[ref], reverse=True)[:limit]
     return [{"source": hits[ref].source, "ref": ref, "excerpt": hits[ref].excerpt, "time": hits[ref].time,
-             "author": hits[ref].author, "speaker": hits[ref].speaker, "score": round(scores[ref], 6)}
+             "author": hits[ref].author, "speaker": hits[ref].speaker, "score": round(scores[ref], 6),
+             **({"note": hits[ref].note} if hits[ref].note else {})}
             for ref in ordered]
 
 
 def _row_hit(row: Any, terms: Sequence[str]) -> Hit:
-    if row.source == "agent" and row.role == "assistant":
-        speaker, author = "agent", row.author or (f"agent:{row.agent_id}" if row.agent_id else None)
-    else:
-        speaker, author = "person", row.author
-    return Hit(row.source, f"msg:{row.uid}", excerpt(row.content or "", terms), utc_iso(row.at), author, speaker)
+    return Hit(row.source, f"msg:{row.uid}", excerpt(row.content or "", terms), utc_iso(row.at),
+               row.speaker_ref or row.author, row.speaker)
+
+
+def _note(part: Any) -> dict[str, Any]:
+    return {"kind": part.kind, "on": f"msg:{part.uid}", "quotes": part.quoted_speaker}
+
+
+def _part_hit(part: Any, terms: Sequence[str]) -> Hit:
+    return Hit("agent", f"note:{part.part_id}", excerpt(part.content, terms), utc_iso(part.at), None, part.speaker,
+               _note(part))
+
+
+def recall_line(hit: dict[str, Any]) -> str:
+    """One recall line, labelled by who said it, so a quote is never presented as another speaker's."""
+    who = hit.get("speaker") or "unknown"
+    if hit.get("note"):
+        quotes = hit["note"].get("quotes")
+        who = f"gateway note ({hit['note']['kind']}{f', quoting {quotes}' if quotes else ''})"
+    elif hit.get("author") and who in ("owner", "outside", "agent"):
+        who = f"{who} {hit['author']}"
+    return f"[{hit['ref']}] ({who}) {hit['excerpt']}"
 
 
 def _reason(exc: BaseException) -> str:
@@ -202,8 +235,8 @@ class MemorySearch:
 
     # ── memory_search ──
 
-    def search(self, query: str, sources: Optional[Sequence[str]] = None,
-               limit: Optional[int] = None) -> dict[str, Any]:
+    def search(self, query: str, sources: Optional[Sequence[str]] = None, limit: Optional[int] = None, *,
+               speakers: Optional[Sequence[str]] = None, person: Optional[str] = None) -> dict[str, Any]:
         query = (query or "").strip()
         if not query:
             raise ValueError("memory_search needs a query")
@@ -211,6 +244,13 @@ class MemorySearch:
         unknown = [s for s in wanted if s not in SOURCES]
         if unknown:
             raise ValueError(f"unknown source(s) {', '.join(map(str, unknown))}; known: {', '.join(SOURCES)}")
+        kinds = list(dict.fromkeys(speakers)) if speakers else None
+        if kinds and any(kind not in SPEAKERS for kind in kinds):
+            raise ValueError(f"unknown speaker(s); known: {', '.join(SPEAKERS)}")
+        if kinds or person:
+            # Honcho's and LCM-X's own hits carry no stored speaker or person: only the store can be narrowed.
+            wanted = [s for s in wanted if s in _STORE_SOURCES]
+        authors = self._readers.person_refs(person) if person else None
         limit = max(1, min(MAX_LIMIT, int(limit or DEFAULT_LIMIT)))
         terms = query.split()
         lists: list[list[Hit]] = []
@@ -231,20 +271,27 @@ class MemorySearch:
                 store_sources.remove("messages")
                 skipped.append({"source": "messages", "reason": "External messages are off."})
         if store_sources:
-            leg(store_sources, lambda: self._store_lists(query, terms, store_sources, limit))
-            if not any(s["source"] in store_sources for s in skipped):
-                leg(["vectors"], lambda: self._vector_lists(query, terms, store_sources, limit))
+            leg(store_sources, lambda: self._store_lists(query, terms, store_sources, limit, kinds, authors))
+            if not any(s["source"] in store_sources for s in skipped) and authors is None:
+                leg(["vectors"], lambda: self._vector_lists(query, terms, store_sources, limit, kinds))
         if "honcho" in wanted:
             leg(["honcho"], lambda: self._honcho_lists(query, terms, limit))
         if "lcm" in wanted:
             leg(["lcm"], lambda: self._lcm_lists(query, terms, limit))
         return {"query": query, "results": fuse(lists, limit, datetime.now(UTC)), "skipped": skipped}
 
-    def _store_lists(self, query: str, terms: Sequence[str], sources: Sequence[str], limit: int) -> list[list[Hit]]:
-        rows = self._readers.store().search_memory(query, sources=sources, limit=limit * len(sources))
-        return [[_row_hit(row, terms) for row in rows if row.source == source] for source in sources]
+    def _store_lists(self, query: str, terms: Sequence[str], sources: Sequence[str], limit: int,
+                     kinds: Optional[Sequence[str]], authors: Optional[Sequence[str]]) -> list[list[Hit]]:
+        store = self._readers.store()
+        rows = store.search_memory(query, sources=sources, limit=limit * len(sources), authors=authors)
+        lists = [[_row_hit(row, terms) for row in rows if row.source == source and (not kinds or row.speaker in kinds)]
+                 for source in sources]
+        if "agent" in sources and authors is None and (not kinds or "gateway" in kinds):
+            lists.append([_part_hit(part, terms) for part in store.search_parts(query, limit=limit)])
+        return lists
 
-    def _vector_lists(self, query: str, terms: Sequence[str], sources: Sequence[str], limit: int) -> list[list[Hit]]:
+    def _vector_lists(self, query: str, terms: Sequence[str], sources: Sequence[str], limit: int,
+                      kinds: Optional[Sequence[str]]) -> list[list[Hit]]:
         """The embedding leg: only when an embedding endpoint is configured and rows are embedded with its model."""
         store = self._readers.store()
         embedder = self._readers.embedder()
@@ -252,7 +299,8 @@ class MemorySearch:
             return []
         rows = store.search_memory_vectors(embedder.embed_one(query), model=embedder.model, sources=sources,
                                            limit=limit * len(sources))
-        return [[_row_hit(row, terms) for row in rows if row.source == source] for source in sources]
+        return [[_row_hit(row, terms) for row in rows if row.source == source and (not kinds or row.speaker in kinds)]
+                for source in sources]
 
     def _honcho_lists(self, query: str, terms: Sequence[str], limit: int) -> list[list[Hit]]:
         manager, session_key = self._readers.honcho()
@@ -284,9 +332,10 @@ class MemorySearch:
     def open(self, ref: str, offset: int = 0) -> dict[str, Any]:
         ref = (ref or "").strip()
         kind, _, rest = ref.partition(":")
-        opener = {"msg": self._open_message, "ltm": self._open_honcho, "ctx": self._open_summary}.get(kind)
+        opener = {"msg": self._open_message, "note": self._open_note, "ltm": self._open_honcho,
+                  "ctx": self._open_summary}.get(kind)
         if opener is None or not rest:
-            raise RefError(f"malformed ref {ref!r}: expected msg:…, ltm:… or ctx:… from memory_search")
+            raise RefError(f"malformed ref {ref!r}: expected msg:…, note:…, ltm:… or ctx:… from memory_search")
         if offset < 0:
             raise ValueError("offset must be 0 or more")
         return _page({"ref": ref, **opener(ref, rest)}, offset)
@@ -300,10 +349,18 @@ class MemorySearch:
             if not enabled():
                 raise SourceOff("External messages are off.")
         opened = {"source": row.source, "time": utc_iso(row.at), "author": row.author, "role": row.role,
+                  "speaker": row.speaker, "speaker_ref": row.speaker_ref,
                   "conversation_id": row.conversation_id, "session_id": row.session_id}
         if row.forgotten:
             return {**opened, "forgotten": True, "text": None, "note": "This message was forgotten; its text is gone."}
         return {**opened, "forgotten": False, "text": row.content}
+
+    def _open_note(self, ref: str, part_id: str) -> dict[str, Any]:
+        part = self._readers.store().open_part(int(part_id)) if part_id.isdigit() else None
+        if part is None:
+            raise RefError(f"no gateway note for ref {ref!r} (unknown, or not readable by this agent)")
+        return {"source": "agent", "speaker": part.speaker, "note": _note(part), "time": utc_iso(part.at),
+                "text": part.content}
 
     def _open_honcho(self, ref: str, rest: str) -> dict[str, Any]:
         sub, _, ident = rest.partition(":")
@@ -377,10 +434,13 @@ def handle_tool_call(search: MemorySearch, name: str, args: dict[str, Any]) -> s
     from tools.registry import tool_error
     try:
         if name == SEARCH_TOOL:
-            sources = args.get("sources")
+            sources, speakers = args.get("sources"), args.get("speaker")
             if sources is not None and not isinstance(sources, list):
                 return tool_error("sources must be a list of source names")
-            result = search.search(str(args.get("query") or ""), sources=sources, limit=args.get("limit"))
+            if speakers is not None and not isinstance(speakers, list):
+                return tool_error("speaker must be a list of speaker kinds")
+            result = search.search(str(args.get("query") or ""), sources=sources, limit=args.get("limit"),
+                                   speakers=speakers, person=args.get("person") or None)
         else:
             result = search.open(str(args.get("ref") or ""), offset=int(args.get("offset") or 0))
     except (ValueError, TypeError, SourceOff) as exc:

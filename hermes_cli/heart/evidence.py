@@ -37,10 +37,9 @@ def owner_text(content: str) -> str:
     return content.lstrip()
 
 
-def is_owner(row: Message) -> bool:
-    # Rows carry no speaker kind yet (#324): the owner is a user turn of an owner source without a machine prefix.
-    return (row.role == "user" and row.source in storage.settings().owner_sources
-            and not owner_text(row.content).startswith(MACHINE_PREFIXES))
+def is_owner(speaker: str | None) -> bool:
+    """The owner's own words: the speaker kind ``memory.messages`` stores for the row (lina#324), never its text."""
+    return speaker == "owner"
 
 
 def uids(value: str) -> list[str]:
@@ -48,11 +47,6 @@ def uids(value: str) -> list[str]:
     if not pieces or any(any(char.isspace() for char in piece) for piece in pieces):
         raise storage.HeartError(text("ids"))
     return list(dict.fromkeys(pieces))
-
-
-def session_sources(database: sqlite3.Connection, session_ids: set[str]) -> dict[str, str]:
-    marks = ",".join("?" for _ in session_ids)
-    return dict(database.execute(f"SELECT id, source FROM sessions WHERE id IN ({marks})", tuple(session_ids)))
 
 
 def lookup(value: str, *, reaction: bool) -> tuple[str, ...]:
@@ -67,14 +61,8 @@ def lookup(value: str, *, reaction: bool) -> tuple[str, ...]:
     forgotten = [uid for uid, row in found.items() if row.forgotten]
     if forgotten:
         raise storage.HeartError(text("forgotten_ids", ids=",".join(forgotten)))
-    if reaction:
-        with open_database() as database:
-            sources = session_sources(database, {row.session_id for row in found.values() if row.session_id})
-        messages = [Message(uid=uid, session_id=row.session_id or "", role=row.role or "",
-                            source=sources.get(row.session_id, ""), content=row.content or "", timestamp=0)
-                    for uid, row in found.items()]
-        if not any(is_owner(message) for message in messages):
-            raise storage.HeartError(text("owner_required", owner=current().owner_name))
+    if reaction and not any(is_owner(row.speaker) for row in found.values()):
+        raise storage.HeartError(text("owner_required", owner=current().owner_name))
     return tuple(selected)
 
 
@@ -83,22 +71,24 @@ def folded(value: str) -> str:
 
 
 def placed(store: MessageStore, placements: Iterable[tuple]):
-    """Messages of *placements* (``SELECT`` rows), in order; a placement whose text is gone or forgotten is skipped."""
+    """``(message, its stored speaker kind)`` of *placements* (``SELECT`` rows), in order; a placement whose text is gone
+    or forgotten is skipped."""
     placements = iter(placements)
     while page := list(islice(placements, _PAGE)):
         found = rows.texts(store, (raw[0] for raw in page))
+        speakers = store.speakers(found)
         for uid, session_id, role, source, timestamp, _ in page:
             if uid in found:
                 yield Message(uid=uid, session_id=session_id, role=role, source=source, content=found[uid],
-                              timestamp=timestamp)
+                              timestamp=timestamp), speakers.get(uid)
 
 
 def paired_reply(database: sqlite3.Connection, store: MessageStore, owner: Message, row_id: int) -> Reply | None:
     cursor = database.execute(
         SELECT + "AND t.session_id = ? AND (t.timestamp > ? OR (t.timestamp = ? AND t.id > ?)) "
         "ORDER BY t.timestamp, t.id", (owner.session_id, owner.timestamp, owner.timestamp, row_id))
-    for row in placed(store, cursor):
-        if is_owner(row):
+    for row, speaker in placed(store, cursor):
+        if is_owner(speaker):
             return None
         if row.role == "assistant" and row.content.strip():
             return Reply(uid=row.uid, text=folded(row.content))
@@ -116,8 +106,8 @@ def candidates(args) -> None:
         day_rows = database.execute(SELECT + "AND t.timestamp >= ? AND t.timestamp < ? ORDER BY t.timestamp, t.id",
                                     (start, end)).fetchall()
         ids = {raw[0]: raw[5] for raw in reversed(day_rows)}
-        for row in placed(store, day_rows):
-            if is_owner(row) and all(row.uid != seen.uid for seen in selected):
+        for row, speaker in placed(store, day_rows):
+            if is_owner(speaker) and all(row.uid != seen.uid for seen in selected):
                 selected.append(Candidate(uid=row.uid, session_id=row.session_id,
                                           time=dt.datetime.fromtimestamp(row.timestamp).strftime("%H:%M"),
                                           text=folded(owner_text(row.content)),

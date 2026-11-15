@@ -92,7 +92,8 @@ def test_one_search_returns_hits_from_every_source_and_each_ref_opens_its_origin
     texts = {ref: page["text"] for ref, page in opened.items()}
     agent_texts = {texts[h["ref"]] for h in by_source["agent"]}
     assert agent_texts == {"please track the orchid delivery, 회의록도 정리해줘", "Tracking the orchid delivery now."}
-    assert {h["speaker"] for h in by_source["agent"]} == {"person", "agent"}
+    # The speaker kind memory.messages stores for each row (lina#324): the person's turn is the owner's.
+    assert {h["speaker"] for h in by_source["agent"]} == {"owner", "agent"}
     external = by_source["messages"]
     assert [texts[h["ref"]] for h in external] == [EXTERNAL_TEXT]
     assert external[0]["author"] == "kakao:friend-1" and external[0]["time"] == "2026-11-01T09:00:00+00:00"

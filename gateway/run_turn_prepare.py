@@ -602,6 +602,7 @@ class GatewayTurnPrepareMixin:
         clean — strip any leading timestamp prefix and the Discord triggering-message note (a
         model instruction, not authored text) — regardless of the toggle; only the in-context
         RENDER is gated behind gateway.message_timestamps.enabled (default OFF)."""
+        from gateway import inbound_notes
         from gateway.run import _load_gateway_config, _message_timestamps_enabled
         from gateway.run_inbound import strip_discord_triggering_note
         persist_user_message = None
@@ -616,7 +617,9 @@ class GatewayTurnPrepareMixin:
             _evt_tz = _get_evt_tz()
             if message_text and isinstance(message_text, str):
                 _clean_message_text, _embedded_ts = _strip_msg_ts(message_text, tz=_evt_tz)
-                persist_user_message = strip_discord_triggering_note(event, _clean_message_text)
+                # The owner's words alone when the gateway's notes are parts of their own (lina#324).
+                persist_user_message = strip_discord_triggering_note(
+                    event, _strip_msg_ts(inbound_notes.persist_text(event, message_text), tz=_evt_tz)[0])
                 _event_epoch = _coerce_msg_ts(getattr(event, "timestamp", None), tz=_evt_tz)
                 persist_user_timestamp = _event_epoch if _event_epoch is not None else _embedded_ts
                 if _message_timestamps_enabled(_load_gateway_config()):

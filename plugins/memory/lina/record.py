@@ -27,6 +27,11 @@ class TurnRecord:
     reply_uid: Optional[str]
     started_at: float
     ended_at: float
+    # (memory.messages base uid, speaker kind, speaker ref) of each of the turn's rows (lina#324).
+    speakers: tuple[tuple[str, str, Optional[str]], ...] = ()
+    user_speaker: str = "unknown"
+    # The gateway's notes on the turn's user row ({"kind", "text", "quoted_speaker", "quoted_ref"}), never its words.
+    gateway_notes: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -64,8 +69,12 @@ def turn_rows(messages: Sequence[Any], turn_start: Any = None) -> TurnRows:
 
 
 def build_record(rule: Rule, rows: TurnRows, *, store_uid, person_id: Optional[str], agent_id: str,
-                 conversation_id: str, session_id: str, platform: str, author_id: Optional[str]) -> TurnRecord:
-    """``store_uid`` maps a Hermes message uid to its memory.messages uid (``MessageStore.base_uid``)."""
+                 conversation_id: str, session_id: str, platform: str, author_id: Optional[str],
+                 speakers: Sequence[tuple[str, str, Optional[str]]] = (),
+                 gateway_notes: Sequence[dict[str, Any]] = ()) -> TurnRecord:
+    """``store_uid`` maps a Hermes message uid to its memory.messages uid (``MessageStore.base_uid``); *speakers* are
+    ``speaker.turn_speakers``' rows, by Hermes uid."""
+    kinds = {uid: kind for uid, kind, _ in speakers}
     return TurnRecord(
         route=rule.route, words_of=rule.words_of, lcm=rule.lcm, honcho=rule.honcho, person_id=person_id,
         agent_id=agent_id, conversation_id=conversation_id, session_id=session_id, platform=platform,
@@ -73,4 +82,6 @@ def build_record(rule: Rule, rows: TurnRows, *, store_uid, person_id: Optional[s
         user_uid=store_uid(rows.user_hermes_uid) if rows.user_hermes_uid else None,
         reply_uid=store_uid(rows.reply_hermes_uid) if rows.reply_hermes_uid else None,
         started_at=rows.started_at, ended_at=rows.ended_at,
+        speakers=tuple((store_uid(uid), kind, ref) for uid, kind, ref in speakers),
+        user_speaker=kinds.get(rows.user_hermes_uid or "", "unknown"), gateway_notes=tuple(gateway_notes),
     )
