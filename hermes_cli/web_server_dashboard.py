@@ -291,14 +291,11 @@ def mount_spa(application: FastAPI):
                 and file_path.samefile(index)):
             # No spelling of the entry document may bypass bootstrap or policy.
             return _serve_index(request, prefix)
-        # Prevent path traversal via url-encoded sequences (%2e%2e/)
-        if (
-            full_path
-            and file_path.resolve().is_relative_to(dist.resolve())
-            and file_path.exists()
-            and file_path.is_file()
-        ):
-            return FileResponse(file_path, headers=_REVALIDATE)
+        # Prevent path traversal via url-encoded sequences (%2e%2e/): serve the resolved path, and only from inside dist.
+        root = os.path.realpath(dist)
+        served = os.path.realpath(os.path.join(root, full_path))
+        if full_path and served.startswith(root + os.sep) and os.path.isfile(served):
+            return FileResponse(served, headers=_REVALIDATE)
         if is_static_asset_path(full_path):
             font = public_font_file(dist, WEB_DIST, full_path)
             if font is not None:
