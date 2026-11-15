@@ -296,7 +296,7 @@ MIN_COLLECT_DAYS = 2.0
 DEFAULT_COLLECT_DAYS = 30.0
 TEXT_EXPORT_NAME = "memory-messages.jsonl"
 _EXPORT_COLUMNS = ("uid", "source", "session_id", "conversation_id", "seq_in_session", "role", "content", "tool_name",
-                   "tool_call_id", "tool_calls", "scope", "native", "content_sha256")
+                   "tool_call_id", "tool_calls", "scope", "native", "content_sha256", "speaker", "speaker_ref")
 
 
 class MessageStore:
@@ -597,23 +597,35 @@ class MessageStore:
                 deleted += len(gone)
 
     def export_texts(self, uids: Iterable[Optional[str]]) -> Iterator[dict[str, Any]]:
-        """The text rows of *uids* as JSON-ready dicts (``import_texts`` takes them back)."""
+        """The text rows of *uids* as JSON-ready dicts (``import_texts`` takes them back), each with its speaker and,
+        under ``parts``, the gateway's notes on it in order (the ``put_parts`` shape)."""
         wanted = sorted({u for u in uids if u})
         columns = ", ".join(_EXPORT_COLUMNS)
         for start in range(0, len(wanted), 1000):
             with self._cursor() as cur:
                 cur.execute(f"SELECT {columns}, extract(epoch FROM ts) FROM memory.messages WHERE uid = ANY(%s)",
                             (wanted[start:start + 1000],))
-                for record in cur.fetchall():
-                    row = dict(zip(_EXPORT_COLUMNS, record))
-                    row["ts"] = None if record[-1] is None else float(record[-1])
-                    row["payload_sha256"] = (row.get("native") or {}).get("payload_sha256")
-                    yield row
+                records = cur.fetchall()
+                cur.execute("SELECT m.uid, p.kind, p.content, p.quoted_speaker, p.quoted_ref FROM memory.message_parts p"
+                            " JOIN memory.messages m USING (message_id) WHERE m.uid = ANY(%s) ORDER BY m.uid, p.ordinal",
+                            (wanted[start:start + 1000],))
+                parts: dict[str, list[dict[str, Any]]] = {}
+                for uid, kind, text, quoted_speaker, quoted_ref in cur.fetchall():
+                    parts.setdefault(uid, []).append({"kind": kind, "text": text, "quoted_speaker": quoted_speaker,
+                                                      "quoted_ref": quoted_ref})
+            for record in records:
+                row = dict(zip(_EXPORT_COLUMNS, record))
+                row["ts"] = None if record[-1] is None else float(record[-1])
+                row["payload_sha256"] = (row.get("native") or {}).get("payload_sha256")
+                if row["uid"] in parts:
+                    row["parts"] = parts[row["uid"]]
+                yield row
 
     def import_texts(self, rows: Iterable[dict[str, Any]]) -> int:
         """Write exported text rows back under this agent, keeping rows already there (``ON CONFLICT DO
-        NOTHING``) in one transaction. A damaged row (``check_text_row``) fails the import before anything is
-        written. Returns the rows inserted."""
+        NOTHING``) in one transaction, with their gateway notes (``parts``). A row exported before speakers were
+        stored gets the kind its fields decide (migration 0013). A damaged row (``check_text_row``) fails the import
+        before anything is written. Returns the rows inserted."""
         rows = list(rows)
         for row in rows:
             if (damage := check_text_row(row)) is not None:
@@ -630,6 +642,8 @@ class MessageStore:
                 with self._writer_cursor() as cur:
                     cur.execute(sql, (row["uid"], self.agent_id, *values, row.get("ts")))
                     inserted += len(cur.fetchall())
+                if row.get("parts"):
+                    self.put_parts(row["uid"], row["parts"])
         return inserted
 
     def text_uids_with_digest(self, message_uid: str, content_sha256: str) -> list[str]:
@@ -1123,7 +1137,8 @@ def _remap_state_db_uids(db_path: Path, agent: str) -> list[str]:
 
 
 def _sidecar_rows(sidecar: Optional[Path], agent: str) -> list[dict[str, Any]]:
-    """A backup's text rows, each checked (``check_text_row``) and renamed to *agent*'s uid."""
+    """A backup's text rows, each checked (``check_text_row``) and renamed to *agent*'s uid; a row its old agent
+    said (``speaker_ref`` ``agent:<old>``) is said by *agent* now."""
     if sidecar is None:
         return []
     try:
@@ -1136,7 +1151,10 @@ def _sidecar_rows(sidecar: Optional[Path], agent: str) -> list[dict[str, Any]]:
             raise MessageTextRestoreError(
                 f"message text {row.get('uid') if isinstance(row, dict) else row!r} in {sidecar.name}: {damage}; "
                 "the backup is damaged")
-        row["uid"] = _remapped_uid(row["uid"], agent)
+        renamed = _remapped_uid(row["uid"], agent)
+        if renamed != row["uid"] and row.get("speaker_ref") == _agent_ref(row["uid"].split(":", 2)[1]):
+            row["speaker_ref"] = _agent_ref(agent)
+        row["uid"] = renamed
     return rows
 
 
@@ -1233,6 +1251,11 @@ def _agent_prefixes(old_agent: str, new_agent: str) -> tuple[str, str]:
     return f"{SOURCE_AGENT}:{old_agent}:", f"{SOURCE_AGENT}:{new_agent}:"
 
 
+def _agent_ref(agent: str) -> str:
+    """The ``speaker_ref`` of a row *agent* said (migration 0013)."""
+    return f"{SOURCE_AGENT}:{agent}"
+
+
 def check_agent_move(old_agent: str, new_agent: str) -> None:
     """Validate a move of *old_agent*'s text to *new_agent*, changing nothing: the owner role connects
     (StoreUnavailableError otherwise) and no new uid is held by different text (MessageTextRestoreError)."""
@@ -1260,9 +1283,14 @@ def check_agent_move(old_agent: str, new_agent: str) -> None:
 
 
 def _follow_text_owner(cur, from_agent: str, to_agent: str) -> None:
-    """Give *to_agent* the vec.chunks rows (and their kind ``chunk`` vectors) of *from_agent* whose message now
-    belongs to *to_agent*: embedded text follows its memory.messages row. A store from before migration 0003 has
-    no vec tables and nothing to move."""
+    """Give *to_agent* what of *from_agent* belongs to a memory.messages row *to_agent* now has: the row's gateway
+    notes (memory.message_parts, migration 0013), and the vec.chunks rows embedding it with their kind ``chunk``
+    vectors (migration 0003). A store from before one of those migrations has none of its rows to move."""
+    cur.execute("SELECT to_regclass('memory.message_parts') IS NOT NULL")
+    if cur.fetchone()[0]:
+        cur.execute("UPDATE memory.message_parts p SET agent_id = %s FROM memory.messages m"
+                    " WHERE m.message_id = p.message_id AND p.agent_id = %s AND m.agent_id = %s",
+                    (to_agent, from_agent, to_agent))
     cur.execute("SELECT to_regclass('vec.chunks') IS NOT NULL")
     if not cur.fetchone()[0]:
         return
@@ -1340,7 +1368,8 @@ def move_agent_rows(old_agent: str, new_agent: str) -> MovedRows:
     """Hand *old_agent*'s text rows to *new_agent* in one transaction (as the owner role: row-level security keeps
     lina_app inside one agent): agent_id and the uid prefix ``agent:<old>:`` -> ``agent:<new>:``. A row whose new
     uid already holds the same text stays where it is (its copy is there); one held by other text fails the move.
-    The embedded text and vectors of the moved rows (vec.chunks, kind ``chunk``) move with them, and so do the agent's
+    A moved row the old agent said (``speaker_ref`` ``agent:<old>``) is said by the new one. The gateway's notes, the
+    embedded text and the vectors of the moved rows move with them (``_follow_text_owner``), and so do the agent's
     LCM-X records (``_follow_lcm_owner``) unless *new_agent* has its own. Returns the new uids, so
     ``return_agent_rows`` can undo exactly this move."""
     import psycopg
@@ -1349,11 +1378,13 @@ def move_agent_rows(old_agent: str, new_agent: str) -> MovedRows:
     try:
         with conn.transaction(), conn.cursor() as cur:
             cur.execute(
-                "UPDATE memory.messages o SET agent_id = %s, uid = %s || substr(o.uid, %s)"
+                "UPDATE memory.messages o SET agent_id = %s, uid = %s || substr(o.uid, %s),"
+                " speaker_ref = CASE WHEN o.speaker_ref = %s THEN %s ELSE o.speaker_ref END"
                 " WHERE o.agent_id = %s AND starts_with(o.uid, %s) AND NOT EXISTS (SELECT 1 FROM memory.messages n"
                 " WHERE n.uid = %s || substr(o.uid, %s) AND n.native->>'payload_sha256' = o.native->>'payload_sha256')"
                 " RETURNING o.uid",
-                (new_agent, new_prefix, len(old_prefix) + 1, old_agent, old_prefix, new_prefix, len(old_prefix) + 1))
+                (new_agent, new_prefix, len(old_prefix) + 1, _agent_ref(old_agent), _agent_ref(new_agent), old_agent,
+                 old_prefix, new_prefix, len(old_prefix) + 1))
             moved = [row[0] for row in cur.fetchall()]
             _follow_text_owner(cur, old_agent, new_agent)
             moved = MovedRows(moved)
@@ -1378,8 +1409,10 @@ def return_agent_rows(uids: Sequence[str], old_agent: str, new_agent: str) -> No
     conn = _owner_connection()
     try:
         with conn.transaction(), conn.cursor() as cur:
-            cur.execute("UPDATE memory.messages SET agent_id = %s, uid = %s || substr(uid, %s) WHERE uid = ANY(%s)",
-                        (old_agent, old_prefix, len(new_prefix) + 1, list(uids)))
+            cur.execute("UPDATE memory.messages SET agent_id = %s, uid = %s || substr(uid, %s),"
+                        " speaker_ref = CASE WHEN speaker_ref = %s THEN %s ELSE speaker_ref END WHERE uid = ANY(%s)",
+                        (old_agent, old_prefix, len(new_prefix) + 1, _agent_ref(new_agent), _agent_ref(old_agent),
+                         list(uids)))
             _follow_text_owner(cur, new_agent, old_agent)
             if getattr(uids, "lcm_moved", False):
                 _follow_lcm_owner(cur, new_agent, old_agent)
