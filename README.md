@@ -29,7 +29,7 @@ LINA's engine comes from [Hermes Agent](https://github.com/NousResearch/hermes-a
 
 ## The web app
 
-`hermes dashboard` also serves the [lina-app](https://github.com/lina-system/lina-app) build under `/app/`, on the same address as the client API (`/api/lina/*`, `/api/plugins/kanban/work/*`). Point `dashboard.app_dist` in `config.yaml` (or `LINA_APP_DIST`, which wins) at the app's build folder (`dist/`). The page receives the same credential the dashboard's own page gets, so it needs no connection setting, and when the dashboard requires sign-in, `/app/` asks for the same sign-in. With no folder configured, or a missing one, `/app/` answers 404 and the rest of the dashboard is unchanged; `hermes serve` never serves it.
+`hermes dashboard` also serves the [lina-app](https://github.com/lina-system/lina-app) build under `/app/`, on the same address as the client API (`/api/lina/*`, `/api/plugins/kanban/work/*`). Point `dashboard.app_dist` in `config.yaml` (or `LINA_APP_DIST`, which wins) at the app's build folder (`dist/`). The page receives the same credential the dashboard's own page gets, so it needs no connection setting, and when the dashboard requires sign-in, `/app/` asks for the same sign-in. With no folder configured, or a missing one, `/app/` answers 404 and the rest of the dashboard is unchanged; `hermes serve` never serves it. `dashboard.app_label` names the install in one short line the app shows in its head (for example "시험 사본" on a test copy; trimmed, cut at 20 characters, none when empty), and `dashboard.app_label_kind` marks it `real` or `test` (any other value is dropped); both are read per request.
 
 ## License and contributions
 
