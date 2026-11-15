@@ -1,8 +1,9 @@
 """lcm_recall for an agent whose LCM-X lives on the memory store (lina#704). The store keeps one embedding model (the
 home's ``embedding:``, written by ``lina store reembed``), so LCM-X's default local model stays off there and says
 nothing at agent init; the full-text arm answers on a store migrated with another provider's embedding profile; and
-a ranked full-text query tokenizes only the rows it ranks plus a bounded sample, not the whole table. Real Postgres
-(tests/_fixtures/memory_store.py)."""
+a ranked full-text query tokenizes only the rows it ranks plus a bounded sample, not the whole table. A Korean query
+(LCM-X's LIKE path) reads its rows through the trigram index and returns the hits SQLite does (lina#711). Real
+Postgres (tests/_fixtures/memory_store.py)."""
 
 from __future__ import annotations
 
@@ -118,6 +119,64 @@ def test_a_ranked_full_text_query_tokenizes_its_matches_and_a_bounded_sample(sto
             [(index_scans,)] = conn._pg.execute(
                 "SELECT pg_stat_get_xact_numscans('memory.messages_content_lcm_porter'::regclass)").fetchall()
         assert _tokenized_rows(plan[0]["Plan"]) < rows
+        assert index_scans > 0
+    finally:
+        conn.close()
+        store.close()
+
+
+_LIKE_ROWS = [
+    ("user", "예전에 서버를 새 Mac mini로 옮겼던 기록을 남겼다"),
+    ("assistant", "서버 이전 기록은 notes 폴더에 있다. 서버, 서버"),
+    ("user", "the MAC MINI arrived on friday"),
+    ("assistant", "회의록을 정리했다"),
+    ("tool", "옮겼던 파일 목록: a.txt, b.txt"),
+    ("user", "nothing to see here"),
+]
+
+
+@pytest.mark.parametrize("sort", ["recency", "relevance"])
+@pytest.mark.parametrize("query", ["예전에 서버 옮겼던 기록 찾아줘 mac mini", "회의록을 정리", "서버", "기", '"서버 이전"'])
+def test_a_korean_query_returns_the_hits_and_order_sqlite_does(store_home, tmp_path, query, sort):
+    """LCM-X's LIKE path on the store gives what the same rows give in a SQLite lcm.db, for a term shorter than a
+    trigram too (lina#711)."""
+    results = []
+    for db in (store_home / "lcm.db", tmp_path / "sqlite" / "lcm.db"):
+        db.parent.mkdir(parents=True, exist_ok=True)
+        if db.parent == store_home:
+            assert lcm_x_store.route(db)
+        store = _lcm("store").MessageStore(db)
+        try:
+            ids = store.append_batch("s1", [{"role": role, "content": text} for role, text in _LIKE_ROWS])
+            rows = store.search(query, limit=10, sort=sort)
+            results.append([(ids.index(row["store_id"]), row["snippet"]) for row in rows])
+        finally:
+            store.close()
+    on_store, on_sqlite = results
+    assert on_sqlite
+    assert on_store == on_sqlite
+
+
+def test_a_korean_query_reads_the_trigram_index(store_home):
+    """Under row-level security Postgres uses no index for ILIKE, so the LIKE path read every message (lina#711)."""
+    rows = 1500
+    db = store_home / "lcm.db"
+    assert lcm_x_store.route(db)
+    store = _lcm("store").MessageStore(db)
+    conn = lcm_x_store.backend_for(db)()
+    try:
+        store.append_batch("s1", [{"role": "user", "content": f"filler row {n} about nothing much"} for n in range(rows)]
+                           + [{"role": "user", "content": "회의록을 정리했다"}] * 3)
+        assert [r["content"] for r in store.search("회의록을", limit=5)] == ["회의록을 정리했다"] * 3
+        template = lcm_x_store.translate(
+            "SELECT store_id, content FROM messages WHERE content IS NOT NULL AND "
+            "(content LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\') ORDER BY timestamp DESC LIMIT 50", conn._catalog)
+        sql, params = lcm_x_store.render(template, ["%회의록을%", "%정리했다%"])
+        with conn._pg.transaction():
+            found = conn._pg.execute(sql, params).fetchall()
+            [(index_scans,)] = conn._pg.execute(
+                "SELECT pg_stat_get_xact_numscans('memory.messages_content_trgm'::regclass)").fetchall()
+        assert len(found) == 3
         assert index_scans > 0
     finally:
         conn.close()

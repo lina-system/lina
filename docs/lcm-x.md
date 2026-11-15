@@ -64,8 +64,10 @@ schema is `services/store/migrations/0007_ctx_lcm.sql`: LCM-X's tables under the
   `hermes_state_store.MessageStore.put_text`. `lina store gc` counts `ctx.lcm_messages` as a holder.
 - Full text: `messages_fts`, `nodes_fts` and `lcm_trajectory_states_fts` are views over the `simple` tsvector
   and `pg_trgm` indexes; `MATCH` becomes a tsquery built from the FTS5 query, `bm25`/`rank` `ts_rank_cd`.
-  Korean, Chinese and Japanese queries take LCM-X's LIKE path, which runs as `ILIKE` on the trigram index, so
-  `회의` finds `회의록을`. A `MATCH` reads its rows through `ctx.lcm_fts_match` (`0011_ctx_lcm_fts_match.sql`, lina#704):
+  Korean, Chinese and Japanese queries take LCM-X's LIKE path, which runs as `ILIKE`, so `회의` finds `회의록을`.
+  Its rows come from `ctx.lcm_like_match` (`0012_ctx_lcm_like_match.sql`, lina#711), with the owner's rights for the
+  same reason as below: from the trigram index when every term has three letters or more, else from one scan that
+  lowers each text once; the ranking reads that lowered text once per row. A `MATCH` reads its rows through `ctx.lcm_fts_match` (`0011_ctx_lcm_fts_match.sql`, lina#704):
   under row-level security Postgres uses no index for `tsvector @@ tsquery` (the operator is not leakproof), so the
   function runs the lookup with its owner's rights and returns only the calling agent's rows. bm25's statistics come
   from that lookup, the row count and the newest 500 rows' token counts (FTS5's exact totals up to 500 rows).
