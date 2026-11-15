@@ -270,8 +270,8 @@ other id still skips. An `--owner-id` the source aliases to another peer is refu
 `terminal.cwd` to the agent's own profile directory, `terminal.home_mode: profile` with `<profile>/home` created, and
 `terminal.auto_source_bashrc: false`, so the copy's terminal does not start in the host user's home or source that
 user's shell profile (lina#706). Only the new agent's files are written; the source profile is never changed. A
-multiplexed gateway applies `terminal.cwd` per profile but not yet `home_mode`, which takes effect when the agent's
-own gateway runs it.
+multiplexed gateway applies `terminal.cwd` and `terminal.home_mode` per profile (lina#715); what `HOME` alone does
+not separate is in [test-copy.md](test-copy.md#9-what-a-copy-cannot-do-yet).
 
 Several source profiles may share one Honcho workspace. Each destination agent receives deterministic
 21-character text IDs derived from its name and the source identity; scoped session and ordinary peer names
