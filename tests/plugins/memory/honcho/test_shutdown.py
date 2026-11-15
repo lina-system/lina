@@ -109,6 +109,9 @@ class TestProviderShutdown:
             def migrate_memory_files(self, *a, **k):
                 pass
 
+            def close_dialectic(self):
+                pass
+
         monkeypatch.setattr("plugins.memory.honcho.client.HonchoClientConfig.from_global_config", lambda: cfg)
         monkeypatch.setattr("plugins.memory.honcho.client.get_honcho_client", lambda cfg: object())
         monkeypatch.setattr("plugins.memory.honcho.session.HonchoSessionManager", StalledManager)
