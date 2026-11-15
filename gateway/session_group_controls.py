@@ -391,6 +391,7 @@ def _sibling_sessions(authority, reader):
 def _profiles(authority, actor, home, params, siblings=()):
     """The Bots roster: this profile's row, then every profile it can name. ``siblings`` is
     ``_roster_siblings``' snapshot; a sibling with a reader carries the same session fields."""
+    from hermes_cli.profile_assets import asset_file
     from hermes_cli.profiles import _profile_info
     import hermes_yaml as yaml
     include_sessions = params.get('include_sessions', True)
@@ -411,7 +412,7 @@ def _profiles(authority, actor, home, params, siblings=()):
                               if type(v) is int} if isinstance(revisions, dict) else {}
     if isinstance(meta.get('ui_meta'), dict):
         row['ui_meta'] = meta['ui_meta']
-    row['has_avatar'] = any((home / 'assets' / f'avatar.{ext}').is_file() for ext in ('png', 'jpg', 'webp'))
+    row['has_avatar'] = asset_file(home, 'avatar') is not None
     if include_sessions:
         row.update(_bot_sessions(authority, actor))
     profiles = [row]
