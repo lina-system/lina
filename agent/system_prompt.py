@@ -113,9 +113,10 @@ def _active_profile_name(agent: Any, ambient) -> str:
 
 
 def _frozen_plugin_prompt_sections(agent: Any) -> tuple:
-    """Render plugin sections once per session and freeze them on the agent.
-    A restored ``_cached_system_prompt`` is parsed instead of re-running plugin
-    code; a render that raises at a rebuild boundary keeps the previous bytes
+    """Render plugin sections once per session and freeze them on the agent,
+    led by the core self-note section (``agent/self_note_section.py``) read from
+    the agent's OWN home. A restored ``_cached_system_prompt`` is parsed instead of
+    re-running plugin code; a render that raises at a rebuild boundary keeps the previous bytes
     (stashed by ``invalidate_system_prompt``) instead of silently vanishing."""
     if hasattr(agent, "_plugin_system_prompt_sections_snapshot"):
         return agent._plugin_system_prompt_sections_snapshot
@@ -123,16 +124,18 @@ def _frozen_plugin_prompt_sections(agent: Any) -> tuple:
     if isinstance(stored_prompt, str) and stored_prompt:
         rendered = _restore_plugin_prompt_sections(stored_prompt)
     else:
+        from agent.self_note_section import render_self_note_section
+        self_note = render_self_note_section(_agent_home(agent) or get_hermes_home())
         try:
             from hermes_cli.plugins import render_system_prompt_sections
-            rendered = tuple(render_system_prompt_sections(_plugin_session_info(agent)))
+            rendered = (*self_note, *render_system_prompt_sections(_plugin_session_info(agent)))
         except Exception as exc:
             rendered = getattr(agent, "_plugin_system_prompt_sections_previous", None)
             if rendered:
                 logger.warning("Plugin system prompt sections failed to re-render (%s); keeping the previous frozen sections", exc)
             else:
                 logger.warning("Plugin system prompt sections could not be rendered: %s", exc)
-                rendered = ()
+                rendered = self_note
     agent._plugin_system_prompt_sections_snapshot = rendered
     return rendered
 
