@@ -150,6 +150,9 @@ def carry(source: Path, home: Path, agent: str, *, dry_run: bool = False) -> Car
     if journal.is_symlink():
         report.skipped.append((JOURNAL, "symlink"))
     elif journal.is_file():
+        if not dry_run:
+            # The heart directory marks an agent that keeps a journal (daily review, weekly page), as journal.write does.
+            storage.private_dir(home / "heart")
         with closing(MessageStore(agent)) as store:
             _journal(journal, store, report, dry_run)
     return report

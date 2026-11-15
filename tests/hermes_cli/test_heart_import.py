@@ -88,6 +88,21 @@ def test_import_carries_files_privately_and_journal_as_rows(sandbox, tmp_path, m
     assert listed[0]["ts"] == "2026-11-10T23:40:00+09:00"
 
 
+def test_a_journal_alone_still_creates_the_private_heart_directory(sandbox, tmp_path, moved_lcm, memory_store_sql):
+    # Given a source with a journal and none of the optional heart files
+    source = tmp_path / "trial"
+    (source / "heart").mkdir(parents=True)
+    (source / "heart/journal.jsonl").write_text(json.dumps(JOURNAL[0]) + "\n")
+    home = sandbox["alpha"]
+    assert not (home / "heart").exists()
+    # When
+    code, _, error = invoke("import", "--from", str(source))
+    # Then the journal rows are here and the heart directory marking a journal-keeping agent is private
+    assert code == 0, error
+    assert (home / "heart").stat().st_mode & 0o777 == 0o700
+    assert len(heart_rows(memory_store_sql)) == 1
+
+
 def test_second_import_adds_nothing(sandbox, tmp_path, moved_lcm, memory_store_sql):
     source = trial_home(tmp_path / "trial")
     assert invoke("import", "--from", str(source))[0] == 0
