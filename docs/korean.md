@@ -129,3 +129,71 @@ an issue, a log or a report. `lina eval korean` prints counts and intervals only
 number and a reason, never the line. Tests use a small invented set (`tests/hermes_cli/test_korean_eval.py`). The
 table follows the store's row-level rules ([store.md](store.md#roles-and-row-level-security)): an agent reads only
 the texts it wrote, no agent reads an unowned one, and the command runs as the store owner.
+
+## The owner's own word for a concept
+
+Before an agent names a concept in Korean, it looks up what the owner called it in his own messages (lina#379). If he
+used a term, the agent uses it; if he never named the concept, the agent describes it in plain words and does not coin
+a name. Putting the found terms in the prompt is lina#380; checking a reply for coined compounds is lina#381.
+
+### The tool and the functions
+
+The lina-memory tool `owner_terms` takes one `concept`, a plain Korean phrase (`취향 목록`) or an English term
+(`taste slot`), and answers:
+
+```json
+{"concept": "taste slot", "terms": [{"term": "취향 목록", "count": 2, "uids": ["agent:alpha:..."]}], "use": "취향 목록"}
+```
+
+- `terms`: his terms, most used first (at most 10); `count` is how many of his messages used the term, `uids` their
+  `memory.messages` uids, newest first (at most 20). `memory_open msg:<uid>` opens one.
+- `use`: the term to write (`preferred_term()`), or null.
+- With no term, `terms` is empty, `use` is null and `hint` is `describe it in plain words; do not coin a name`.
+
+The tool calls `hermes_cli.korean.lookup`: `owner_terms(store, concept)` (a list of `OwnerTerm`), `lookup(store,
+concept)` (the tool's answer), `stems(text)`, `compounds(text)`, `reference_words()` and `is_coined(compound,
+owner_terms, reference_words)`.
+
+### Whose rows
+
+Only rows whose speaker is `owner` (`memory.messages.speaker`, lina#324) are read: an agent's reply, a tool result or
+someone outside never makes a word the owner's, even in the same conversation. As in `memory_search`, row-level
+security decides which rows the agent may read, forgotten rows and blocks the host injected as user turns are left out,
+an edited message counts once as its newest version, and the owner's external messages are read only while
+`memory.external_messages.enabled` is on. A lookup reads his newest 5,000 messages that hold the concept's nouns
+(every noun of a Korean concept, every word of an English one). The answer never carries the text of a message: only
+terms, counts and uids.
+
+### Matching
+
+Matching goes through Kiwi's morphological analysis, so endings and particles do not hide a match:
+
+- a predicate is matched by its dictionary form: 봤어, 봤다 and 보고 are all 보다;
+- a run of nouns, written together or with spaces between, is matched by the nouns joined: 취향 목록을 and 취향목록에
+  are both the concept 취향 목록, and stay two terms in his own spelling (`취향 목록`, `취향목록`). The run may sit inside
+  a longer one (취향 목록 in 취향 목록 정리해줘);
+- the units of a concept must follow one another with only particles, endings and suffixes between;
+- a concept in dictionary form (`보다`, `만들다`) is read as a predicate when Kiwi offers that reading, though its first
+  reading may be another word (보다 the adverb).
+
+An English term (no Hangul) is found as whole words in his messages, case and spacing aside. The answer is then the
+Korean noun runs of those messages, by how many of them use each and then by how near they stand to the English words:
+an owner message "taste slot은 취향 목록이라고 부르자" makes `taste slot` answer 취향 목록. An English design doc is not
+his message, so it never adds a term.
+
+### Coined compounds
+
+`compounds(text)` gives the compound nouns of a text: two or more nouns written as one word (취향칸), or a single noun
+Kiwi does not know. `is_coined(compound, owner_terms, reference_words)` is true when the compound (spaces ignored) is
+neither one of his terms nor in the reference list. The reference list, `reference_words()`, is the nouns of Kiwi's
+built-in dictionary: its model's morpheme list, built from the Sejong corpus. It knows 일정표 and 오늘밤 but not every
+real compound (택배함 is not in it); such a word counts as coined until the owner uses it.
+
+### Kiwi
+
+Kiwi is `kiwipiepy` (with its model `kiwipiepy_model`, about 90 MB), installed by the opt-in extra `korean`. The
+first lookup on a machine without it installs the extra through PM (`pm.ensure_import`); when that cannot run the tool
+answers with an error naming `hermes pm install --extra korean`. Its license is Apache-2.0 (`kiwipiepy` and
+`kiwipiepy_model` on PyPI, the Kiwi repository's `LICENSE`), which may be combined with LINA's AGPL-3.0. The tests
+skip with a reason only where `kiwipiepy` is not installed; the test environment gets it with
+`source ./activate --test-extras all,korean`.

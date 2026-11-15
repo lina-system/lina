@@ -7,7 +7,8 @@ per finished turn by ``MemoryManager.sync_all``, builds one turn record (person,
 the identity registry, the turn's message uids, the route it arrived on, platform and timestamps) and hands it to
 the Honcho adapter (``plugins/memory/honcho``, which keeps its code and is driven only from here).
 Every other provider call (recall, tools, session lifecycle) goes to the Honcho adapter when Honcho is configured,
-except ``memory_search`` and ``memory_open`` (``search.py``), lina-memory's own tools over every source (lina#22).
+except ``memory_search`` and ``memory_open`` (``search.py``), lina-memory's own tools over every source (lina#22),
+``memory_link`` (``links.py``) and ``owner_terms`` (``terms.py``, the owner's own words for a concept, lina#379).
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from typing import Any, Optional
 
 from agent.memory_provider import MemoryProvider, RecallStatus, ctx_bound
 
-from . import grade, lcm, links, search, speaker
+from . import grade, lcm, links, search, speaker, terms
 from .identity import OWNER_HANDLE, IdentityRegistry, SourceKey
 from .policy import load_policy, signals_for_turn, turn_start_index
 from .record import TurnRecord, build_record, turn_rows
@@ -306,13 +307,15 @@ class LinaMemoryProvider(MemoryProvider):
 
     def get_tool_schemas(self) -> list[dict[str, Any]]:
         honcho = self._honcho.get_tool_schemas() if self._honcho.is_available() else []
-        return [*honcho, search.SEARCH_SCHEMA, search.OPEN_SCHEMA, links.LINK_SCHEMA]
+        return [*honcho, search.SEARCH_SCHEMA, search.OPEN_SCHEMA, links.LINK_SCHEMA, terms.TERMS_SCHEMA]
 
     def handle_tool_call(self, tool_name: str, args: dict[str, Any], **kwargs) -> str:
         if tool_name in search.TOOL_NAMES:
             return search.handle_tool_call(self._memory_search(), tool_name, args)
         if tool_name == links.LINK_TOOL:
             return links.handle_tool_call(self._registry, args)
+        if tool_name == terms.TERMS_TOOL:
+            return terms.handle_tool_call(self._message_store(), args)
         return self._honcho.handle_tool_call(tool_name, args, **kwargs)
 
     def on_turn_start(self, turn_number: int, message: str, **kwargs) -> None:

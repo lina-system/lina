@@ -832,6 +832,22 @@ class MessageStore:
             row = cur.fetchone()
         return None if row is None else PartRow(*row)
 
+    def owner_messages(self, pieces: Sequence[str], *, sources: Sequence[str], limit: int) -> list[tuple[str, str]]:
+        """The owner's own messages this agent may read (``speaker = 'owner'``, lina#324) whose text holds every one
+        of *pieces* (case-insensitive substrings), newest first, as ``(uid, text)``: the newest version of each, never
+        a forgotten one, and without the blocks the host injected as user turns (``_INJECTED_TURN_RE``)."""
+        matches = "".join(" AND content ILIKE %s" for _ in pieces)
+        sql = ("SELECT uid, content FROM ("
+               " SELECT DISTINCT ON (split_part(uid, '#', 1)) message_id, uid, content, forgotten_at"
+               " FROM memory.messages WHERE speaker = 'owner' AND source = ANY(%s)"
+               " ORDER BY split_part(uid, '#', 1), message_id DESC"
+               ") newest WHERE forgotten_at IS NULL AND content IS NOT NULL AND content !~ %s"
+               f"{matches} ORDER BY message_id DESC LIMIT %s")
+        args = [list(sources), _INJECTED_TURN_RE, *("%" + _like_escape(piece) + "%" for piece in pieces), int(limit)]
+        with self._cursor() as cur:
+            cur.execute(sql, args)
+            return [(uid, content) for uid, content in cur.fetchall()]
+
 
 _MEMORY_TERMS = 8
 # A row's substring share is divided by 1 + ln(1 + length / scale): a few hundred characters keep almost all of
