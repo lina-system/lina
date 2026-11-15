@@ -722,8 +722,11 @@ class MessageStore:
                 ordered = list(dict.fromkeys(int(i) for row in cur.fetchall() for i in row[0]))
             if not ordered:
                 return []
+            # The same readable rows as search_memory: an agent's own turns without the host-injected blocks.
             cur.execute(f"SELECT {_MEMORY_COLUMNS} FROM memory.messages WHERE message_id = ANY(%s)"
-                        " AND forgotten_at IS NULL AND content IS NOT NULL", (ordered,))
+                        " AND forgotten_at IS NULL AND content IS NOT NULL"
+                        " AND (source <> 'agent' OR (role IN ('user', 'assistant') AND content !~ %s))",
+                        (ordered, _INJECTED_TURN_RE))
             rows = {row.message_id: row for row in map(_memory_row, cur.fetchall())}
         return [rows[i] for i in ordered if i in rows][:int(limit)]
 

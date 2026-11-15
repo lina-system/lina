@@ -259,6 +259,28 @@ def test_short_newer_records_rank_above_a_huge_digest_with_every_term(seeded, me
     assert ("msg:agent:default:digest" in refs) is (not opener.startswith("[Depth-"))
 
 
+def test_the_vector_leg_leaves_out_an_injected_summary_turn_too(seeded, memory_store_sql):
+    from agent.embedding_client import EmbeddingClient, EmbeddingSettings
+
+    _insert(memory_store_sql, uid="agent:default:summary", source="agent", agent_id="default", scope="agent",
+            role="user", content=_digest("[Depth-3 Summary (d3, node 398)]\n## Summary\n"))
+    uid, message_id = memory_store_sql("SELECT uid, message_id FROM memory.messages WHERE uid = %s",
+                                       ("agent:default:summary",))[0]
+    vector = "[" + ",".join(["1"] + ["0"] * 1023) + "]"
+    chunk = memory_store_sql("INSERT INTO vec.chunks (source, agent_id, message_ids, text) VALUES"
+                             " ('agent', 'default', %s, 'x') RETURNING chunk_id", ([message_id],))[0][0]
+    memory_store_sql("INSERT INTO vec.embeddings (kind, item_id, agent_id, model, dim, embedding) VALUES"
+                     " ('chunk', %s, 'default', 'test-embed', 1024, %s::vector)", (chunk, vector))
+    answer = {"data": [{"index": 0, "embedding": [1.0] + [0.0] * 1023}]}
+    provider = next(p for p in seeded.agent._memory_manager.providers if p.name == "lina-memory")
+    provider._embedding = EmbeddingClient(EmbeddingSettings(base_url="http://embed.test/v1", model="test-embed"),
+                                          transport=httpx.MockTransport(lambda _r: httpx.Response(200, json=answer)))
+
+    found = _call(seeded.agent, "memory_search", query="flowers", sources=["agent"])
+
+    assert f"msg:{uid}" not in [hit["ref"] for hit in found["results"]]
+
+
 def test_a_persons_bracketed_message_and_a_plain_turn_are_still_found(seeded, memory_store_sql):
     bracketed = {"agent:default:b-1": "[urgent] hub move tonight, keep lina-hub up",
                  "agent:default:b-2": "[Depth chart] hub move order for the team",
