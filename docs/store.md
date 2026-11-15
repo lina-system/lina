@@ -9,6 +9,7 @@ All memory lives in one Postgres with pgvector, run in Docker and set up by LINA
 | `ctx` | context summaries |
 | `ltm` | long-term memory (the Honcho server's tables) |
 | `vec` | embeddings |
+| `brain` | the brain's pages, aliases, links, timelines, atoms, merges and proposals ([brain.md](brain.md)) |
 
 ## Installing
 

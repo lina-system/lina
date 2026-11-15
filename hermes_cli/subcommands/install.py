@@ -26,7 +26,9 @@ def _cmd_install(args) -> None:
 
 def build_install_parser(subparsers) -> None:
     """Attach the ``install`` subcommand, and ``store``, ``services``, ``models``, ``omo``, ``runners``, ``worker`` (what install
-    sets up), ``devices``, ``work`` and the operations tools (``heart``, ``undo``, ``learned``), to ``subparsers``."""
+    sets up), ``devices``, ``work`` and the operations tools (``heart``, ``brain``, ``undo``, ``learned``), to
+    ``subparsers``."""
+    from hermes_cli.subcommands.brain import build_brain_parser
     from hermes_cli.subcommands.devices import build_devices_parser
     from hermes_cli.subcommands.heart import build_heart_parser
     from hermes_cli.subcommands.learned import build_learned_parser
@@ -70,5 +72,6 @@ def build_install_parser(subparsers) -> None:
     build_devices_parser(subparsers)
     build_work_parser(subparsers)
     build_heart_parser(subparsers)
+    build_brain_parser(subparsers)
     build_undo_parser(subparsers)
     build_learned_parser(subparsers)
