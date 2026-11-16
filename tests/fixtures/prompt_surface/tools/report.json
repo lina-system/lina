@@ -1,0 +1,42 @@
+{
+  "description": "Write a long report, or a new version of one, as a live page. Use it when you have more to tell than about three short chat messages: a long result, findings, a plan, a review. The full text (markdown: headings, tables, lists, links, images by URL) goes into the report; the chat gets one line. Returns the report's id, its page address and `reference`: send `reference` as its own line in your message, after at most one short sentence, and never paste the report's text into the chat. To change a report, call again with its id: the new text becomes the current version and the earlier versions stay readable.",
+  "name": "report",
+  "parameters": {
+    "properties": {
+      "body": {
+        "description": "The whole report, in markdown.",
+        "type": "string"
+      },
+      "card": {
+        "description": "The work card the report belongs to, if any.",
+        "type": "string"
+      },
+      "goal": {
+        "description": "The goal the report belongs to, if any.",
+        "type": "string"
+      },
+      "id": {
+        "description": "A report's id (rep_...) to add a new version to it. Omit to write a new report.",
+        "type": "string"
+      },
+      "private": {
+        "description": "Serve it only to the owner's own session. Set when it is built from the owner's private material.",
+        "type": "boolean"
+      },
+      "summary": {
+        "description": "One line (at most 280 characters) that says what the report tells: the line the chat shows.",
+        "type": "string"
+      },
+      "title": {
+        "description": "The report's title.",
+        "type": "string"
+      }
+    },
+    "required": [
+      "title",
+      "summary",
+      "body"
+    ],
+    "type": "object"
+  }
+}
