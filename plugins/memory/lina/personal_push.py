@@ -138,6 +138,9 @@ def _refspec_sources(refspecs: list[str]) -> list[str]:
     for spec in specs:
         if spec == "tag":
             spec = f"refs/tags/{next(specs, '')}"
+        if spec.lstrip("+") == ":":
+            sources.append("--branches")  # every branch the remote already has, as push.default=matching
+            continue
         source = spec.lstrip("+").split(":", 1)[0]
         if "*" in source:
             raise Undetermined(f"the refspec {spec} is a pattern")

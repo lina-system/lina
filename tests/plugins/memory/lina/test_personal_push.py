@@ -103,6 +103,13 @@ def _documents_branch(repo: Path) -> Path:
     return document
 
 
+def _commit_on(repo: Path, branch: str, name: str, text: str) -> Path:
+    _git(repo, "checkout", "-q", branch)
+    path = _commit(repo, name, text)
+    _git(repo, "checkout", "-q", "main")
+    return path
+
+
 def test_a_push_by_the_remote_s_push_refspec_of_a_branch_with_a_personal_document_is_refused(repo):
     _mark(_documents_branch(repo))
     _git(repo, "config", "remote.origin.push", "documents:documents")
@@ -130,6 +137,24 @@ def test_a_matching_push_default_inspects_every_branch(repo):
     assert _push(repo, "git -c push.default=matching push origin")["action"] == "block"
     _git(repo, "config", "push.default", "matching")
     assert _push(repo, "git push origin")["action"] == "block"
+
+
+def test_a_colon_refspec_inspects_every_branch_like_a_matching_push(repo):
+    _documents_branch(repo)
+    _git(repo, "push", "-q", "origin", "documents")
+    _mark(_commit_on(repo, "documents", "private/more.txt", "Synthetic second contract page\n"))
+
+    for command in ("git push origin :", "git push origin +:"):
+        assert _push(repo, command)["action"] == "block"
+    _git(repo, "config", "remote.origin.push", ":")
+    assert _push(repo, "git push origin")["action"] == "block"
+
+
+def test_a_colon_refspec_with_clean_branches_is_allowed(repo, tmp_path):
+    _mark(tmp_path / "elsewhere" / "id-card.pdf")
+    _commit(repo, "docs/guide.md", "How to build the synthetic project\n")
+
+    assert _push(repo, "git push origin :") is None
 
 
 def test_a_push_default_that_cannot_be_resolved_is_refused(repo, tmp_path):
