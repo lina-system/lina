@@ -138,6 +138,7 @@ Hermes Agent upstream changes are not listed here; see the upstream history on t
 - A kanban goal-mode card whose judge says WAIT is parked (`scheduled`) on the event it waits for, recorded on the card, and the dispatcher wakes it once when that card is done, that review has its result, that PR's required checks finish or that time passes (`kanban schedule|block --wait-for` record the same by hand); a spent turn budget, runtime limit or agent iteration budget hands off and returns the card to ready without counting toward `max_retries`, and `kanban.planned_stop_limit` (default 5) such stops in a row block the card for a person.
 - `lina worker status <OG-ID>` shows each batch member and its completion/notice summary (also as JSON), and `cancel <OG-ID> --why ...` cancels only unfinished members through the existing task path (lina#431).
 - `lina store reembed` sends an embedding request again when it times out, after the same pause as for a 429 and counted in the same `embedding.max_retries` (lina#740); before, one request past `embedding.timeout` ended the whole run.
+- A resumed or forked session recovers its frozen plugin-section bytes (the self note and the Korean rule section) from the persisted prompt: the recovery required the start-date line right after the section container, but the active-profile line sits between them, so it always came back empty.
 
 ### Added
 
