@@ -46,6 +46,14 @@ def test_every_profile_resolves_one_shared_file(install):
     assert paths == {install.root / "shared"}
 
 
+def test_loading_creates_no_shared_directory_and_the_first_write_does(install):
+    install("a")
+    store = _store()
+    assert not (install.root / "shared").exists()
+    assert _call(store, "shared", {"action": "add", "content": "Prefers short answers"})["success"]
+    assert (install.root / "shared" / "OWNER.md").is_file()
+
+
 @pytest.mark.parametrize("repeat, kind", [
     ("prefers  SHORT answers.", "exact"),
     ("Prefers shorter answers", "near"),

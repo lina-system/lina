@@ -251,9 +251,10 @@ class MemoryStore:
 
         for target in ("shared", "memory", "user"):
             path = self._path_for(target)
-            from hermes_constants import mkdir_under_hermes_home
+            if target != "shared":  # a read creates nothing under the install root; the first write does
+                from hermes_constants import mkdir_under_hermes_home
 
-            mkdir_under_hermes_home(path.parent)
+                mkdir_under_hermes_home(path.parent)
             # Deduplicate (order-preserving, first occurrence wins).
             entries = list(dict.fromkeys(self._read_file(path)))
             self._set_entries(target, entries)
