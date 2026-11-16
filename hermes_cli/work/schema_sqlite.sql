@@ -169,6 +169,24 @@ CREATE TABLE IF NOT EXISTS link (
 CREATE UNIQUE INDEX IF NOT EXISTS link_target
     ON link (coalesce(goal_id, ''), coalesce(todo_id, ''), coalesce(run_id, ''), kind, target);
 
+-- A run's result files tied to its to-do and goal (migration 0024, lina#527): a draft until the owner makes it final.
+CREATE TABLE IF NOT EXISTS artifact (
+    id INTEGER PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES run (id),
+    todo_id TEXT REFERENCES todo (id),
+    goal_id TEXT REFERENCES goal (id),
+    repo TEXT,
+    path TEXT NOT NULL,
+    commit_sha TEXT,
+    kind TEXT NOT NULL DEFAULT 'draft' CHECK (kind IN ('draft', 'final')),
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    agent_id TEXT NOT NULL REFERENCES actor (id),
+    UNIQUE (run_id, path)
+);
+CREATE INDEX IF NOT EXISTS artifact_todo_id ON artifact (todo_id);
+CREATE INDEX IF NOT EXISTS artifact_goal_id ON artifact (goal_id);
+CREATE INDEX IF NOT EXISTS artifact_path ON artifact (path);
+
 -- One row per ledger line, in line order: data = {"op", "ledger": the line verbatim, "meta"?}. Run events
 -- (run_id set) carry data = {"op", ...} without "ledger": they are hand-off history, not ledger lines.
 CREATE TABLE IF NOT EXISTS event (

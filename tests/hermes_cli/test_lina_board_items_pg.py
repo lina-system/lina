@@ -8,14 +8,13 @@ import json
 
 import pytest
 
-from hermes_cli import lina_board_items, lina_deps, store_migrations
+from hermes_cli import lina_board_items, lina_deps
 from tests.hermes_cli import work_pg_fixture
 from tests.hermes_cli._work_env import WorkEnv
 
 pytestmark = pytest.mark.platforms("posix")
 
 pg_db = work_pg_fixture.pg_db
-WORK_MIGRATION = next(p for p in store_migrations.migration_files() if p.name.endswith("_work.sql"))
 
 
 class Counted:
@@ -29,9 +28,7 @@ class Counted:
 
 @pytest.fixture
 def work(tmp_path, monkeypatch, pg_db):
-    version = WORK_MIGRATION.name.split("_", 1)[0]
-    pg_db.run_sql("DROP SCHEMA IF EXISTS work CASCADE; DO $$ BEGIN IF to_regclass('memory.schema_migrations') "
-                  f"IS NOT NULL THEN DELETE FROM memory.schema_migrations WHERE version = '{version}'; END IF; END $$")
+    work_pg_fixture.reset_work_schema(pg_db)
     env = WorkEnv(tmp_path, monkeypatch, extra=f"  store: {{backend: postgres, psql: {json.dumps(pg_db.argv)}}}\n")
     monkeypatch.setattr(lina_deps, "lina_root", lambda: env.root)
     env.goal_and_todos(todos=3)

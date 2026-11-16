@@ -313,6 +313,22 @@ def _card(sp) -> None:
     q.set_defaults(fn=_fn("cards", "cmd_card_show"))
 
 
+def _artifact(sp) -> None:
+    p = sp.add_parser("artifact", help="result records of runs: drafts until the owner makes them final (lina#527)")
+    acts = p.add_subparsers(dest="artifact_action", required=True)
+    q = acts.add_parser("list", help="the results of a to-do (T..), a goal (G..) or a run")
+    q.add_argument("id")
+    q.add_argument("--json", action="store_true")
+    q.set_defaults(fn=_fn("artifacts", "cmd_list"))
+    q = acts.add_parser("find", help="the results at a Desk path or under a Desk folder, with their runs, to-dos and goals")
+    q.add_argument("path")
+    q.add_argument("--json", action="store_true")
+    q.set_defaults(fn=_fn("artifacts", "cmd_find"))
+    q = acts.add_parser("final", help="the owner accepts a draft result: it becomes final")
+    q.add_argument("id", type=int)
+    q.set_defaults(fn=_fn("artifacts", "cmd_final"))
+
+
 def _probe(sp) -> None:
     from hermes_cli.work.probe import PROBES, usage
     p = sp.add_parser("probe", help="read-only check for --check: exit 0 holds, 1 not yet, 2 cannot tell",
@@ -323,5 +339,6 @@ def _probe(sp) -> None:
 
 
 def build(sp) -> None:
-    for part in (_sprint, _add, _item_writes, _comments, _edit, _reads, _moves, _run, _card, _probe, _delivery):
+    for part in (_sprint, _add, _item_writes, _comments, _edit, _reads, _moves, _run, _card, _artifact, _probe,
+                 _delivery):
         part(sp)
