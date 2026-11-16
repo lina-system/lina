@@ -15,11 +15,11 @@ from dataclasses import dataclass, replace
 from typing import Any, Optional
 
 REPORT_ID = re.compile(r"rep_[0-9a-f]{12}")
-PAGE_PATH = "/api/lina/reports/{id}/page"
+PAGE_PATH = "/reports/{id}/page"  # not under /api: a browser is sent to sign in, not given a JSON 401
 TITLE_MAX = 200
 SUMMARY_MAX = 280
 
-_COLUMNS = ("r.report_id, r.agent_id, r.title, r.summary, r.card, r.goal, r.private, v.version, v.body, "
+_COLUMNS = ("r.report_id, r.agent_id, r.title, r.summary, r.card, r.goal, r.private, r.version, v.body, "
             "extract(epoch FROM r.created_at)::bigint, extract(epoch FROM r.updated_at)::bigint, "
             "extract(epoch FROM v.created_at)::bigint")
 
@@ -48,7 +48,7 @@ class Report:
 
 
 def page_path(report_id: str) -> str:
-    """The report page's path on the client API server (behind the owner's sign-in)."""
+    """The report page's path on the dashboard server (behind the owner's sign-in, which a browser is sent to)."""
     return PAGE_PATH.format(id=report_id)
 
 

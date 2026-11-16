@@ -62,10 +62,11 @@ def test_a_report_is_served_with_its_newest_body_and_an_earlier_version_on_reque
     assert (current["body"], current["summary"], current["version"], current["shownVersion"]) == (
         "Second body.", "Costs fell 14% this week.", 2, 2)
     assert (current["agent"], current["card"], current["goal"]) == ("alpha", "t_one", "g_one")
-    assert current["page"] == f"/api/lina/reports/{first.report_id}/page"
+    assert current["page"] == f"/reports/{first.report_id}/page"
     assert [v["version"] for v in current["versions"]] == [1, 2]
     old = _valid("Report", client.get(f"/api/lina/reports/{first.report_id}?version=1").json())
-    assert (old["body"], old["summary"], old["shownVersion"]) == ("First body.", "Costs fell 12% this week.", 1)
+    assert (old["body"], old["summary"], old["version"], old["shownVersion"]) == (
+        "First body.", "Costs fell 12% this week.", 2, 1)
     assert client.get(f"/api/lina/reports/{first.report_id}?version=3").status_code == 404
     assert client.get("/api/lina/reports/rep_000000000000").status_code == 404
 
@@ -99,18 +100,23 @@ def test_a_private_report_is_served_to_the_owner_s_session_only():
     assert [r["id"] for r in client.get("/api/lina/reports?card=t_one").json()["reports"]] == [private.report_id]
     other["principal"] = True
     assert client.get(f"/api/lina/reports/{private.report_id}").status_code == 404
-    assert client.get(f"/api/lina/reports/{private.report_id}/page").status_code == 404
+    assert client.get(f"/reports/{private.report_id}/page").status_code == 404
     assert client.get("/api/lina/reports?card=t_one").json() == {"reports": []}
 
 
-def test_the_page_is_plain_html_behind_the_sign_in_and_shows_untrusted_markdown_safely(client):
+def test_the_page_is_plain_html_behind_the_sign_in_and_shows_untrusted_markdown_safely(client, monkeypatch):
     report = _write(title="Disk <b>review</b>", body=(
         "## Disks\n\n| disk | used |\n| --- | --- |\n| a | 91% |\n\n<script>alert(1)</script>\n\n"
         "[bad](javascript:alert(1)) [good](https://example.org/a) ![img](data:text/html,x)\n"))
-    path = f"/api/lina/reports/{report.report_id}/page"
+    path = f"/reports/{report.report_id}/page"
 
     from hermes_cli import web_server
-    assert TestClient(web_server.app).get(path).status_code == 401
+    assert TestClient(web_server.app).get(path).status_code == 401  # a loopback listener: the session token
+    monkeypatch.setattr(web_server.app.state, "auth_required", True, raising=False)
+    signed_out = TestClient(web_server.app).get(path, follow_redirects=False)  # behind the gate: to the sign-in
+    assert signed_out.status_code == 302
+    assert signed_out.headers["location"] == f"/login?next=%2Freports%2F{report.report_id}%2Fpage"
+    monkeypatch.setattr(web_server.app.state, "auth_required", False, raising=False)
     page = client.get(path)
     assert page.status_code == 200 and page.headers["content-type"].startswith("text/html")
     assert "script-src" not in page.headers["content-security-policy"]

@@ -45,7 +45,7 @@ def test_one_call_writes_a_report_and_another_with_its_id_adds_a_version(lina_ro
                   "card": "t_abc"})
 
     assert made["success"] and made["version"] == 1 and not made["private"]
-    assert made["page"] == f"{PUBLIC}/api/lina/reports/{made['id']}/page"
+    assert made["page"] == f"{PUBLIC}/reports/{made['id']}/page"
     assert references(made["reference"]) == [(made["id"], made["page"], "Costs fell 12% this week.")]
 
     again = _call({"id": made["id"], "title": "Weekly costs", "summary": "Costs fell 14% this week.",

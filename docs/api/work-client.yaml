@@ -201,7 +201,7 @@ paths:
           description: The store cannot be read.
   /reports/{id}/page:
     servers:
-      - url: /api/lina
+      - url: /
     get:
       operationId: getReportPage
       summary: >
@@ -217,8 +217,8 @@ paths:
             text/html:
               schema:
                 type: string
-        "401":
-          description: Not signed in (the dashboard's auth gate).
+        "302":
+          description: Not signed in; to the dashboard sign-in, which returns here (the dashboard's auth gate).
         "404":
           description: No such report, or a private report and the request is not the owner's session.
 components:
@@ -800,7 +800,7 @@ components:
           type: integer
         page:
           type: string
-          description: The page's path on this server (GET /api/lina/reports/{id}/page).
+          description: The page's path on this server (GET /reports/{id}/page).
     ReportList:
       type: object
       additionalProperties: false
@@ -870,7 +870,7 @@ components:
       description: >
         A chat message's reference to a report: a line of its own, `[[report:<id>|<page address>|<summary>]]`,
         that the `report` tool returns (gateway/report_reference.py). Fields: `id` the report's id, `page` the page
-        address (the dashboard's public URL and /api/lina/reports/{id}/page), `summary` its one line. A client with
+        address (the dashboard's public URL and /reports/{id}/page), `summary` its one line. A client with
         report cards shows a card for the line and reads GET /reports/{id}; a platform without cards (Telegram)
         sends the summary line and the page link instead. The report's body is never in the message.
     AnswerResult:

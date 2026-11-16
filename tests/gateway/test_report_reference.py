@@ -21,7 +21,7 @@ from hermes_cli import lina_deps
 from plugins.platforms.telegram.adapter import TelegramAdapter
 from tools.registry import registry
 
-PAGE = "https://hub.example.ts.net/api/lina/reports/rep_0123456789ab/page"
+PAGE = "https://hub.example.ts.net/reports/rep_0123456789ab/page"
 
 
 def test_a_reference_line_reads_back_and_renders_as_the_summary_and_the_link():

@@ -45,7 +45,7 @@ def test_a_report_keeps_every_version_readable_and_its_newest_is_the_body(alpha)
     assert (current.agent, current.card, current.goal) == ("alpha", "t_card1", "g_goal1")
     assert current.updated_at >= current.created_at
     old = reports.get(alpha, first.report_id, version=1)
-    assert (old.version, old.title, old.summary) == (1, "Disk check", "Two disks are near full; one needs a swap.")
+    assert (old.version, old.title, old.summary) == (2, "Disk check", "Two disks are near full; one needs a swap.")  # version: the report's newest
     assert "| a | 91% |" in old.body
     assert [(v["version"], v["title"]) for v in reports.versions(alpha, first.report_id)] == [
         (1, "Disk check"), (2, "Disk check (done)")]
