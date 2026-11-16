@@ -1970,7 +1970,7 @@ components:
       additionalProperties: false
       required: [id, kind, parent, title, agent, addedBy, mine, state, reason, stateSince, lastActivityAt,
                  createdAt, closedAt, due, doneCondition, area, projects, todos, runCount, commentCount,
-                 why, basis, children, comments, runs, links, workCards, decision, ownerDone]
+                 why, basis, children, comments, runs, links, workCards, decision, ownerDone, artifacts]
       properties:
         id:
           type: string
@@ -2076,6 +2076,42 @@ components:
           allOf:
             - $ref: "#/components/schemas/OwnerDone"
           nullable: true
+        artifacts:
+          type: array
+          description: >
+            The result records of a to-do (its runs' files) or of a goal (every result tied to it), the
+            `Artifact` shape of work-client.yaml (lina#527).
+          items:
+            $ref: "#/components/schemas/Artifact"
+    Artifact:
+      description: The same shape as `Artifact` in work-client.yaml.
+      type: object
+      additionalProperties: false
+      required: [id, run, task, goal, repo, path, commit, kind, createdAt]
+      properties:
+        id:
+          type: integer
+        run:
+          type: string
+        task:
+          type: string
+          nullable: true
+        goal:
+          type: string
+          nullable: true
+        repo:
+          type: string
+          nullable: true
+        path:
+          type: string
+        commit:
+          type: string
+          nullable: true
+        kind:
+          type: string
+          enum: [draft, final]
+        createdAt:
+          type: integer
     ChangeEvent:
       type: object
       additionalProperties: false

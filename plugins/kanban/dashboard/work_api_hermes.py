@@ -67,6 +67,12 @@ def _goal_title(titles: Optional[GoalTitles], board: Optional[str]) -> Callable[
     return lambda card_id: None if titles is None else titles.get(hermes.raw_id(card_id), None, board)
 
 
+def _found(titles: Optional[GoalTitles], board: Optional[str]):
+    """A served card's and a run's result records (lina#527), the card linked as for ``_goal_title``."""
+    from plugins.kanban.dashboard.work_api import NOTHING_FOUND
+    return NOTHING_FOUND if titles is None else titles.found(None, board, card_id=hermes.raw_id)
+
+
 class _Board:
     """One pass's cards: every listed card's facts, which of them are work and goal cards, and which are list rows
     alone."""
@@ -89,11 +95,11 @@ class _Board:
                     if hermes.hermes_id(child) in self.facts:
                         self.goals.setdefault(hermes.hermes_id(child), []).append(i)
 
-    def goal(self, goal_id: str, now: int, title: Callable[[str], Optional[str]]) -> Optional[dict]:
+    def goal(self, goal_id: str, now: int, title: Callable[[str], Optional[str]], found) -> Optional[dict]:
         from plugins.kanban.dashboard.work_api import goal_view
         if goal_id not in self.goals:
             return None
-        view = goal_view(self.facts[goal_id], [self.facts[i] for i in self.goals[goal_id]], now, title)
+        view = goal_view(self.facts[goal_id], [self.facts[i] for i in self.goals[goal_id]], now, title, found)
         return _read_only(dict(view, workCards=[_read_only(c, c["id"] in self.listed) for c in view["workCards"]]),
                           goal_id in self.listed)
 
@@ -101,7 +107,8 @@ class _Board:
 def goals(shows: list[dict], now: int, titles: Optional[GoalTitles] = None,
           src_board: Optional[str] = None) -> dict[str, list]:
     board, title = _Board(shows), _goal_title(titles, src_board)
-    return {"goals": [board.goal(i, now, title) for i in board.goals]}
+    found = _found(titles, src_board)
+    return {"goals": [board.goal(i, now, title, found) for i in board.goals]}
 
 
 def cards(shows: list[dict], now: int, agent: Optional[str], state: Optional[str], titles: Optional[GoalTitles] = None,
@@ -128,13 +135,15 @@ def card(shows: list[dict], card_id: str, now: int, titles: Optional[GoalTitles]
     show = next((s for s in shows if str(s["task"]["id"]) == raw), None)
     if show is None:
         return None
-    detail = card_detail(facts(show), now, _goal_title(titles, src_board)(hermes.hermes_id(raw)))
+    detail = card_detail(facts(show), now, _goal_title(titles, src_board)(hermes.hermes_id(raw)),
+                         _found(titles, src_board))
     return _read_only(detail, show.get("detail") is False)
 
 
 def goal(shows: list[dict], goal_id: str, now: int, titles: Optional[GoalTitles] = None,
          src_board: Optional[str] = None) -> Optional[dict]:
-    return _Board(shows).goal(hermes.hermes_id(hermes.raw_id(goal_id)), now, _goal_title(titles, src_board))
+    return _Board(shows).goal(hermes.hermes_id(hermes.raw_id(goal_id)), now, _goal_title(titles, src_board),
+                              _found(titles, src_board))
 
 
 def add(out: dict, board: Optional[str], read: Callable[[list[dict], Optional[str]], dict[str, list]]) -> dict:

@@ -52,6 +52,11 @@ the policy `lina_agent_rows`. A session says which agent it acts for with
 `SET lina.agent_id = '<agent>'`; it then sees and writes only that agent's rows, and with no agent
 set it sees none. The superuser `lina` is not limited by the policy.
 
+The work record's schema `work` is outside the event trigger: each migration that creates a `work` table with
+`agent_id` applies the same policy itself through `public.lina_apply_agent_rls` and grants it to `lina_app`
+(`0004_work.sql` for the record's tables, `0024_work_artifact.sql` for `work.artifact`, a run's result records,
+lina#527).
+
 The `honcho` login is a trusted cross-agent server, not an agent principal. Migration
 `0002_honcho_messages.sql` adds role-specific SELECT and INSERT policies on `memory.messages`:
 it can read across agents and insert rows with a non-null `agent_id`, including from its

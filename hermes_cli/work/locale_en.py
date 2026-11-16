@@ -756,4 +756,7 @@ MESSAGES = {
     "검토 필요": "Review needed",
     "내 할 일": "My to-do",
     "[작업 카드] {card} {title} · 할 일 {ids}": "[Work card] {card} {title} · to-dos {ids}",
+    "결과 기록 없음": "no results",
+    "결과 기록이 없다: #{id}": "No such result: #{id}",
+    "최종으로 정함: {line}": "Marked final: {line}",
 }

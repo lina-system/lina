@@ -17,6 +17,8 @@ from pathlib import Path
 from typing import Callable
 
 from hermes_cli.lina_board import API_VERSION, _root, _source
+from hermes_cli.work.artifacts import COLUMNS as ARTIFACT_COLUMNS
+from hermes_cli.work.artifacts import served as served_artifact
 from hermes_cli.work.kinds import TODO, kind_now
 
 KINDS = {"목표": "goal", TODO: "todo"}
@@ -60,6 +62,7 @@ _STORE_READS: tuple[tuple[str, tuple[str, ...], str, str], ...] = (
      ""),
     ("goal_events", ("goal_id", "at"),
      "SELECT goal_id, max(at) AS at FROM event WHERE goal_id IS NOT NULL GROUP BY goal_id", ""),
+    ("artifacts", ARTIFACT_COLUMNS, "SELECT {cols} FROM artifact", "id"),
 )
 
 
@@ -85,6 +88,7 @@ def _store(db) -> dict:
         "todo": {r["id"]: r for r in got["todo"]}, "goal": {r["id"]: r for r in got["goal"]}, "runs": got["runs"],
         "run_todo": got["run_todo"], "waits": got["waits"], "asks": got["asks"],
         "goal_events": {r["goal_id"]: r["at"] for r in got["goal_events"]},
+        "artifacts": [served_artifact(r[c] for c in ARTIFACT_COLUMNS) for r in got["artifacts"]],
     }
 
 
@@ -268,6 +272,7 @@ class _Record:
             links=[row for row in (_link(spec) for spec in r.get("links") or []) if row],
             workCards=list(dict.fromkeys(card for x in [r] + [self.recs[k] for k in kids] for card in _cards(x))),
             decision=_decision(r), ownerDone=_owner_done(r),
+            artifacts=[a for a in self.store["artifacts"] if a["goal" if r["kind"] == "목표" else "task"] == i],
         )
 
 
