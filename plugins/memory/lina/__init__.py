@@ -8,7 +8,10 @@ the identity registry, the turn's message uids, the route it arrived on, platfor
 the Honcho adapter (``plugins/memory/honcho``, which keeps its code and is driven only from here).
 Every other provider call (recall, tools, session lifecycle) goes to the Honcho adapter when Honcho is configured,
 except ``memory_search`` and ``memory_open`` (``search.py``), lina-memory's own tools over every source (lina#22),
-``memory_link`` (``links.py``) and ``owner_terms`` (``terms.py``, the owner's own words for a concept, lina#379).
+``memory_link`` (``links.py``), ``owner_terms`` (``terms.py``, the owner's own words for a concept, lina#379) and
+``mark_personal`` (``personal.py``, lina#308: a personal document of the job; its ``pre_tool_call`` hook marks
+documents from marker folders and refuses public posts and third-party uploads of them; the job's work folders are
+deleted at session end).
 The person card comes from the session person's brain page, and Honcho's conclusions about that person are written
 to the page at session end (``hermes_cli/brain/people.py``, lina#445).
 
@@ -24,7 +27,7 @@ from typing import Any, Optional
 
 from agent.memory_provider import MemoryProvider, RecallStatus, ctx_bound
 
-from . import grade, lcm, links, search, speaker, terms
+from . import grade, lcm, links, personal, search, speaker, terms
 from .identity import OWNER_HANDLE, IdentityRegistry, SourceKey
 from .policy import load_policy, signals_for_turn, turn_start_index
 from .record import TurnRecord, build_record, turn_rows
@@ -384,7 +387,7 @@ class LinaMemoryProvider(MemoryProvider):
 
     def get_tool_schemas(self) -> list[dict[str, Any]]:
         honcho = self._honcho.get_tool_schemas() if self._honcho.is_available() else []
-        return [*honcho, *search.SCHEMAS, links.LINK_SCHEMA, terms.TERMS_SCHEMA]
+        return [*honcho, *search.SCHEMAS, links.LINK_SCHEMA, terms.TERMS_SCHEMA, personal.MARK_SCHEMA]
 
     def handle_tool_call(self, tool_name: str, args: dict[str, Any], **kwargs) -> str:
         if tool_name in search.TOOL_NAMES:
@@ -393,6 +396,8 @@ class LinaMemoryProvider(MemoryProvider):
             return links.handle_tool_call(self._registry, args)
         if tool_name == terms.TERMS_TOOL:
             return terms.handle_tool_call(self._message_store(), args)
+        if tool_name == personal.MARK_TOOL:
+            return personal.handle_mark(args, self._session_id)
         return self._honcho.handle_tool_call(tool_name, args, **kwargs)
 
     def on_turn_start(self, turn_number: int, message: str, **kwargs) -> None:
@@ -404,15 +409,38 @@ class LinaMemoryProvider(MemoryProvider):
 
     def on_session_end(self, messages: list[dict[str, Any]]) -> None:
         self._drain()
+        self._end_personal_job()
         if self._honcho_on:
             self._honcho.on_session_end(messages)
             self._submit(self._pages_from_honcho)
             self._drain()
 
+    def _end_personal_job(self) -> None:
+        """The session's job is over: its work folders on this device are deleted (lina#308)."""
+        if not self._session_id:
+            return
+        from agent import personal_work
+        try:
+            marks = personal_work.marks_for_home()
+            personal_work.end_job(marks, marks.job_of(self._session_id), "session_end")
+        except Exception as exc:  # health: allow BLE001 -- session end goes on; the folders stay for the next end
+            logger.warning("lina-memory could not end the personal job of session %s: %s", self._session_id, exc)
+
     def on_session_switch(self, new_session_id: str, **kwargs) -> None:
+        if kwargs.get("parent_session_id") and not kwargs.get("reset"):
+            self._continue_personal_job(str(kwargs["parent_session_id"]), new_session_id)
         self._claim(new_session_id)
         if self._honcho_on:
             self._honcho.on_session_switch(new_session_id, **kwargs)
+
+    @staticmethod
+    def _continue_personal_job(parent_session_id: str, session_id: str) -> None:
+        """A compaction's child session continues its parent's job, marks and work folders included."""
+        from agent import personal_work
+        try:
+            personal_work.marks_for_home().continue_job(parent_session_id, session_id)
+        except Exception as exc:  # health: allow BLE001 -- the switch goes on; the child's rows are then unmarked
+            logger.warning("lina-memory could not carry the personal job into session %s: %s", session_id, exc)
 
     def on_pre_compress(self, messages: list[dict[str, Any]]) -> str:
         return self._honcho.on_pre_compress(messages) if self._honcho_on else ""
@@ -456,3 +484,4 @@ class LinaMemoryProvider(MemoryProvider):
 
 def register(ctx) -> None:
     ctx.register_memory_provider(LinaMemoryProvider())
+    ctx.register_hook("pre_tool_call", personal.pre_tool_call)

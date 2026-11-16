@@ -231,6 +231,27 @@ handle source fails the import before anything is written:
 messenger_author:kakao:k-1  messenger_author:line:u-5  gateway_user:telegram:1001
 ```
 
+## Personal documents
+
+The owner's personal source documents (contracts, tax returns, ID cards, form scans) may go to workers, the owner's
+own devices and the model services in use (lina#308). What holds for a document marked personal:
+
+- **Marking.** The agent calls `mark_personal` with the document's path when the owner says a document is personal; a
+  document named by a tool call (`read_file`, a terminal command) that sits under a folder holding `.lina-personal`
+  is marked by itself before the tool runs. The mark is stored with the job ([store.md](store.md#personal-documents)),
+  and a compaction's child session continues the job.
+- **Masked numbers.** From the mark on, the job's rows are stored with ID and account numbers masked to their last
+  four characters, in the transcript and in `memory.messages` alike.
+- **Derived files.** `mark_personal` answers with the job's `work_dir` and `temp_dir`; extracts, page images and
+  copies go there, and both are deleted when the session ends, with the count in the job's run record.
+- **No public post, no third-party upload.** lina-memory's `pre_tool_call` hook refuses a call that would carry the
+  document, a derived file, a line of its text or an ID number to a public place (`git push`; `gh` issue, pull
+  request, gist and release writes and `gh api` writes; GitHub, GitLab and posting connectors' write tools) or to a
+  third-party service (`curl`/`wget` uploads such as web OCR or converters; `read_file` skips hosted OCR for it).
+  The message says why, and the refusal is in the run record. `delegate_task`, model calls and the owner's own
+  devices and chats are not refused. With the store unreachable, such a post is refused because the marks cannot be
+  checked.
+
 ## Measuring the cache
 
 `lina memory cache-report --usage <usage.jsonl> [--from ISO --to ISO] [--conversation <id> ...] [--baseline <pct> ...]

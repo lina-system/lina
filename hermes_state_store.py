@@ -440,8 +440,9 @@ class MessageStore:
     def put_text(self, *, message_uid: str, values: Sequence[Any], role: Optional[str], tool_name: Optional[str],
                  tool_call_id: Optional[str], timestamp: Optional[float], session_id: Optional[str],
                  seq_in_session: Optional[int], meta: dict[str, Any]) -> str:
-        """The uid of this message's text version, writing it when it is new (inside ``write()``)."""
-        values = tuple(values)
+        """The uid of this message's text version, writing it when it is new (inside ``write()``). The text of a
+        job marked personal is stored with its ID and account numbers masked (lina#308)."""
+        values = self._personal_masked(tuple(values), session_id)
         digest = payload_digest(values)
         base = self.base_uid(message_uid)
         versioned = f"{base}#{digest[:16]}"
@@ -480,6 +481,18 @@ class MessageStore:
         self._remember(TextRow(uid, values))
         return uid
 
+    def _personal_masked(self, value: Any, session_id: Optional[str]) -> Any:
+        """*value* with its ID and account numbers masked when *session_id*'s job carries a personal-document mark.
+        The job is looked up only for a text that has such a number, so other rows cost no query."""
+        from agent import personal_numbers
+        if not session_id or not personal_numbers.has_number(value):
+            return value
+        from hermes_state_personal import session_is_marked
+        with self._writer_cursor() as cur:
+            if not session_is_marked(cur, session_id):
+                return value
+        return personal_numbers.mask_value(value)[0]
+
     def texts(self, uids: Iterable[Optional[str]]) -> dict[str, TextRow]:
         """Text rows by uid; a uid with no row is left out."""
         wanted = list(dict.fromkeys(u for u in uids if u))
@@ -517,11 +530,12 @@ class MessageStore:
             names = [d.name for d in cur.description]
             return [dict(zip(names, row)) for row in cur.fetchall()]
 
-    def put_parts(self, uid: str, parts: Sequence[dict[str, Any]]) -> None:
+    def put_parts(self, uid: str, parts: Sequence[dict[str, Any]], *, session_id: Optional[str] = None) -> None:
         """The gateway's notes on the message *uid* as its parts (``memory.message_parts``, lina#324), each once: inside
-        ``write()``, with the message's own row."""
+        ``write()``, with the message's own row, masked like it when *session_id*'s job is marked personal."""
         rows = [(ordinal, self.agent_id, part["kind"], part.get("quoted_speaker"), part.get("quoted_ref"),
-                 _pg_text(str(part["text"])), uid) for ordinal, part in enumerate(parts)]
+                 _pg_text(self._personal_masked(str(part["text"]), session_id)), uid)
+                for ordinal, part in enumerate(parts)]
         with self._writer_cursor() as cur:
             cur.executemany("INSERT INTO memory.message_parts (message_id, ordinal, agent_id, kind, quoted_speaker,"
                             " quoted_ref, content) SELECT message_id, %s, %s, %s, %s, %s, %s FROM memory.messages"
@@ -1007,13 +1021,14 @@ def put_row_text(store: MessageStore, row: dict[str, Any], *, row_id: Optional[i
         message_uid=message_uid, values=values, role=row.get("role"), tool_name=row.get("tool_name"),
         tool_call_id=row.get("tool_call_id"), timestamp=row.get("timestamp"), session_id=row.get("session_id"),
         seq_in_session=row_id, meta={**_row_meta(row), "message_uid": message_uid})
+    stored = store.texts([uid])[uid].values  # as written: masked when the row's job is marked personal
     placement = {k: v for k, v in row.items() if k not in TEXT_FIELDS}
     if "display_metadata" in placement:
         placement["display_metadata"], parts = _split_gateway_notes(placement["display_metadata"])
         if parts:
-            store.put_parts(uid, parts)
-    placement.update(message_uid=message_uid, text_uid=uid, content_digest=content_digest(values[0]),
-                     tool_call_count=tool_call_count(values[1]))
+            store.put_parts(uid, parts, session_id=row.get("session_id"))
+    placement.update(message_uid=message_uid, text_uid=uid, content_digest=content_digest(stored[0]),
+                     tool_call_count=tool_call_count(stored[1]))
     return placement
 
 

@@ -99,10 +99,28 @@ def _check_size(size: int, limit: int) -> None:
         raise ExtractionError(f"Document too large to convert ({size:,} bytes, limit is {limit:,})")
 
 
+def _personal_folders(path: str):
+    """The current job's folders when *path* is a personal document (lina#308, ``agent/personal_work.py``), else None.
+    Raises ``StoreUnavailableError`` when the store cannot say."""
+    from agent.personal_work import personal_folders_for
+    return personal_folders_for(path)
+
+
+def _personal_temp_dir(path: str) -> Optional[str]:
+    """Where a temp copy of *path* goes: the job's temp folder for a personal document, else the system temp dir
+    (the copy is removed at once either way; the job folder is deleted at job end even if a crash left it)."""
+    from hermes_state_store import StoreUnavailableError
+    try:
+        folders = _personal_folders(path)
+    except StoreUnavailableError:
+        return None
+    return str(folders.temp) if folders else None
+
+
 @contextlib.contextmanager
-def _temp_copy(data: bytes, suffix: str) -> Iterator[str]:
+def _temp_copy(data: bytes, suffix: str, folder: Optional[str] = None) -> Iterator[str]:
     """Materialize backend bytes in a private host temp file; removed even when parsing fails."""
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as fh:
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False, dir=folder) as fh:
         fh.write(data)
     try:
         yield fh.name
@@ -128,7 +146,7 @@ def extract_document_bytes(data: bytes, path: str) -> str:
         return _extract_anydoc_bytes(data, path)
     if ext not in EXTRACTABLE_EXTENSIONS:
         raise ExtractionError(f"Unsupported document type: {path!r}")
-    with _temp_copy(data, ext) as temp_path:  # the stdlib extractors are path-oriented
+    with _temp_copy(data, ext, _personal_temp_dir(path)) as temp_path:  # the stdlib extractors are path-oriented
         if ext == ".ipynb":
             return _extract_notebook(temp_path, display_path=path)
         return _STDLIB_EXTRACTORS[ext](temp_path)
@@ -172,16 +190,20 @@ def hosted_ocr_available() -> bool:
     return _hosted_ocr_config()[0]
 
 
-def _needs_ocr_warning(path: str, pages, hosted_error: str = "") -> str:
-    """NeedsOcrError result when hosted OCR is off/failed; hints at CHECKING for an OCR skill
+def _needs_ocr_warning(path: str, pages, hosted_error: str = "", *, refused: str = "",
+                       render_dir: str = "$TMPDIR") -> str:
+    """NeedsOcrError result when hosted OCR is off/failed/refused; hints at CHECKING for an OCR skill
     (never names one) and never advertises the hosted_ocr knob."""
     page_list = ", ".join(str(p) for p in pages) if pages else "unknown"
     hosted = f"Hosted OCR was attempted and failed ({hosted_error}). " if hosted_error else ""
+    if refused:
+        hosted = (f"Hosted OCR was not used: {refused}. Render and read the pages on this machine and keep every "
+                  f"page image and extract in {render_dir}, which is deleted when the job ends. ")
     return (
         f"[NEEDS OCR: pages {page_list} of this PDF are scanned images "
         f"with no text layer — their content is MISSING below. {hosted}"
         "If the missing pages matter: render just those pages with "
-        f"`pdftoppm -jpeg -r 150 -f <first> -l <last> {shlex.quote(path)} $TMPDIR/page` "
+        f"`pdftoppm -jpeg -r 150 -f <first> -l <last> {shlex.quote(path)} {render_dir}/page` "
         "and inspect via vision_analyze, or check whether an OCR skill is "
         "available (skills_list).]\n")
 
@@ -200,12 +222,28 @@ def _ocr_scanned_pdf(mod: Any, path: str, exc: BaseException) -> str:
     enabled, api_key, api_url = _hosted_ocr_config()
     hosted_error = ""
     if enabled:
+        refused, render_dir = _hosted_ocr_refusal(path)
+        if refused:
+            return _needs_ocr_warning(path, pages, refused=refused, render_dir=render_dir)
         try:
             extra = {k: v for k, v in (("api_key", api_key), ("api_url", api_url)) if v}
             return mod.to_markdown(path, ocr="hosted", **extra).rstrip("\n") + "\n"
         except Exception as hosted_exc:
             hosted_error = f"{type(hosted_exc).__name__}: {hosted_exc}"
     return _needs_ocr_warning(path, pages, hosted_error)  # whole doc is scans: the warning IS it
+
+
+def _hosted_ocr_refusal(path: str) -> tuple[str, str]:
+    """``(why hosted OCR may not take *path*, where its pages go instead)``: hosted OCR uploads the document to a third
+    party, which a personal document never goes to (lina#308); a store that cannot tell refuses too."""
+    from hermes_state_store import StoreUnavailableError
+    try:
+        folders = _personal_folders(path)
+    except StoreUnavailableError as exc:
+        return f"personal-document marks cannot be checked ({exc})", "$TMPDIR"
+    if folders is None:
+        return "", "$TMPDIR"
+    return "it is a personal document, and hosted OCR would upload it to a third-party service", str(folders.temp)
 
 
 def _extract_anydoc(path: str) -> str:
@@ -320,7 +358,7 @@ def _pdf_coverage_note(path: str, display_path: Optional[str] = None) -> str:
 
 def _pdf_coverage_note_from_bytes(data: bytes, display_path: str) -> str:
     """Coverage note for backend PDF bytes via a host temp copy (pdftotext needs a path)."""
-    with contextlib.suppress(OSError), _temp_copy(data, ".pdf") as temp_path:
+    with contextlib.suppress(OSError), _temp_copy(data, ".pdf", _personal_temp_dir(display_path)) as temp_path:
         return _pdf_coverage_note(temp_path, display_path=display_path)
     return ""
 
