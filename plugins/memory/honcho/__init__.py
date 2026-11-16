@@ -52,9 +52,17 @@ def _record_metadata(turn_record: Any) -> tuple[dict[str, Any], dict[str, Any]]:
         return {}, {}
     shared = {"lina_agent": turn_record.agent_id, "lina_conversation": turn_record.conversation_id,
               "lina_person": turn_record.person_id, "lina_route": turn_record.route}
-    return ({"metadata": {**shared, "lina_uid": turn_record.user_uid, "lina_speaker": turn_record.user_speaker}},
+    grade = _lina_grade()
+    return ({"metadata": {**shared, "lina_uid": turn_record.user_uid, "lina_speaker": turn_record.user_speaker,
+                          "lina_grade": grade.of_speaker(turn_record.user_speaker)}},
             {"metadata": {**shared, "lina_uid": turn_record.reply_uid, "lina_route": "agent_reply",
-                          "lina_speaker": "agent"}})
+                          "lina_speaker": "agent", "lina_grade": "agent"}})
+
+
+def _lina_grade():
+    """lina-memory's trust grades (lina#440): each message LINA writes carries its ``lina_grade``."""
+    from plugins.memory import import_provider_module
+    return import_provider_module("lina-memory", "grade")
 
 
 def _note_messages(turn_record: Any) -> list[tuple[str, dict[str, Any]]]:
@@ -65,7 +73,11 @@ def _note_messages(turn_record: Any) -> list[tuple[str, dict[str, Any]]]:
     shared = {"lina_agent": turn_record.agent_id, "lina_conversation": turn_record.conversation_id,
               "lina_person": turn_record.person_id, "lina_route": turn_record.route, "lina_uid": turn_record.user_uid,
               "lina_speaker": "gateway"}
-    return [(f"[gateway note: {note['kind']}] {note['text']}", {"metadata": {**shared, "lina_note": note["kind"]}})
+    grade = _lina_grade()
+    return [(f"[gateway note: {note['kind']}] {note['text']}", {"metadata": {
+                **shared, "lina_note": note["kind"],
+                "lina_grade": grade.lowest(["agent", *([grade.of_speaker(note["quoted_speaker"])]
+                                                     if note.get("quoted_speaker") else [])])}})
             for note in getattr(turn_record, "gateway_notes", ()) if note.get("text")]
 
 
@@ -118,6 +130,9 @@ _CONTEXT_SECTIONS = (
     ("aiRepresentation", "ai_representation", "AI Self-Representation"),
     ("aiCard", "ai_card", "AI Identity Card"),
 )
+
+# The context keys that describe the person rather than the conversation or the agent.
+_PERSON_CONTEXT_KEYS = frozenset({"representation", "card"})
 
 _PREWARM_QUERY = "Summarize what you know about this user. Focus on preferences, current projects, and working style."
 
@@ -485,10 +500,11 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
             return ""
         return _PROMPT_HEADERS.get(self._recall_mode, _PROMPT_HEADERS["hybrid"])
 
-    def session_card_block(self) -> str:
+    def session_card_block(self, *, person: bool = True) -> str:
         """The base layer for the system prompt in card_in_prompt mode, fetched once per prompt build within
         the turn-1 base wait that prefetch no longer spends on it. On timeout or error the prompt is built
-        without it (logged)."""
+        without it (logged). ``person=False`` leaves out the user's representation and peer card: the caller
+        has the person's brain page instead (lina#445)."""
         if not self._card_in_prompt or self._cron_skipped or self._recall_mode == "tools":
             return ""
         wait = self._first_turn_wait(self._FIRST_TURN_BASE_TIMEOUT)
@@ -507,7 +523,9 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         if "ctx" not in holder:
             logger.info("Honcho person card not ready within %.1fs; system prompt built without it", wait)
             return ""
-        return self._format_first_turn_context(holder["ctx"])
+        ctx = holder["ctx"] if person else {key: value for key, value in holder["ctx"].items()
+                                             if key not in _PERSON_CONTEXT_KEYS}
+        return self._format_first_turn_context(ctx)
 
     @staticmethod
     def _resolve_injection_log_path(look: _HostLookup) -> Optional[str]:
@@ -1087,6 +1105,12 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
             return
         self._memwrite_thread = self._spawn_write(lambda: self._manager.create_conclusion(self._session_key, content),
                                                   "honcho-memwrite", "Honcho memory mirror failed: %s")
+
+    def person_conclusions(self) -> list[dict[str, Any]]:
+        """Every conclusion about this session's person (id, content, created_at), for their brain page."""
+        if self._cron_skipped or not self._session_ready():
+            return []
+        return self._manager.person_conclusions(self._session_key)
 
     def on_session_end(self, messages: list[dict[str, Any]]) -> None:
         """Flush all pending messages to Honcho on session end."""

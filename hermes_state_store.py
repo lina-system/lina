@@ -815,12 +815,38 @@ class MessageStore:
             cur.execute(sql, [query, *patterns, query, *patterns, len(patterns), int(limit)])
             return [PartRow(*row) for row in cur.fetchall()]
 
+    def summary_grades(self, nodes: Sequence[tuple[int, str]]) -> dict[tuple[int, str], str]:
+        """The grade of each ``(node id, session id)`` LCM-X summary this agent's store holds (``ctx.summary_grades``,
+        migration 0018); a summary it does not hold is left out."""
+        with self._cursor() as cur:
+            cur.execute("SELECT g.node_id, n.session_id, g.grade FROM ctx.summary_grades AS g"
+                        " JOIN ctx.summary_nodes AS n USING (agent_id, node_id)"
+                        " WHERE (g.node_id, n.session_id) IN (SELECT * FROM unnest(%s::bigint[], %s::text[]))",
+                        ([int(node) for node, _ in nodes], [str(session) for _, session in nodes]))
+            return {(int(node), session): found for node, session, found in cur.fetchall()}
+
     def open_part(self, part_id: int) -> Optional[PartRow]:
         with self._cursor() as cur:
             cur.execute(f"SELECT {_PART_COLUMNS} FROM memory.message_parts AS p JOIN memory.messages AS m"
                         " USING (message_id) WHERE p.part_id = %s AND m.forgotten_at IS NULL", (int(part_id),))
             row = cur.fetchone()
         return None if row is None else PartRow(*row)
+
+    def owner_messages(self, pieces: Sequence[str], *, sources: Sequence[str], limit: int) -> list[tuple[str, str]]:
+        """The owner's own messages this agent may read (``speaker = 'owner'``, lina#324) whose text holds every one
+        of *pieces* (case-insensitive substrings), newest first, as ``(uid, text)``: the newest version of each, never
+        a forgotten one, and without the blocks the host injected as user turns (``_INJECTED_TURN_RE``)."""
+        matches = "".join(" AND content ILIKE %s" for _ in pieces)
+        sql = ("SELECT uid, content FROM ("
+               " SELECT DISTINCT ON (split_part(uid, '#', 1)) message_id, uid, content, forgotten_at"
+               " FROM memory.messages WHERE speaker = 'owner' AND source = ANY(%s)"
+               " ORDER BY split_part(uid, '#', 1), message_id DESC"
+               ") newest WHERE forgotten_at IS NULL AND content IS NOT NULL AND content !~ %s"
+               f"{matches} ORDER BY message_id DESC LIMIT %s")
+        args = [list(sources), _INJECTED_TURN_RE, *("%" + _like_escape(piece) + "%" for piece in pieces), int(limit)]
+        with self._cursor() as cur:
+            cur.execute(sql, args)
+            return [(uid, content) for uid, content in cur.fetchall()]
 
 
 _MEMORY_TERMS = 8
@@ -845,11 +871,11 @@ _INJECTED_TURN_RE = (
     r"|ASYNC DELEGATION|Planning state preserved)")
 _MEMORY_COLUMNS = ("message_id, uid, source, role, author, agent_id, conversation_id, session_id,"
                    " coalesce(ts, observed_at) AS at, content, forgotten_at IS NOT NULL AS forgotten, speaker,"
-                   " speaker_ref")
+                   " speaker_ref, grade, source_id")
 _MEMORY_FIELDS = ("message_id, uid, source, role, author, agent_id, conversation_id, session_id, at, content,"
-                  " forgotten, speaker, speaker_ref")
+                  " forgotten, speaker, speaker_ref, grade, source_id")
 _PART_COLUMNS = ("p.part_id, m.uid, p.kind, p.speaker, p.quoted_speaker, p.quoted_ref,"
-                 " coalesce(m.ts, m.observed_at) AS at, p.content")
+                 " coalesce(m.ts, m.observed_at) AS at, p.content, p.grade")
 
 
 @dataclass(frozen=True)
@@ -868,6 +894,8 @@ class MemoryRow:
     forgotten: bool
     speaker: str = "unknown"  # owner | agent | gateway | outside | unknown (migration 0013, lina#324)
     speaker_ref: Optional[str] = None
+    grade: str = "external"  # owner | agent | external (migration 0018, lina#440)
+    source_id: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -881,10 +909,11 @@ class PartRow:
     quoted_ref: Optional[str]
     at: Any  # the message's time
     content: str
+    grade: str = "external"
 
 
 def _memory_row(row: Sequence[Any]) -> MemoryRow:
-    values = list(row[:13])
+    values = list(row[:15])
     if values[10]:
         values[9] = None
     return MemoryRow(*values)

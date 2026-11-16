@@ -107,6 +107,8 @@ profile, so row-level security keeps each profile to its rows. Agents find the s
 | `author` | nullable author key: `<platform>:<author_id>` for external messages; NULL for agent rows (not a resolved person) |
 | `speaker` | who said it (lina#324): `owner`, `agent`, `gateway`, `outside` or `unknown`, never guessed from the text; see "Speaker kinds" below |
 | `speaker_ref` | which one: `agent:<profile>` for the agent, `tool:<name>` for a tool result, `<platform>:<user id>` for a gateway sender (`local:owner` on local surfaces), the `author` of an external message; NULL when the kind names no one |
+| `grade` | how far it may be trusted (lina#440): `owner`, `agent` or `external`; see "Trust grades" below |
+| `source_id` | where it comes from, as `memory_open` opens it: `msg:<base uid>` for a message, the cited rows for a heart row |
 | `role`, `content`, `tool_name`, `tool_call_id`, `ts` | the message; `content` is plain text (the text parts of multimodal content, NUL removed) |
 | `tool_calls` | the tool calls as `jsonb` |
 | `observed_at` | when the row was written |
@@ -269,6 +271,35 @@ Derived items keep the kinds of their sources: `memory.message_source_speakers` 
 `ctx.summary_speakers` an LCM-X summary's (of every message under it, through every condensed level). Both are views
 over the stored kinds, so a kind filled later shows at once. Messages LINA writes to Honcho carry `lina_speaker` in
 their metadata.
+
+### Trust grades
+
+Migration `0018_grade.sql` (lina#440, design lina#439 section 1) gives every row a `grade` and a `source_id`. The
+speaker says who said an item; the grade says how far it may be trusted. Every writer gets them from one `BEFORE
+INSERT OR UPDATE` trigger (`memory.messages_trust_grade`, named to fire after the speaker rule), so no writer can
+leave them empty, and the same rule backfilled the rows the store held before:
+
+| Row | `grade` |
+| --- | --- |
+| speaker `owner` | `owner` |
+| speaker `agent` or `gateway` (the gateway is part of the system) | `agent` |
+| speaker `outside` or `unknown` | `external` (the least trusted wins) |
+| the compressor's own summary row (`native._compressed_summary`) | `external`: it restates sources it does not name |
+| a heart journal row | the lowest grade of the rows it cites (a cited row that is gone, unreadable or of unknown speaker is `external`); `agent` when it cites none |
+
+A writer may set a lower grade than the rule's, never a higher one, and an `external` row never moves up; a user
+turn's grade follows its speaker when `MessageStore.set_speakers` fills it. A heart journal row whose evidence is
+known to be from outside (it cites a row of a decided speaker that is `external`, and none of grade `owner` or
+`agent`) is refused with a check violation: only owner or agent items change an agent's preferences or voice.
+Evidence of unknown speaker is graded, not refused, because an imported trial line cites imported turns no rule can
+decide.
+
+Derived items take the lowest grade of their sources: `memory.message_parts.grade` is generated from the note's
+speaker and whose words it quotes, and `ctx.summary_grades` gives an LCM-X summary's `grade` and `source_ids`
+(`msg:<uid>` of every message under it, through every condensed level; a source the store does not hold is
+`external`). `brain.timeline` and `brain.atoms` keep the same three values (0014). Messages LINA writes to Honcho
+carry `lina_grade` in their metadata; Honcho's conclusions live in Honcho's own schema and carry no grade, so they
+are read as `external`.
 
 ### Gateway notes (`memory.message_parts`)
 

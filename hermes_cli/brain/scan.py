@@ -111,6 +111,8 @@ def _dir_reason(name: str) -> str | None:
         return "git folder"
     if lowered in _ARTIFACT_DIRS:
         return "sync artifact folder"
+    if _CONFLICT.search(name):
+        return "sync conflict copy"
     if name.startswith("."):
         return "hidden folder"
     return None

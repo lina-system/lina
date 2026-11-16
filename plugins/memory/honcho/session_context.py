@@ -319,6 +319,19 @@ class SessionContextMixin:
             return [{"id": c.id, "content": c.content} for c in self._authed_call("conclusion list", _fetch)]
         return self._guarded_session(session_key, _list, [], logging.DEBUG, "Honcho list_conclusions failed: %s")
 
+    def person_conclusions(self, session_key: str) -> list[dict]:
+        """Every conclusion about the session's person, with id and creation time, for their brain page
+        (lina#445). [] when Honcho cannot answer (logged)."""
+        from .person_facts import conclusions_about
+
+        def _all(session: Any) -> list[dict]:
+            target = session.user_peer_id
+            ai_observes = self._ai_observes_others(session)
+            observer = self._get_or_create_peer(session.assistant_peer_id if ai_observes else target)
+            return self._authed_call("conclusion list", lambda: conclusions_about([observer], target))
+        return self._guarded_session(session_key, _all, [], logging.WARNING,
+                                     "Honcho conclusions for the person page could not be listed: %s")
+
     # Structured reads for lina-memory's memory_search and memory_open (lina#22). Unlike the reads above they
     # raise when Honcho cannot answer, so the caller can tell "Honcho failed" from "Honcho found nothing".
 
@@ -332,7 +345,9 @@ class SessionContextMixin:
     def _message_record(session: Any, message: Any) -> dict[str, Any]:
         author = getattr(message, "peer_id", "") or ""
         created = getattr(message, "created_at", None)
+        metadata = getattr(message, "metadata", None)
         return {"id": str(message.id), "content": getattr(message, "content", "") or "", "peer_id": author,
+                "lina_grade": metadata.get("lina_grade") if isinstance(metadata, dict) else None,
                 "session_id": getattr(message, "session_id", "") or "",
                 "created_at": created.isoformat() if hasattr(created, "isoformat") else created,
                 "speaker": "agent" if author == session.assistant_peer_id else "person"}

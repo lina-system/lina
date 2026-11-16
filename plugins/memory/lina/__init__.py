@@ -7,7 +7,13 @@ per finished turn by ``MemoryManager.sync_all``, builds one turn record (person,
 the identity registry, the turn's message uids, the route it arrived on, platform and timestamps) and hands it to
 the Honcho adapter (``plugins/memory/honcho``, which keeps its code and is driven only from here).
 Every other provider call (recall, tools, session lifecycle) goes to the Honcho adapter when Honcho is configured,
-except ``memory_search`` and ``memory_open`` (``search.py``), lina-memory's own tools over every source (lina#22).
+except ``memory_search`` and ``memory_open`` (``search.py``), lina-memory's own tools over every source (lina#22),
+``memory_link`` (``links.py``) and ``owner_terms`` (``terms.py``, the owner's own words for a concept, lina#379).
+The person card comes from the session person's brain page, and Honcho's conclusions about that person are written
+to the page at session end (``hermes_cli/brain/people.py``, lina#445).
+
+``brain_search``, ``brain_get`` and ``brain_links`` (``search.py``, lina#446) are the one search over the brain, the
+work record, repos and memory; ``memory_search`` and ``memory_open`` forward to them for one release.
 """
 
 from __future__ import annotations
@@ -18,7 +24,7 @@ from typing import Any, Optional
 
 from agent.memory_provider import MemoryProvider, RecallStatus, ctx_bound
 
-from . import lcm, links, search, speaker
+from . import grade, lcm, links, search, speaker, terms
 from .identity import OWNER_HANDLE, IdentityRegistry, SourceKey
 from .policy import load_policy, signals_for_turn, turn_start_index
 from .record import TurnRecord, build_record, turn_rows
@@ -50,6 +56,7 @@ class LinaMemoryProvider(MemoryProvider):
         self._session_id = ""
         self._search: Optional[search.MemorySearch] = None
         self._embedding = None
+        self._brain = None
 
     @property
     def name(self) -> str:
@@ -240,8 +247,37 @@ class LinaMemoryProvider(MemoryProvider):
         if self._search is None:
             self._search = search.MemorySearch(search.Readers(
                 store=self._message_store, honcho=self._honcho_reader, lcm=self._use_lcm, embedder=self._embedder,
-                person_refs=self._person_refs))
+                person_refs=self._person_refs, brain=self._brain_reader, work=self._work_items))
         return self._search
+
+    def _brain_reader(self):
+        if self._brain is None:
+            from hermes_cli.brain.search import BrainReader
+            self._brain = BrainReader(self._brain_connection)
+        return self._brain
+
+    def _brain_connection(self):
+        """A read connection as this agent (role ``lina_app``): it may read the shared brain and page vectors."""
+        import psycopg
+
+        from hermes_state_store import StoreUnavailableError, resolve_dsn
+        try:
+            conn = psycopg.connect(resolve_dsn(), autocommit=True)
+        except psycopg.OperationalError as exc:
+            raise StoreUnavailableError(f"cannot reach the memory store: {exc}".strip()) from exc
+        conn.execute("SELECT set_config('lina.agent_id', %s, false)", (self._agent_name(),))
+        return conn
+
+    @staticmethod
+    def _work_items() -> dict[str, dict[str, Any]]:
+        """The work record's items, on a connection of their own: the ledger's per-context one would outlive the
+        tool call."""
+        from hermes_cli.work import ledger, store
+        db = ledger.open_db()
+        try:
+            return store.read_all(db)[0]
+        finally:
+            db.close()
 
     def _person_refs(self, person: str) -> list[str]:
         """The row refs of every handle of *person* (a person id or a handle): its confirmed channels only."""
@@ -279,7 +315,49 @@ class LinaMemoryProvider(MemoryProvider):
         return self._honcho.system_prompt_block() if self._honcho_on else ""
 
     def session_card_block(self) -> str:
-        return self._honcho.session_card_block() if self._honcho_on else ""
+        """The person card from the session person's brain page (lina#445), with Honcho's session summary and the
+        agent's own sections; Honcho's card of the person only while the person has no page."""
+        page_card = self._page_card()
+        if page_card is None:
+            return self._honcho.session_card_block() if self._honcho_on else ""
+        rest = self._honcho.session_card_block(person=False) if self._honcho_on else ""
+        return "\n\n".join(part for part in (page_card, rest) if part)
+
+    def _session_person(self) -> Optional[str]:
+        """The person this session is with: the one its author's handle is confirmed as, else the handle's own."""
+        handle = self._author_handle({})
+        return self._registry.person_of(handle) if handle else None
+
+    def _page_card(self) -> Optional[str]:
+        try:
+            person = self._session_person()
+            if not person:
+                return None
+            import psycopg
+
+            import hermes_state_store
+            from hermes_cli.brain import people
+            with psycopg.connect(hermes_state_store.resolve_dsn()) as conn:
+                return people.card_for(conn, person)
+        except Exception as exc:  # health: allow BLE001 -- the store being down must not cost the prompt its card
+            logger.warning("lina-memory could not read the person's brain page; using Honcho's card: %s", exc)
+            return None
+
+    def _pages_from_honcho(self) -> None:
+        """Honcho's conclusions about the session's person, as ``agent`` entries on their brain page (lina#445)."""
+        try:
+            person = self._session_person()
+            found = self._honcho.person_conclusions() if person else []
+            if not found:
+                return
+            from hermes_cli.brain import people
+            from hermes_cli.brain.store import owner_connection
+            with owner_connection() as conn:
+                added = people.record_conclusions(conn, person, [people.conclusion_from(raw) for raw in found])
+            if added:
+                logger.info("lina-memory wrote %d Honcho conclusions to the person's brain page", added)
+        except Exception as exc:  # health: allow BLE001 -- a page write failing must not hold session end
+            logger.warning("lina-memory could not write Honcho's conclusions to the person's brain page: %s", exc)
 
     def prefetch(self, query: str, *, session_id: str = "") -> str:
         honcho = self._honcho.prefetch(query, session_id=session_id) if self._honcho_on else ""
@@ -291,9 +369,10 @@ class LinaMemoryProvider(MemoryProvider):
         return self._with_external_messages(honcho, query)
 
     def _with_external_messages(self, honcho: str, query: str) -> str:
-        """Per-turn and explicit recall both carry external-message hits; the source switch empties them (lina#23)."""
+        """Per-turn and explicit recall both carry external-message hits; the source switch empties them (lina#23).
+        They enter the prompt through ``grade.recall_text``: an external hit only inside its data block (lina#440)."""
         found = self._memory_search().search(query, sources=["messages"])
-        messages = "\n".join(search.recall_line(hit) for hit in found["results"])
+        messages = grade.recall_text(found["results"])
         return "\n\n".join(part for part in (honcho, messages) if part)
 
     def queue_prefetch(self, query: str, *, session_id: str = "") -> None:
@@ -305,13 +384,15 @@ class LinaMemoryProvider(MemoryProvider):
 
     def get_tool_schemas(self) -> list[dict[str, Any]]:
         honcho = self._honcho.get_tool_schemas() if self._honcho.is_available() else []
-        return [*honcho, search.SEARCH_SCHEMA, search.OPEN_SCHEMA, links.LINK_SCHEMA]
+        return [*honcho, *search.SCHEMAS, links.LINK_SCHEMA, terms.TERMS_SCHEMA]
 
     def handle_tool_call(self, tool_name: str, args: dict[str, Any], **kwargs) -> str:
         if tool_name in search.TOOL_NAMES:
             return search.handle_tool_call(self._memory_search(), tool_name, args)
         if tool_name == links.LINK_TOOL:
             return links.handle_tool_call(self._registry, args)
+        if tool_name == terms.TERMS_TOOL:
+            return terms.handle_tool_call(self._message_store(), args)
         return self._honcho.handle_tool_call(tool_name, args, **kwargs)
 
     def on_turn_start(self, turn_number: int, message: str, **kwargs) -> None:
@@ -325,6 +406,8 @@ class LinaMemoryProvider(MemoryProvider):
         self._drain()
         if self._honcho_on:
             self._honcho.on_session_end(messages)
+            self._submit(self._pages_from_honcho)
+            self._drain()
 
     def on_session_switch(self, new_session_id: str, **kwargs) -> None:
         self._claim(new_session_id)
@@ -364,6 +447,9 @@ class LinaMemoryProvider(MemoryProvider):
         if self._embedding:
             self._embedding.close()
             self._embedding = None
+        if self._brain is not None:
+            self._brain.close()
+            self._brain = None
         if self._store is not None:
             self._store.close()
 

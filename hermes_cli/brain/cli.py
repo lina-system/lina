@@ -1,4 +1,5 @@
-"""``lina brain``: import a wiki directory into the brain, rebuild its index, merge two pages, print the mapping."""
+"""``lina brain``: import a wiki directory into the brain, rebuild its index, merge two pages, print the mapping,
+run upkeep and the nightly cycle, decide the cycle's proposals, and extract external messages into timelines."""
 
 from __future__ import annotations
 
@@ -9,6 +10,9 @@ from pathlib import Path
 
 
 def build(subparsers) -> None:
+    from hermes_cli.brain.search import run_eval, run_index
+    from hermes_cli.brain.upkeep import run as run_upkeep
+
     importing = subparsers.add_parser(
         "import", help="Index a wiki directory into the brain; its files are read, never changed",
         description="Read every markdown file under DIR into schema brain of the LINA store: pages, aliases, links "
@@ -32,6 +36,99 @@ def build(subparsers) -> None:
     merge.set_defaults(brain_fn=run_merge)
     mapping = subparsers.add_parser("mapping", help="Print the built-in folder-to-type mapping as YAML")
     mapping.set_defaults(brain_fn=run_mapping)
+    upkeep = subparsers.add_parser("upkeep", help="Find links, repair indexed backlinks, report lint and orphans")
+    upkeep.add_argument("--root", metavar="DIR", help="One imported directory; default: all imported directories")
+    upkeep.add_argument("--json", action="store_true", help="Print the deterministic report as JSON")
+    upkeep.set_defaults(brain_fn=run_upkeep)
+    search_index = subparsers.add_parser(
+        "search-index", help="Write the keyword terms and page vectors brain_search reads",
+        description="Index the pages for brain_search: Korean keyword terms (Kiwi when the korean extra is "
+                    "installed, character bigrams always) and one vector per page with the home's embedding model. "
+                    "Only pages whose file changed, or that have no vector of the model, are written.")
+    search_index.add_argument("--root", metavar="DIR", help="One imported directory; default: every page")
+    search_index.add_argument("--json", action="store_true", help="Print the report as JSON")
+    search_index.set_defaults(brain_fn=run_index)
+    search_eval = subparsers.add_parser(
+        "search-eval", help="Measure recall@k of brain_search on a fixed query set, per retrieval leg",
+        description="Run every query of FILE (JSON: k, queries with id, query and relevant slugs) through "
+                    "brain_search with the semantic leg, the keyword leg (Kiwi, bigrams) and both, and print "
+                    "recall@k and the queries each misses.")
+    search_eval.add_argument("queries", metavar="FILE")
+    search_eval.add_argument("--json", action="store_true", help="Print every query's hits as JSON")
+    search_eval.set_defaults(brain_fn=run_eval)
+    from hermes_cli.brain.people_cli import build as build_people
+    build_people(subparsers)
+    _build_dream(subparsers)
+    _build_projects(subparsers)
+    _build_extract(subparsers)
+
+
+def _build_dream(subparsers) -> None:
+    from hermes_cli.brain.dream.config import PHASES
+    from hermes_cli.brain.dream.cycle import run as run_dream
+    from hermes_cli.brain.dream.proposals import run as run_proposals
+
+    dream = subparsers.add_parser(
+        "dream", help="Run one nightly cycle: upkeep, orphans, then the model phases within their budgets",
+        description="Deterministic phases (upkeep, orphans) first, then atoms, patterns, concepts, consolidate, "
+                    "contradictions and drift, each within brain.dream.budget.<phase>. Changes to compiled truth, "
+                    "merges and relation closes become proposals; no page file is written.")
+    dream.add_argument("--plan", action="store_true", help="Say what would run and cost; call no model, write nothing")
+    dream.add_argument("--phase", choices=PHASES, help="Run this one phase only")
+    dream.add_argument("--metrics", action="store_true",
+                       help="Print the counters of finished cycles (orphan rate, new pages linked, cost) instead")
+    dream.add_argument("--json", action="store_true", help="Print the full report as JSON")
+    dream.set_defaults(brain_fn=run_dream)
+    proposals = subparsers.add_parser("proposals", help="List, accept or reject the cycle's proposals")
+    actions = proposals.add_subparsers(dest="proposals_command", required=True)
+    listing = actions.add_parser("list", help="This agent's proposals, oldest first")
+    listing.add_argument("--status", default="proposed", choices=("proposed", "accepted", "rejected", "applied", "all"))
+    listing.add_argument("--phase")
+    listing.add_argument("--json", action="store_true")
+    rates = actions.add_parser("rates", help="Acceptance per phase")
+    rates.add_argument("--json", action="store_true")
+    accept = actions.add_parser("accept", help="Accept a proposal; a merge or a relation close is applied")
+    accept.add_argument("--confirm-external", action="store_true",
+                        help="Accept a proposal built from external material (its source is confirmed)")
+    reject = actions.add_parser("reject", help="Reject a proposal; the cycle does not propose it again")
+    for parser in (accept, reject):
+        parser.add_argument("id", type=int)
+        parser.add_argument("--by", default="owner", help="Who decided (default: owner)")
+    proposals.set_defaults(brain_fn=run_proposals)
+
+
+def _build_projects(subparsers) -> None:
+    from hermes_cli.brain.projects import run_show, run_sync
+
+    projects = subparsers.add_parser(
+        "projects", help="Ledger goals as generated project pages; status is read from the ledger only")
+    actions = projects.add_subparsers(dest="projects_command", required=True)
+    sync = actions.add_parser(
+        "sync", help="Write and index one project page per ledger goal, linked both ways to the pages it names",
+        description="Deterministic and idempotent, no model call. Pages go under projects/ of brain.work_dir; a "
+                    "goal gone from the ledger keeps its page, marked archived.")
+    sync.add_argument("--json", action="store_true", help="Print the report as JSON")
+    sync.set_defaults(brain_fn=run_sync)
+    show = actions.add_parser("show", help="A project page with the ledger's current status and its links")
+    show.add_argument("goal", help="The goal id (G1) or the page slug (goal-g1)")
+    show.add_argument("--json", action="store_true", help="Print the page as JSON")
+    show.set_defaults(brain_fn=run_show)
+
+
+def _build_extract(subparsers) -> None:
+    from hermes_cli.brain.extract import LIMIT
+    from hermes_cli.brain.extract import run as run_extract
+
+    extract = subparsers.add_parser(
+        "extract", help="Read stored external messages into brain timelines through a tool-less model step",
+        description="Each message not yet extracted (msg:messages:<uid>) is read by a model with no tools, as "
+                    "quoted data, into one record of who, when, what and source id. A valid record becomes an "
+                    "external timeline line on the person page it names, else on the brain inbox page; an invalid "
+                    "one writes nothing. The model is auxiliary.brain_extract.")
+    extract.add_argument("--plan", action="store_true", help="Say what would be sent; call no model, write nothing")
+    extract.add_argument("--limit", type=int, default=LIMIT, help=f"At most this many messages (default {LIMIT})")
+    extract.add_argument("--json", action="store_true", help="Print the full report as JSON")
+    extract.set_defaults(brain_fn=run_extract)
 
 
 def execute(args: argparse.Namespace) -> int:
@@ -120,12 +217,10 @@ def run_import(args) -> int:
 
 def run_merge(args) -> int:
     from hermes_cli.brain.page import nfc
-    from hermes_cli.brain.scan import scan
-    from hermes_cli.brain.store import merges_of, owner_connection, record_merge, root_of, sync
+    from hermes_cli.brain.store import merge_pages, owner_connection
     from_slug, into_slug = nfc(args.from_slug), nfc(args.into_slug)
     with owner_connection() as conn:
-        root, mapping = record_merge(conn, from_slug, into_slug, args.reason)
-        changes = sync(conn, scan(Path(root), mapping, merges_of(conn, root_of(conn, root)[0])))
+        changes = merge_pages(conn, from_slug, into_slug, args.reason)
     print(f"Merged {from_slug} into {into_slug}. {_changes_line(changes)}")
     return 0
 

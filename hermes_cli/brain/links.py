@@ -8,6 +8,8 @@ import re
 from dataclasses import dataclass
 from urllib.parse import unquote
 
+from hermes_cli.brain.page import alias_key
+
 _FENCE = re.compile(r"(?ms)^[ \t]*(```|~~~).*?^[ \t]*\1[^\n]*$")
 _CODE = re.compile(r"`[^`\n]*`")
 _WIKI = re.compile(r"\[\[([^\[\]\n]+?)\]\]")
@@ -18,6 +20,11 @@ _SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.\-]*:")
 PARTICLES = tuple(sorted(
     ("은", "는", "이", "가", "을", "를", "의", "에", "에서", "에게", "께", "께서", "와", "과", "로", "으로", "도", "만",
      "랑", "이랑", "하고", "부터", "까지", "처럼", "보다", "한테", "이나", "이며", "이고"), key=len, reverse=True))
+ENDINGS = ("입니다", "이에요", "예요", "이세요", "세요", "이군요", "군요", "이네요", "네요",
+           "이죠", "죠", "이었습니다", "였습니다", "이었어요", "였어요", "이라고", "라고")
+_SUFFIX = re.compile(
+    "(?:(?:" + "|".join(map(re.escape, PARTICLES)) + ")(?:은|는|도|만)?"
+    "|(?:" + "|".join(map(re.escape, ENDINGS)) + "))?")
 
 
 @dataclass(frozen=True)
@@ -65,5 +72,22 @@ def extract(text: str, page_path: str) -> list[Link]:
 
 def without_particle(name: str) -> list[str]:
     """*name* with each particle it ends in removed, longest particle first; never empty names."""
-    return [name[:-len(particle)].rstrip() for particle in PARTICLES
-            if name.endswith(particle) and len(name) > len(particle)]
+    suffixes = sorted({*PARTICLES, *ENDINGS,
+                       *(particle + tail for particle in PARTICLES for tail in ("은", "는", "도", "만"))},
+                      key=lambda value: (-len(value), value))
+    return [name[:-len(suffix)].rstrip() for suffix in suffixes
+            if name.endswith(suffix) and len(name) > len(suffix)]
+
+
+def mentions(text: str, names: set[str]) -> list[Link]:
+    """Plain names, longest first at each word boundary, outside code and written links.
+
+    Suffixes must consume the rest of the word: a known short Hangul name inside a longer word never matches.
+    Frontmatter is removed by the caller so aliases declaring a page are not evidence of a mention.
+    """
+    readable = alias_key(_MARKDOWN.sub(" ", _WIKI.sub(" ", _readable(text))))
+    keys = sorted({alias_key(name) for name in names if alias_key(name)}, key=lambda key: (-len(key), key))
+    if not keys:
+        return []
+    pattern = re.compile(r"(?<!\w)(" + "|".join(map(re.escape, keys)) + ")" + _SUFFIX.pattern + r"(?!\w)")
+    return [Link(match.group(1), "wiki") for match in pattern.finditer(readable)]

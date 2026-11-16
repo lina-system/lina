@@ -782,6 +782,7 @@ DEFAULT_CONFIG = {
         "kanban_decomposer": _aux(180),
         "profile_describer": _aux(60), "board_lines": _aux(60),  # profile blurb; board card lines (lina#151)
         "goal_judge": _aux(60),          # /goal satisfaction + contract drafting; JSON calls
+        "brain_dream": _aux(30), "brain_extract": _aux(30),  # lina brain dream / extract (docs/brain.md)
         # Curator skill-usage review can take minutes on reasoning models (umbrellas over hundreds
         # of skills); route cheaper via `hermes model` → auxiliary → Curator.
         "curator": _aux(600),
@@ -1388,6 +1389,28 @@ DEFAULT_CONFIG = {
     # Goals — persistent cross-turn /goal loop: after each turn an aux-model judge checks if the
     # goal is satisfied, else a continuation prompt re-enters the session until done, budget
     # exhausted, or paused. Judge failures fail OPEN; the budget is the backstop.
+    # The nightly brain cycle, `lina brain dream` (docs/brain.md): each model phase stops when its calls or input
+    # characters are spent; report_dir "" = <HERMES_HOME>/brain-dream. The model is auxiliary.brain_dream.
+    "brain": {
+        "dream": {
+            "budget": {
+                "atoms": {"calls": 100, "input_chars": 400_000},
+                "patterns": {"calls": 1, "input_chars": 60_000},
+                "concepts": {"calls": 4, "input_chars": 120_000},
+                "consolidate": {"calls": 20, "input_chars": 100_000},
+                "contradictions": {"calls": 20, "input_chars": 100_000},
+                "drift": {"calls": 20, "input_chars": 100_000},
+                "promote": {"calls": 20, "input_chars": 100_000},
+            },
+            "report_dir": "",
+            "lock_ttl_minutes": 30,
+            "page_chars": 6000,
+            "pattern_days": 7,
+            "concept_min_group": 5,
+            "consolidate_min_atoms": 3,
+            "consolidate_min_age_hours": 24,
+        },
+    },
     "goals": {
         # Max continuation turns before auto-pause (/goal resume) — guards against judge false
         # negatives and unbounded spend.

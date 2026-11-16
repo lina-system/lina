@@ -65,6 +65,14 @@ def test_config_set_runtime_read_key_is_silent(key, value, hermes_home, capsys):
     assert not _set_notice(key, value, capsys)
 
 
+@pytest.mark.parametrize("task", ["brain_dream", "brain_extract"])
+def test_brain_model_task_set_without_notice_is_what_the_aux_client_reads(task, hermes_home, capsys):
+    from agent.auxiliary_task_config import _get_auxiliary_task_config
+
+    assert not _set_notice(f"auxiliary.{task}.base_url", "http://127.0.0.1:9/v1", capsys)
+    assert _get_auxiliary_task_config(task)["base_url"] == "http://127.0.0.1:9/v1"
+
+
 def _moa_key(name, field):
     return "moa.presets." + name.replace(".", r"\.") + "." + field
 
