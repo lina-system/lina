@@ -78,11 +78,14 @@ class Message:
 
 @dataclass(frozen=True)
 class Record:
-    """One validated answer: the fact and the message it comes from."""
+    """One validated answer: the fact and the message it comes from. *source_id* is the message's stable
+    reference (what is deduplicated and marked extracted); *cited* is the version that was read, which the
+    line cites."""
     who: str
     when: date
     what: str
     source_id: str
+    cited: str = ""
 
 
 @dataclass
@@ -176,7 +179,7 @@ def read_answer(message: Message, answer: str) -> Record:
     for key, text in (("who", who), ("what", what)):
         if copies(text, message.text):
             raise Invalid(f"{key} copies {VERBATIM_RUN} or more characters of the message verbatim")
-    return Record(who, day, what, message.ref)
+    return Record(who, day, what, message.ref, "msg:" + message.uid)
 
 
 def read_records(conn, refs: Sequence[str], complete: Complete) -> Extraction:
@@ -244,13 +247,14 @@ def _append(file: Path, records: Sequence[Record], text_of: Callable[[Record], s
     """Append each record not yet on *file*'s timeline; returns the ones written. The file only grows."""
     before = file.read_text(encoding="utf-8-sig") if file.exists() else _inbox_page()
     parsed = pages.parse(before)
-    known = {entry.source_ref for entry in parsed.entries if entry.source_ref}
+    known = {entry.source_ref.split("#", 1)[0] for entry in parsed.entries if entry.source_ref}
     fresh = []
     for record in records:
         if record.source_id in known:
             continue
         known.add(record.source_id)
-        parsed = pages.append(parsed, record.when, text_of(record), grade="external", source_ref=record.source_id)
+        parsed = pages.append(parsed, record.when, text_of(record), grade="external",
+                              source_ref=record.cited or record.source_id)
         fresh.append(record)
     after = pages.render(parsed)
     if not after.startswith(before):
@@ -342,8 +346,8 @@ def extract(conn, complete: Complete, root: Path, *, limit: int = LIMIT, plan: b
 
 
 def _page_holding(conn, ref: str) -> str:
-    row = conn.execute("SELECT page_slug FROM brain.timeline WHERE source_ref = %s ORDER BY page_slug LIMIT 1",
-                       (ref,)).fetchone()
+    row = conn.execute("SELECT page_slug FROM brain.timeline WHERE source_ref = %s OR starts_with(source_ref, %s) "
+                       "ORDER BY page_slug LIMIT 1", (ref, ref + "#")).fetchone()
     if row is None:
         raise ExtractError(f"{ref} was neither written nor found on a page")
     return row[0]

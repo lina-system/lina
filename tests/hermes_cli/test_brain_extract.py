@@ -345,3 +345,31 @@ def test_a_second_line_of_the_same_thread_or_a_copy_does_not_confirm(_memory_sto
     assert (report["phases"]["promote"]["invalid"], report["phases"]["promote"]["proposals"]) == (1, 0)
     assert "another source" in report["phases"]["promote"]["invalid_answers"][0]
     assert _rows(dsn, "SELECT count(*) FROM brain.proposals") == [(0,)]
+
+
+def test_a_message_edited_before_extraction_is_cited_by_the_version_that_was_read(_memory_store, tmp_path, capsys,
+                                                                                  extractor):
+    root = _wiki(tmp_path / "wiki")
+    _config(tmp_path)
+    _brain(capsys, "import", str(root))
+    dsn = _memory_store.superuser_dsn()
+    conversation, author, sent, _ = CHAT["kakao-k1"]
+    edited = "미나 씨가 모레 오전 열 시에 연남 스튜디오에서 기타 녹음을 한다고 전해 달래요. 장비는 제가 챙겨 갈게요."
+    _messages(dsn, {"kakao-k1": CHAT["kakao-k1"]})
+    _messages(dsn, {"kakao-k1": (conversation, author, sent, edited)})
+    version = _rows(dsn, "SELECT current_uid FROM memory.external_message_heads WHERE uid = 'messages:kakao-k1'")[0][0]
+    assert version.startswith("messages:kakao-k1#")
+
+    report = _extract(capsys)
+
+    assert (report["pending"], report["calls"], report["records"], report["lines"]) == (1, 1, 1, 1)
+    assert "연남 스튜디오" in extractor.prompts[0] and "합정 스튜디오" not in extractor.prompts[0]
+    assert _rows(dsn, "SELECT source_ref FROM brain.timeline WHERE source_ref LIKE 'msg:%%'") == [(f"msg:{version}",)]
+    assert _rows(dsn, "SELECT m.content FROM brain.timeline AS t JOIN memory.messages AS m "
+                      "ON 'msg:' || m.uid = t.source_ref WHERE t.source_ref LIKE 'msg:%%'") == [(edited,)]
+    assert _rows(dsn, "SELECT source_ref, outcome FROM brain.extracted") == [("msg:messages:kakao-k1", "written")]
+
+    again = _extract(capsys)
+
+    assert (again["pending"], again["calls"], again["lines"]) == (0, 0, 0)
+    assert _rows(dsn, "SELECT count(*) FROM brain.timeline WHERE source_ref LIKE 'msg:%%'") == [(1,)]
