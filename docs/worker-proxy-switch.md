@@ -71,7 +71,7 @@ Run on the node, as the user the worker runs as.
 `lina omo routing plan|apply|check` (lina#587) runs ocx-omo with `--remote-id <remote_id>`. ocx-omo reads
 `providers.magpie.models` of omo's `models.json` (written by magpie's connection command for omo) and writes the 14
 routes as `magpie/<remote_id>/<provider>/<id>`, searching magpie's providers in the policy's order (`codex`,
-`claude`, `antigravity`, `grok`). omo's recommended order and reasoning strength and LINA's policy extras stay as
+`claude`, `grok`; Gemini is not routed). omo's recommended order and reasoning strength and LINA's policy extras stay as
 they are; a model magpie does not list is left out and listed under `not routed`. `check` exits 0 in step, 10 with
 changes to review, 2 on an error.
 
