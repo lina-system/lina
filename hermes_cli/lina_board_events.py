@@ -1,6 +1,6 @@
 """One change stream for the app (lina#150): ``GET /api/lina/events`` upgraded to a WebSocket.
 
-Six append-only stores are tailed, each by its own position, and the six positions travel as one opaque cursor:
+Seven append-only stores are tailed, each by its own position, and the seven positions travel as one opaque cursor:
 
 - ``work``: the work record's ``event`` table (one row per record line and run hand-off), by event id.
 - ``worker``: ``lina worker``'s ``receipts.jsonl`` (the hub appends a receipt on every run state change, next to the
@@ -16,6 +16,9 @@ Six append-only stores are tailed, each by its own position, and the six positio
   conversation, another API client) shows on the next history read.
 - ``notices``: ``board/notices.jsonl`` (lina#742), by byte offset: ``kind`` ``read`` and ``id`` the owner, one line
   per change of the owner's read marks (``lina_board_write.mark_read``); the client refetches the bell.
+- ``reports``: ``board/reports.jsonl`` (lina#263), by byte offset: ``kind`` ``created`` or ``updated`` and ``id`` the
+  report, one line per version the ``report`` tool writes (``tools/report_tool.py``, from the agent's process); an
+  open report viewer refetches ``GET /api/lina/reports/<id>``.
 
 Not on the stream, on purpose: device status, quota and usage. They change by themselves all the time and the app
 reads them when a screen opens; do not add a poll for them in the app or a source for them here.
@@ -57,8 +60,8 @@ BATCH_SECONDS = 0.3
 # bind. Shorter than the 5 s the app's reconnects were seen at, less its 1 s first backoff.
 KEEPALIVE_SECONDS = 3.0
 PAGE = 200
-CURSOR_PREFIX = "c4."  # c1 had positions only, c2 no settings source, c3 no talk or notices: an old one resyncs
-JOURNALS = ("talk", "notices")  # the sources this module's own writers append to (announce)
+CURSOR_PREFIX = "c5."  # c1 had positions only, c2 no settings source, c3 no talk or notices, c4 no reports: resync
+JOURNALS = ("talk", "notices", "reports")  # the sources whose writers append through announce
 UNKNOWN = "?"  # the identity of a source that could not be read when its position was taken
 _FAILS = (OSError, sqlite3.Error, RuntimeError)
 # Receipts that change nothing the board shows of a run (``worker/board.py``: state and reason from ``work_state``,
@@ -118,10 +121,11 @@ class Cursor(NamedTuple):
     settings: int = 0
     talk: int = 0
     notices: int = 0
-    ids: tuple[str, ...] = ("",) * 6  # the store identity each position was taken in ("" = empty store)
+    reports: int = 0
+    ids: tuple[str, ...] = ("",) * 7  # the store identity each position was taken in ("" = empty store)
 
 
-SOURCES = 6
+SOURCES = 7
 
 
 def encode(cursor: Cursor) -> str:
@@ -237,7 +241,7 @@ def _journal_event(source: str):
 
 
 class Stream:
-    """The six stores of one socket. Every method runs on the socket's own thread (connections are thread-bound)."""
+    """The seven stores of one socket. Every method runs on the socket's own thread (connections are thread-bound)."""
 
     def __init__(self, root: Path):
         from hermes_cli.worker import settings
@@ -287,7 +291,7 @@ class Stream:
     # - work: the first event row (id, at). The table is append-only (nothing deletes from ``event``), so the first
     #   row stays while the store lives, and a new store starts with new rows. The store has no id of its own
     #   (``setting`` holds fixed defaults only).
-    # - worker, talk, notices: the file's inode and its first line (``_Lines``).
+    # - worker, talk, notices, reports: the file's inode and its first line (``_Lines``).
     # - kanban: the database file's inode and the first task inserted (id, created_at; by rowid, since created_at
     #   ties within a second and task ids are random). Not the first ``task_events`` row, which pruning moves.
     #   Deleting that task changes the identity too: one spare resync, never a miss.

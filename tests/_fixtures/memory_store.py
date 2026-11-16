@@ -262,7 +262,8 @@ class ProcessStore:
             if self._tables is None:
                 self._tables = [row[0] for row in conn.execute(
                     "SELECT format('%I.%I', schemaname, tablename) FROM pg_tables "
-                    "WHERE schemaname IN ('memory', 'ctx', 'vec', 'brain') AND tablename <> 'schema_migrations'")]
+                    "WHERE schemaname IN ('memory', 'ctx', 'vec', 'brain', 'reports') "
+                    "AND tablename <> 'schema_migrations'")]
             if self._tables:
                 conn.execute(f"TRUNCATE {', '.join(self._tables)} RESTART IDENTITY")
 

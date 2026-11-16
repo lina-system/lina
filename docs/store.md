@@ -10,6 +10,7 @@ All memory lives in one Postgres with pgvector, run in Docker and set up by LINA
 | `ltm` | long-term memory (the Honcho server's tables) |
 | `vec` | embeddings |
 | `brain` | the brain's pages, aliases, links, timelines, atoms, merges and proposals ([brain.md](brain.md)) |
+| `reports` | reports and their versions (lina#263, "Reports" below) |
 
 ## Installing
 
@@ -667,6 +668,32 @@ database copied from that template, and every test empty tables. Without any Pos
 skip with one reason; under `CI=true` they fail. The macOS CI job has no Docker: it installs Homebrew `postgresql@17` and `pgvector`
 and puts their `bin` on PATH, so the fixture's `initdb` path runs there (the store SQL uses nothing newer than
 Postgres 15, which the store image runs).
+
+## Reports (`reports`)
+
+Migration `0025_report.sql` adds schema `reports` (lina#263): a long report an agent sends as one chat line and a
+link, instead of a long message. `hermes_state_reports.py` reads and writes it; the `report` tool
+(`tools/report_tool.py`) is the agents' one writer, and `hermes_cli/web_routers/lina_reports.py` serves it to the
+client API (`docs/api/work-client.yaml` "Reports").
+
+| Table | One row per | Columns |
+| --- | --- | --- |
+| `reports.report` | report | `report_id` (`rep_` and 12 hex digits), `agent_id` (the author), `title`, `summary` (one line), optional `card` and `goal` (the ids the client API uses), `private`, `version` (the newest), `created_at`, `updated_at` |
+| `reports.report_version` | edit | `report_id`, `version`, `agent_id`, the `title`, `summary` and `body` (markdown) written then, `session_id`, `created_at` |
+
+An update adds a version and moves `report.version` to it; the newest version is the report's body and every
+earlier one stays readable (`GET /api/lina/reports/{id}?version=N`). Both tables carry `agent_id`, so the event
+trigger (widened to `reports` by 0025, as 0014 did for `brain`) gives them `lina_agent_rows`: an agent reads and
+edits only its own reports. `lina_app` has SELECT, INSERT and UPDATE on `report` and SELECT and INSERT on
+`report_version`, no DELETE on either. The owner's client API reads as the store owner (`lina`), so the owner sees
+every agent's reports.
+
+`private` is set when the report is written from a session whose job carries a personal-document mark (lina#308,
+read through `agent/personal_work.py`'s `marks_for_home()` once that module is in the build) or when the tool call
+asks for it; it never goes back to false. A private report is served only to the owner's own session: the API
+answers 404 for it, and leaves it out of lists, for a request admitted by another principal's bearer token. Every
+write appends one line to `<LINA root>/board/reports.jsonl`, the `reports` source of the change stream
+(`GET /api/lina/events`), so an open viewer refreshes in place.
 
 ## Embeddings (`vec`)
 
