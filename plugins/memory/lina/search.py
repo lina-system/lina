@@ -534,8 +534,15 @@ class MemorySearch:
                  for r in found]]
 
     def _summary_grades(self, nodes: Sequence[tuple[int, str]]) -> dict[tuple[int, str], str]:
-        """The stored grade of each summary the store holds (LCM-X on the store); one it does not hold is external."""
-        return self._readers.store().summary_grades(nodes) if nodes else {}
+        """The stored grade of each summary the store holds (LCM-X on the store); one it does not hold, or one read while
+        the store is unavailable, is external: LCM-X's own SQLite recall does not depend on the store (lina#440)."""
+        if not nodes:
+            return {}
+        try:
+            return self._readers.store().summary_grades(nodes)
+        except Exception as exc:
+            logger.warning("brain_search: summary grades unavailable, summaries read as external: %s", exc)
+            return {}
 
     def _lcm_tool(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
         raw = self._readers.lcm(lambda engine: engine.handle_tool_call(name, args))

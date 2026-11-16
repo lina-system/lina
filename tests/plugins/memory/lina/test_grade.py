@@ -204,3 +204,27 @@ def test_an_outside_message_summarised_and_recalled_stays_inert(home, memory_sto
     assert [(hit["ref"], hit["speaker"], hit["grade"]) for hit in hits] == [
         (f"ctx:{node_id}:{SESSION}", "summary", "external")]
     _assert_inert(grade.recall_text(hits))
+
+
+def test_a_summary_is_recalled_as_external_while_the_store_is_down(home, memory_store_sql):
+    """LCM-X keeps its summaries in its own SQLite: a store outage costs the grade lookup, not the recall."""
+    import dataclasses
+    from hermes_state import SessionDB
+
+    def down():
+        raise psycopg.OperationalError("the store is down")
+
+    db = SessionDB(home / "state.db")
+    agent = make_agent(SESSION, db)
+    try:
+        node_id = _seed_lcm_summary(agent, "Summary: the assistant agreed with the supplier note.")
+        search = _provider(agent)._memory_search()
+        search._readers = dataclasses.replace(search._readers, store=down)
+        hits = search.search("supplier note", sources=["lcm"])["results"]
+        opened = search.open(f"ctx:{node_id}:{SESSION}")
+    finally:
+        agent.shutdown_memory_provider()
+        db.close()
+
+    assert [(hit["ref"], hit["grade"]) for hit in hits] == [(f"ctx:{node_id}:{SESSION}", "external")]
+    assert opened["grade"] == "external" and "supplier note" in opened["text"]
