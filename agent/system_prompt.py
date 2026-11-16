@@ -114,7 +114,8 @@ def _active_profile_name(agent: Any, ambient) -> str:
 
 def _frozen_plugin_prompt_sections(agent: Any) -> tuple:
     """Render plugin sections once per session and freeze them on the agent,
-    led by the core self-note section (``agent/self_note_section.py``) read from
+    led by the core sections: the Korean writing rule of a Korean agent
+    (``agent/korean_rule_section.py``) and the self note (``agent/self_note_section.py``) read from
     the agent's OWN home. A restored ``_cached_system_prompt`` is parsed instead of
     re-running plugin code; a render that raises at a rebuild boundary keeps the previous bytes
     (stashed by ``invalidate_system_prompt``) instead of silently vanishing."""
@@ -124,18 +125,19 @@ def _frozen_plugin_prompt_sections(agent: Any) -> tuple:
     if isinstance(stored_prompt, str) and stored_prompt:
         rendered = _restore_plugin_prompt_sections(stored_prompt)
     else:
+        from agent.korean_rule_section import render_korean_rule_section
         from agent.self_note_section import render_self_note_section
-        self_note = render_self_note_section(_agent_home(agent) or get_hermes_home())
+        core = (*render_korean_rule_section(), *render_self_note_section(_agent_home(agent) or get_hermes_home()))
         try:
             from hermes_cli.plugins import render_system_prompt_sections
-            rendered = (*self_note, *render_system_prompt_sections(_plugin_session_info(agent)))
+            rendered = (*core, *render_system_prompt_sections(_plugin_session_info(agent)))
         except Exception as exc:
             rendered = getattr(agent, "_plugin_system_prompt_sections_previous", None)
             if rendered:
                 logger.warning("Plugin system prompt sections failed to re-render (%s); keeping the previous frozen sections", exc)
             else:
                 logger.warning("Plugin system prompt sections could not be rendered: %s", exc)
-                rendered = self_note
+                rendered = core
     agent._plugin_system_prompt_sections_snapshot = rendered
     return rendered
 
@@ -533,12 +535,15 @@ def date_line(agent: Any) -> str:
 
 
 def _memory_parts(agent: Any) -> list[str]:
-    """Notes and person card: built-in memory/USER.md blocks plus the external provider block (gated
+    """Notes and person card: built-in shared OWNER.md, MEMORY.md and USER.md blocks plus the external provider block (gated
     on the same check ``inject_memory_provider_tools`` uses, so we never advertise tools the toolset
     config gated off). Read at prompt build only: once per session and again after a compaction."""
     parts: list[str] = []
     if agent._memory_store:
-        for enabled, kind in ((agent._memory_enabled, "memory"), (agent._user_profile_enabled, "user")):
+        # The install's shared owner profile leads (lina#467): its bytes come before every per-agent
+        # block, so a change to this agent's notes or profile leaves them in the cached prefix.
+        for enabled, kind in ((agent._user_profile_enabled, "shared"), (agent._memory_enabled, "memory"),
+                              (agent._user_profile_enabled, "user")):
             block = agent._memory_store.format_for_system_prompt(kind) if enabled else None
             if block:
                 parts.append(block)

@@ -35,7 +35,7 @@ lina words import seed.tsv
   exit code is 0 when every line is in the list, 1 when a line was reported, 2 when the store cannot be reached.
 - The context builder reads the list through `hermes_cli.korean.words.word_list_entries(terms=None)`: the active
   entries, or with `terms` only those whose avoid or use word appears in one of them (a word, a phrase or a whole
-  message). Where the entries go in the prompt is lina#380.
+  message). Where the entries go in the prompt: [The rule and the owner's words in the context](#the-rule-and-the-owners-words-in-the-context).
 
 ### Scope and who writes it
 
@@ -136,7 +136,7 @@ the texts it wrote, no agent reads an unowned one, and the command runs as the s
 
 Before an agent names a concept in Korean, it looks up what the owner called it in his own messages (lina#379). If he
 used a term, the agent uses it; if he never named the concept, the agent describes it in plain words and does not coin
-a name. Putting the found terms in the prompt is lina#380; checking a reply for coined compounds is lina#381.
+a name. The found terms reach a turn's found memory ([below](#the-rule-and-the-owners-words-in-the-context)); checking a reply for coined compounds is lina#381.
 
 ### The tool and the functions
 
@@ -257,3 +257,35 @@ This change exposes the documented callable only and does not wire it into that 
 Run `python scripts/korean_checks_probe.py --synthetic` for the 20-reply synthetic demonstration,
 `--store` against a newly installed disposable store for word-list and CLI evaluation, and
 `--benchmark` for median added time on a 1,000-character reply. Timing is reported, never a CI limit.
+
+## The rule and the owner's words in the context
+
+An agent whose language setting is Korean (`display.language: ko`, read through `agent.i18n.get_language`) gets two
+things (lina#380); every other agent gets neither, and its prompt is the same bytes as without this feature.
+
+- **The rule**, in the frozen system-prompt section `agent-korean-writing` (`agent/korean_rule_section.py`), before
+  the self note: use the owner's words, describe a concept he never named instead of coining a name, keep the register,
+  no translationese. It is one constant, so it is the same bytes on every turn and in every session of every Korean
+  agent; it changes the cache prefix only where the language setting does.
+- **The turn's words**, in found memory (`plugins/memory/lina/korean.py`, appended to lina-memory's `prefetch`), so
+  they ride the `memory_recall` tool result after the cached prefix and never touch the system prompt. Under the
+  heading `주인의 말 (이번 턴에 나온 개념):` a turn gets:
+  - each active word-list entry whose avoid or use word is in the turn's message (`word_list_entries([message])`), as
+    `- '<avoid>' 말고 '<use>'`;
+  - for each English run of one to three words in a Korean message (at most three), the owner's own word for it when he
+    has one (`owner_terms`), as `- <term>: 주인의 말은 '<use>'`. The turn never installs Kiwi: without the `korean`
+    extra these lines are left out and the `owner_terms` tool still installs it on first use;
+  - for an English document (at least 40 English words and more English letters than Hangul), instead of lookups, a
+    hint to look its terms up with `owner_terms` before writing to the owner, and to describe in plain words what he
+    never named.
+
+  A turn that names none of these adds nothing: no heading, no bytes. When the store cannot be reached, the turn
+  carries no entries and a warning is logged; the rest of found memory is kept.
+
+Accepted replies are not added as examples: the store has no record of a reply the owner accepted without correction
+(lina#377 keeps flagged and clean labels, lina#378 corrections, lina#381 no reply record). They can join the turn's
+words once such a record exists.
+
+`tests/plugins/memory/lina/test_korean_words_cache.py` drives 20 turns of a Korean agent through the loopback model
+that caches like Anthropic: the token-weighted hit rate was 89.75% before lina#380 and is 90.28% with it; the test
+fails if it falls below the earlier figure.

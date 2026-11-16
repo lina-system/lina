@@ -71,6 +71,11 @@ def _cmd_memory_external_messages(args):
     external_messages_command(args)
 
 
+def _cmd_memory_profile(args):
+    from hermes_cli.memory_profile_merge import merge_command
+    sys.exit(merge_command(args))
+
+
 def _cmd_memory_setup(args):
     from hermes_cli.memory_setup import memory_command
     memory_command(args)
@@ -82,6 +87,7 @@ _MEMORY_SUBCOMMANDS = {
     "eval-search": _cmd_memory_eval_search,
     "cache-report": _cmd_memory_cache_report,
     "external-messages": _cmd_memory_external_messages,
+    "profile": _cmd_memory_profile,
 }
 
 

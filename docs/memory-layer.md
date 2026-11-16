@@ -50,7 +50,7 @@ changes less often than the one after it, and only a compaction may rewrite byte
 | Part | Built in | Changes |
 | --- | --- | --- |
 | System and persona (identity, SOUL, guidance, context files, skills index, plugin sections (among them the self note and the agent's core tastes, after a line saying tastes never change reporting, honesty, permissions, verification, the owner's instructions or safety), profile line, the session's start date and model lines, runtime environment) | `agent/system_prompt.py` `build_system_prompt_parts` | frozen per session; rebuilt at a compaction; the self note and core tastes change at most daily and weekly and reach a running session only at that rebuild |
-| Notes and person card (MEMORY.md, USER.md, the memory provider's block, then its person card from `session_card_block()`: the person's brain page, then Honcho's session summary and the agent's own sections; Honcho's representation and peer card only while the person has no page), closing the prompt between `# Notes and person card` and its end marker | same, `_memory_parts` | frozen per session; reread at a compaction |
+| Notes and person card (the install's shared owner profile OWNER.md, MEMORY.md, USER.md, the memory provider's block, then its person card from `session_card_block()`: the person's brain page, then Honcho's session summary and the agent's own sections; Honcho's representation and peer card only while the person has no page), closing the prompt between `# Notes and person card` and its end marker | same, `_memory_parts` | frozen per session; reread at a compaction |
 | Upper summary DAG: LCM-X's condensed nodes (depth 1 and up), deepest first | LCM-X `_assemble_context` | appended to or rewritten only when they are themselves condensed |
 | Lower summary nodes (depth 0) and the recent turns | LCM-X, then the transcript | appended every turn; replaced at a compaction |
 | Found memory: the turn's recall as a `memory_recall` tool call and its result, after the user message. `memory_recall` is a real read-only tool (`agent/memory_recall_tool.py`) listed with the provider's tools, so strict providers accept the call | `agent/turn_context.py` `recall_tool_rows` | per turn |
@@ -251,3 +251,37 @@ Every agent reads one shared list of words to avoid and the word to use instead,
 (`memory.word_list`, `lina words`, lina#378); the flagged and fixed sentence pairs kept with it are readable by the
 owner and the refiner only and never logged or exported. The scope, the writers and the privacy rule are in
 [korean.md](korean.md).
+
+## The shared owner profile (lina#467)
+
+The built-in user profile has two layers. The **shared owner profile** is one file per install,
+`<LINA home>/shared/OWNER.md` (the install's shared area, beside the shared Nous token store; every profile of
+the install resolves the same root, `get_default_hermes_root()`), with its own budget
+`memory.shared_user_char_limit` (2,500 characters by default). The **per-agent profile** is each profile's own
+`memories/USER.md` (`memory.user_char_limit`), for what only that agent learned. Both are on while
+`memory.user_profile_enabled` is.
+
+- **Order.** The notes block carries the shared block first, then MEMORY.md, then USER.md (`_memory_parts`).
+  The shared block's header shows only the shared layer's usage, so a change to an agent's own notes or profile
+  leaves every byte up to the end of the shared block unchanged. Like the other two, the block is a snapshot
+  frozen at session start: another agent's shared write reaches a running session at its next prompt build (a
+  new session or a compaction), never mid-session.
+- **Memory tool.** `target: "shared"` writes the shared layer. A `user` write (add, patch, a batch) that repeats a
+  shared entry is refused, naming the entry (`shared_entry`, `match: exact|near`): exact means equal after
+  Unicode NFC, case, spacing, quote and dash typography and trailing punctuation are folded; near means those
+  folded forms are at least 85% alike by `difflib`'s character ratio (`tools/memory_tool_shared.py`; no model
+  call). The refusal counts as failure class `shared_duplicate`.
+- **Concurrent writers.** Every write locks `OWNER.md.lock` (`flock`, `msvcrt` on Windows), re-reads the file,
+  and replaces it by an atomic rename, so agents writing at the same time keep each other's entries.
+- **Budgets.** Each prompt block and each tool result reports its own layer's usage (`layer`, `usage`); a write
+  over a budget is refused with the layer named ("The shared owner profile (shared/OWNER.md) is full: ...").
+  `lina prompt-size` lists the shared block apart.
+
+`lina memory profile merge` moves what the profiles already repeat. It reads every profile's USER.md and the
+shared file, groups entries by the same rule, and prints what it would do with each layer's budget before and
+after: a group whose entries have one folded form across two or more profiles (or a profile and the shared layer)
+moves, as `identical` (byte-equal) or `near-identical` (differs only in what the fold removes); any other group,
+the same fact in other words or with another value, is listed as diverged for the owner to pick, never merged. It
+writes nothing unless `--apply` is given and the owner types `merge`; then it writes the shared file first, then
+removes the moved entries from each profile, each file under its lock, after copying it to
+`<file>.bak-<UTC timestamp>`. A shared layer the merge would overfill stops the apply before anything is written.
