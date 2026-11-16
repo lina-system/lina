@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from agent.personal_numbers import find, has_number, mask_text, mask_value
+from agent.personal_numbers import find, mask_text, mask_value
 
 POSITIVES = [
     ("주민번호 900101-1234567입니다", "주민번호 ******-***4567입니다", "registration"),
@@ -62,4 +62,4 @@ def test_nested_values_are_masked_everywhere_and_keep_their_shape():
     masked, count = mask_value(value)
     assert count == 2
     assert masked == ("내 번호 ******-***4567", [{"type": "text", "text": "카드 **** **** **** 1111"}], None, 7)
-    assert has_number(value) and not has_number(masked)
+    assert mask_value(masked) == (masked, 0)

@@ -10,6 +10,7 @@ tell whether a text still carries such a number.
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -122,10 +123,23 @@ def mask_text(text: str) -> tuple[str, int]:
     return "".join(parts), len(found)
 
 
+def mask_json(text: str) -> tuple[str, int]:
+    """``(text masked, count)`` for *text* holding a JSON value: the decoded strings are masked and the value
+    serialized again, since ``json.dumps`` escapes the non-ASCII labels (계좌번호) the account rule reads. A text that
+    is not JSON is masked as it is; one with no number comes back unchanged."""
+    try:
+        value = json.loads(text)
+    except ValueError:
+        return mask_text(text)
+    masked, count = mask_value(value)
+    return (json.dumps(masked), count) if count else (text, 0)
+
+
 def mask_value(value: Any) -> tuple[Any, int]:
-    """*value* with every string inside it (lists, tuples and dicts, keys kept) masked, and the count."""
+    """*value* with every string inside it (lists, tuples and dicts, keys kept) masked, and the count. A string that
+    holds a JSON array or object (tool call arguments) is masked by its decoded strings (``mask_json``)."""
     if isinstance(value, str):
-        return mask_text(value)
+        return mask_json(value) if value.lstrip()[:1] in ("[", "{") else mask_text(value)
     if isinstance(value, (list, tuple)):
         items = [mask_value(item) for item in value]
         return type(value)(item for item, _ in items), sum(count for _, count in items)
@@ -133,14 +147,3 @@ def mask_value(value: Any) -> tuple[Any, int]:
         items = {key: mask_value(item) for key, item in value.items()}
         return {key: item for key, (item, _) in items.items()}, sum(count for _, count in items.values())
     return value, 0
-
-
-def has_number(value: Any) -> bool:
-    """Whether any string inside *value* carries a number ``mask_value`` would mask."""
-    if isinstance(value, str):
-        return bool(find(value))
-    if isinstance(value, (list, tuple)):
-        return any(has_number(item) for item in value)
-    if isinstance(value, dict):
-        return any(has_number(item) for item in value.values())
-    return False

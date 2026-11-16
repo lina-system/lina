@@ -144,6 +144,20 @@ def _plain_text(content: Any) -> Optional[str]:
     return _pg_text(content if isinstance(content, str) else str(content))
 
 
+def _masked_numbers(value: Any) -> tuple[Any, int]:
+    """*value* (one text column, or a row's columns in ``TEXT_FIELDS`` order) with its ID and account numbers masked,
+    and the count. JSON-backed text (``CONTENT_JSON_PREFIX`` content, tool calls, reasoning items) is masked by its
+    decoded strings and serialized again, so the stored JSON keeps its shape and still parses."""
+    from agent import personal_numbers
+    if isinstance(value, tuple):
+        items = [_masked_numbers(item) for item in value]
+        return tuple(item for item, _ in items), sum(count for _, count in items)
+    if isinstance(value, str) and value.startswith(CONTENT_JSON_PREFIX):
+        masked, count = personal_numbers.mask_json(value[len(CONTENT_JSON_PREFIX):])
+        return CONTENT_JSON_PREFIX + masked, count
+    return personal_numbers.mask_value(value)
+
+
 def payload_digest(values: Sequence[Any]) -> str:
     """Identity of one text version: every text column, exactly as Hermes wrote it."""
     return _sha256(json.dumps([None if v is None else _tagged(v) for v in values], separators=(",", ":")))
@@ -484,14 +498,14 @@ class MessageStore:
     def _personal_masked(self, value: Any, session_id: Optional[str]) -> Any:
         """*value* with its ID and account numbers masked when *session_id*'s job carries a personal-document mark.
         The job is looked up only for a text that has such a number, so other rows cost no query."""
-        from agent import personal_numbers
-        if not session_id or not personal_numbers.has_number(value):
+        if not session_id:
+            return value
+        masked, count = _masked_numbers(value)
+        if not count:
             return value
         from hermes_state_personal import session_is_marked
         with self._writer_cursor() as cur:
-            if not session_is_marked(cur, session_id):
-                return value
-        return personal_numbers.mask_value(value)[0]
+            return masked if session_is_marked(cur, session_id) else value
 
     def texts(self, uids: Iterable[Optional[str]]) -> dict[str, TextRow]:
         """Text rows by uid; a uid with no row is left out."""

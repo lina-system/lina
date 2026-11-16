@@ -380,9 +380,11 @@ notes) mask ID and account numbers in every text field of a row whose session's 
 and foreign registration numbers, driver's licence and passport numbers, card numbers (Luhn-checked) and bank account
 numbers keep their last four characters (`900101-1234567` -> `******-***4567`). The rules are fixed code in
 `agent/personal_numbers.py`; dates, amounts, phone numbers and millisecond timestamps are not matched. The job is
-looked up only for a text that has such a number, so other rows cost no query. The unmasked value is written neither
-to `memory.messages` nor to `transcript_rows` (whose `content_digest` is taken from the stored text); the model still
-reads the live turn as it was.
+looked up only for a text that has such a number, so other rows cost no query. JSON-backed fields (structured
+content, tool call arguments and results, reasoning items) are masked by their decoded strings, so a label that
+`json.dumps` escapes (`계좌번호`) is still read, and are serialized again with their shape kept. The unmasked value is
+written neither to `memory.messages` nor to `transcript_rows` (whose `content_digest` is taken from the stored text);
+the model still reads the live turn as it was.
 
 Derived files of a marked document go under the job's folders on the device that made them, both made through
 `agent/personal_work.py` only: `<home>/personal-work/<job>/` and `<temp dir>/lina-personal-<job>/`. When the job
