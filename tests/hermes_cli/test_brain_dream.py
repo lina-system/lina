@@ -203,6 +203,29 @@ def test_concept_groups_survive_a_night_that_stops_between_batches(_memory_store
     assert _count(dsn, "SELECT count(*) FROM brain.proposals WHERE kind = 'new_page'") == 1
 
 
+def test_a_page_removed_then_restored_is_read_again_by_the_atoms_phase(_memory_store, tmp_path, capsys, fake):
+    root = _wiki(tmp_path / "wiki")
+    _config(tmp_path)
+    _brain(capsys, "import", str(root))
+    _brain(capsys, "dream", "--phase", "atoms", "--json")
+    dsn = _memory_store.superuser_dsn()
+    where = "WHERE page_slug LIKE '%alone'"
+    before = _count(dsn, f"SELECT count(*) FROM brain.atoms {where}")
+    assert before > 0
+
+    path = root / "ideas" / "alone.md"
+    body = path.read_text(encoding="utf-8")
+    path.unlink()
+    _brain(capsys, "import", str(root))
+    assert _count(dsn, f"SELECT count(*) FROM brain.atoms {where}") == 0
+    path.write_text(body, encoding="utf-8")
+    _brain(capsys, "import", str(root))
+    again = json.loads(_brain(capsys, "dream", "--phase", "atoms", "--json"))
+
+    assert again["phases"]["atoms"]["answered"] == 1
+    assert _count(dsn, f"SELECT count(*) FROM brain.atoms {where}") == before
+
+
 @pytest.mark.parametrize("broken", ["not json at all", '{"atoms": [{"claim": "x", "items": [99]}]}', "[1, 2]"])
 def test_an_answer_off_its_shape_writes_nothing_and_is_asked_again(_memory_store, tmp_path, capsys, monkeypatch,
                                                                    broken):

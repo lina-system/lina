@@ -59,6 +59,7 @@ Hermes Agent upstream changes are not listed here; see the upstream history on t
 
 ### Fixed
 - The nightly cycle's concepts phase keeps each answered batch's groups (migration `0022_brain_dream_state.sql`, `brain.dream_inputs.state`), so a night that stops at its budget between batches no longer drops them; `brain_search` keeps its keyword leg when the embedding endpoint fails; `lina brain search-index` re-reads a page whose names changed by a merge (lina#444, lina#446).
+- A brain page that is removed and later restored unchanged is read again by the nightly atoms phase: `lina brain import` drops the removed page's atoms note (`brain.dream_inputs`) together with its atoms, so the phase no longer skips it as already answered.
 
 - `lina brain projects sync` works after a `lina brain dream` on the default home: the cycle's report pages no longer default to `<HERMES_HOME>/brain/dream`, inside the default brain work folder, where the sync indexed them as pages and then refused the folder as an imported wiki; they go to `<HERMES_HOME>/brain-dream` (`brain.dream.report_dir` still overrides it).
 - `lina config set auxiliary.brain_dream.<key>` and `auxiliary.brain_extract.<key>` no longer say the key is not recognized and may not be read: both tasks have their default block (provider auto, the same 30 s timeout as before), so the model settings docs/brain.md names are part of the config schema, and the auxiliary client reads what was set.

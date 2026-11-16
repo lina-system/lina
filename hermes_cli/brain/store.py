@@ -156,6 +156,9 @@ def sync(conn, index: Index, *, rebuild: bool = False) -> Changes:
         new = _desired(index)
         gone = sorted(set(old["pages"]) - set(new["pages"]))
         for slug in gone:
+            # The nightly atoms phase skips a page whose prompt is unchanged. Once its atoms are deleted or moved,
+            # that note would make a restored page look answered and its atoms would never come back.
+            conn.execute("DELETE FROM brain.dream_inputs WHERE phase = 'atoms' AND subject = %s", (slug,))
             if slug in index.redirects:
                 conn.execute("UPDATE brain.atoms SET page_slug = %s WHERE page_slug = %s",
                              (index.redirects[slug], slug))
