@@ -3,8 +3,8 @@
 A push's words do not say what it sends: a plain ``git push origin main`` sends every commit the remote does not have
 yet. ``outgoing`` finds those commits the way git knows them, reachable from what is pushed and from no
 remote-tracking ref of the destination remote, and answers the paths they add or change and the lines they add.
-What is pushed is git's choice too: the refspecs and ``--all``/``--branches``/``--mirror``/``--tags`` the command
-names, else the remote's ``remote.<name>.push`` refspecs, else what ``push.default`` sends (the current branch, or
+What is pushed is git's choice too: the refspecs and ``--all``/``--branches``/``--mirror``/``--tags``/
+``--follow-tags`` (or ``push.followTags``) the command names, else the remote's ``remote.<name>.push`` refspecs, else what ``push.default`` sends (the current branch, or
 every local branch for ``matching``). ``personal.py`` judges them. A push whose outgoing commits cannot be told (no
 remote-tracking ref of the remote, a remote given as a URL, a pattern refspec, a ``push.default`` it does not know, a
 git error) raises ``Undetermined``.
@@ -46,6 +46,7 @@ class _Push:
     remote: str
     refspecs: list[str]
     ranges: list[str]
+    follow_tags: bool | None = None  # ``--follow-tags`` / ``--no-follow-tags`` as written, last one wins
 
 
 def _git(push: _Push, *args: str) -> str:
@@ -85,7 +86,7 @@ def _global_args(words: list[str]) -> tuple[list[str], int]:
 
 def _parse(words: list[str], cwd: str) -> _Push:
     global_args, at = _global_args(words)
-    positional, ranges, remote = [], [], ""
+    positional, ranges, remote, follow_tags = [], [], "", None
     rest = iter(words[at + 1:])
     for word in rest:
         if word in _VALUE_OPTIONS:
@@ -95,11 +96,13 @@ def _parse(words: list[str], cwd: str) -> _Push:
             remote = word.split("=", 1)[1]
         elif word in _RANGE_FLAGS:
             ranges.append(_RANGE_FLAGS[word])
+        elif word in {"--follow-tags", "--no-follow-tags"}:
+            follow_tags = word == "--follow-tags"
         elif not word.startswith("-"):
             positional.append(word)
     if positional and not remote:
         remote = positional.pop(0)
-    return _Push(cwd, global_args, remote, positional, ranges)
+    return _Push(cwd, global_args, remote, positional, ranges, follow_tags)
 
 
 def _default_remote(push: _Push) -> str:
@@ -115,7 +118,7 @@ def _default_remote(push: _Push) -> str:
 
 def _push_setting(key: str) -> bool:
     parts = key.split(".")
-    return key.lower() == "push.default" or (
+    return key.lower() in {"push.default", "push.followtags"} or (
         len(parts) >= 3 and parts[0].lower() == "remote" and parts[-1].lower() in {"push", "mirror"})
 
 
@@ -186,13 +189,37 @@ def _outgoing(push: _Push) -> Outgoing:
                      *messages.splitlines(), *_tag_messages(push, sources)])
 
 
+def _follows_tags(push: _Push) -> bool:
+    """``--follow-tags`` as written, else ``push.followTags``: git then also sends the annotated tags that point at
+    commits the pushed refs reach."""
+    if push.follow_tags is not None:
+        return push.follow_tags
+    return _is_true(_git(push, "config", "--default", "false", "--get", "push.followTags"))
+
+
+def _tag_names(push: _Push, sources: list[str]) -> list[str]:
+    """The tags a push can send beyond the ones it names: every tag for ``--tags`` and for a push of every ref
+    (``--mirror``, a mirror remote), and with ``--follow-tags`` each tag at a commit the pushed refs reach (the
+    remote's own tags are not known, so a tag it already has is read too)."""
+    if "--tags" in sources or "--all" in sources:
+        return _git(push, "for-each-ref", "--format=%(refname)", "refs/tags/").split()
+    if not _follows_tags(push):
+        return []
+    refs = [source for source in sources if not source.startswith("-") and ".." not in source]
+    if "--branches" in sources:
+        refs += _git(push, "for-each-ref", "--format=%(refname)", "refs/heads/").split()
+    names: list[str] = []
+    for ref in refs:
+        names += _git(push, "for-each-ref", "--format=%(refname)", f"--merged={ref}", "refs/tags/").split()
+    return names
+
+
 def _tag_messages(push: _Push, sources: list[str]) -> list[str]:
-    """The lines of each annotated tag the push names (``git push origin v1``): a tag object has a message of its own,
-    which no commit of the pushed range holds. ``--tags`` stands for every tag of the repository."""
-    names = _git(push, "for-each-ref", "--format=%(refname)", "refs/tags/").split() if "--tags" in sources else []
+    """The lines of each annotated tag the push sends (``git push origin v1``, ``--tags``, ``--follow-tags``): a tag
+    object has a message of its own, which no commit of the pushed range holds."""
     named = [source for source in sources if not source.startswith("-") and ".." not in source]
     lines: list[str] = []
-    for source in dict.fromkeys([*names, *named]):
+    for source in dict.fromkeys([*_tag_names(push, sources), *named]):
         if _git(push, "cat-file", "-t", source).strip() == "tag":
             lines.extend(_git(push, "cat-file", "tag", source).splitlines())
     return lines

@@ -229,6 +229,49 @@ def test_a_clean_annotated_tag_is_allowed(repo, tmp_path):
     assert _push(repo, "git push origin --tags") is None
 
 
+_TAG_REFUSAL = "Refused (public: git push): the commits it sends carry an ID or account number"
+
+
+def test_follow_tags_reads_the_annotated_tags_it_would_send(repo, tmp_path):
+    _mark(tmp_path / "elsewhere" / "id-card.pdf")
+    _git(repo, "tag", "-a", "v1", "-m", f"Release for ID {NUMBER}")  # on a commit the remote already has
+
+    assert _push(repo, "git push origin main --follow-tags")["message"].startswith(_TAG_REFUSAL)
+    assert _push(repo, "git push origin main") is None
+    assert _push(repo, "git push origin main --follow-tags --no-follow-tags") is None
+    assert _push(repo, "git -c push.followTags=true push origin main")["message"].startswith(_TAG_REFUSAL)
+    _git(repo, "config", "push.followTags", "true")
+    assert _push(repo, "git push origin main")["message"].startswith(_TAG_REFUSAL)
+    assert _push(repo, "git push origin main --no-follow-tags") is None
+
+
+def test_follow_tags_skips_a_tag_the_pushed_refs_do_not_reach(repo, tmp_path):
+    _mark(tmp_path / "elsewhere" / "id-card.pdf")
+    _git(repo, "checkout", "-q", "-b", "side")
+    _empty_commit(repo, "Side work")
+    _git(repo, "tag", "-a", "side-1", "-m", f"Release for ID {NUMBER}")
+    _git(repo, "checkout", "-q", "main")
+
+    assert _push(repo, "git push origin main --follow-tags") is None
+
+
+def test_a_mirror_push_reads_every_annotated_tag(repo, tmp_path):
+    _mark(tmp_path / "elsewhere" / "id-card.pdf")
+    _git(repo, "tag", "-a", "v1", "-m", f"Release for ID {NUMBER}")
+
+    assert _push(repo, "git push origin --mirror")["message"].startswith(_TAG_REFUSAL)
+    _git(repo, "config", "remote.origin.mirror", "true")
+    assert _push(repo, "git push origin")["message"].startswith(_TAG_REFUSAL)
+
+
+def test_follow_tags_and_mirror_with_a_clean_tag_are_allowed(repo, tmp_path):
+    _mark(tmp_path / "elsewhere" / "id-card.pdf")
+    _git(repo, "tag", "-a", "v1", "-m", "Release of the synthetic project")
+
+    assert _push(repo, "git push origin main --follow-tags") is None
+    assert _push(repo, "git push origin --mirror") is None
+
+
 def test_a_push_default_that_cannot_be_resolved_is_refused(repo, tmp_path):
     _mark(tmp_path / "elsewhere" / "id-card.pdf")
     _git(repo, "config", "push.default", "sideways")
