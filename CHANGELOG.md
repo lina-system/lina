@@ -145,6 +145,7 @@ Hermes Agent upstream changes are not listed here; see the upstream history on t
 - `lina worker status <OG-ID>` shows each batch member and its completion/notice summary (also as JSON), and `cancel <OG-ID> --why ...` cancels only unfinished members through the existing task path (lina#431).
 - `lina store reembed` sends an embedding request again when it times out, after the same pause as for a 429 and counted in the same `embedding.max_retries` (lina#740); before, one request past `embedding.timeout` ended the whole run.
 - `lina work import --from <work.db>` copies a run's result records (`work.artifact`, draft and final) after their runs, to-dos and goals, and counts and compares them in its check, so an import that loses one fails and writes nothing; a work.db older than migration 0024 still imports (lina#527).
+- A repeated `lina work import --from <work.db>` brings a result record the source has since made final into the store as final, never turns a final record back into a draft, and fails its check when a record in the store differs from the source's (lina#527); before, a draft imported once stayed a draft while the check reported a match.
 - A resumed or forked session recovers its frozen plugin-section bytes (the self note and the Korean rule section) from the persisted prompt: the recovery required the start-date line right after the section container, but the active-profile line sits between them, so it always came back empty.
 
 ### Added

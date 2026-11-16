@@ -136,6 +136,63 @@ def test_import_fails_when_a_result_record_does_not_arrive(work):
     assert _artifacts() == [] and _counts()["event"] == 0
 
 
+def _finalize_at_source(db_file, artifact_id):
+    """The owner's acceptance in the source work.db, the way `lina work artifact final` writes it there."""
+    from hermes_cli.work import artifacts, store_sqlite
+    from hermes_cli.work.env import current
+    env = current()
+    db = store_sqlite.connect(db_file, env.owner, env.names)
+    try:
+        with store.transaction(db):
+            artifacts.finalize(db, artifact_id, db.human, "2027-01-16T09:00:00Z")
+        return [tuple(r) for r in db.execute(f"SELECT {ARTIFACT_COLUMNS} FROM artifact ORDER BY id").fetchall()]
+    finally:
+        db.close()
+
+
+def test_reimport_carries_a_draft_the_source_made_final(work):
+    """PR #772 review: a draft imported earlier and finalized at the source arrives final, once."""
+    db_file, _ = _work_db_with_results(work)
+    work.ok("import", "--from", str(db_file))
+    finalized = _finalize_at_source(db_file, 7)
+    assert "새 줄 1개" in work.ok("import", "--from", str(db_file))
+    assert _artifacts() == finalized
+    counts, tables = _counts(), _tables()
+    assert "새 줄 0개" in work.ok("import", "--from", str(db_file))
+    assert (_counts(), _tables()) == (counts, tables)
+
+
+def test_reimport_never_turns_a_final_record_back_into_a_draft(work):
+    """A record final in the store and still a draft in the source stays final."""
+    db_file, artifacts = _work_db_with_results(work)
+    work.ok("import", "--from", str(db_file))
+    db = ledger.open_db()
+    try:
+        db.execute("UPDATE artifact SET kind = 'final' WHERE id = 7")
+    finally:
+        db.close()
+    work.ok("import", "--from", str(db_file))
+    assert [row[7] for row in _artifacts()] == ["final", "final"]
+    assert [row[:7] for row in _artifacts()] == [row[:7] for row in artifacts]
+
+
+def test_reimport_fails_when_a_finalized_record_stays_a_draft(work):
+    """A store that keeps the draft after the source finalized it fails the content check and writes nothing."""
+    db_file, _ = _work_db_with_results(work)
+    work.ok("import", "--from", str(db_file))
+    db = ledger.open_db()
+    try:
+        db.execute("CREATE TRIGGER keep_draft BEFORE UPDATE ON artifact BEGIN SELECT RAISE(IGNORE); END")
+    finally:
+        db.close()
+    _finalize_at_source(db_file, 7)
+    events = _counts()["event"]
+    code, out, err = work.run("import", "--from", str(db_file))
+    assert code != 0 and "다르다" in err
+    assert re.search(r"^표 내용 \d+행: 다름$", out, re.MULTILINE)
+    assert [row[7] for row in _artifacts()] == ["draft", "final"] and _counts()["event"] == events
+
+
 def test_import_from_a_work_db_older_than_result_records(work):
     """A work.db made before migration 0024 has no artifact table; its record still imports."""
     db_file, _ = _work_db_with_results(work)

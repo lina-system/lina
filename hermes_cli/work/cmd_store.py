@@ -270,6 +270,21 @@ def _belongs(kind: str, row: dict, touched: dict) -> bool:
     return False
 
 
+def _artifacts_due(db, source, have) -> tuple[list, dict]:
+    """A result record only moves forward, draft to final (lina#527): an absent one is copied, a draft the source has
+    since made final takes the source's row, and a final one stays final. -> (the rows to write, every source row as
+    the store must then hold it), so a record that cannot be brought forward, or another record under its id, fails
+    the content check."""
+    write, want = [], {}
+    for row in source:
+        old = have.get(key("artifact", row))
+        want[key("artifact", row)] = dict(row, kind="final") if old is not None and old["kind"] == "final" else row
+        if old is None or (old["kind"] == "draft" and row["kind"] == "final"
+                           and canonical(db, "artifact", dict(old, kind="final")) == canonical(db, "artifact", row)):
+            write.append(row)
+    return write, want
+
+
 def _import_tables(db, src: Source) -> tuple[int, int, tuple]:
     """A work.db source: copy its absent rows as stored. Replaying its lines would rebuild projects and links from
     today's Desk paths and repo settings, not the source's (lina#480). An event already in the store must match;
@@ -295,7 +310,8 @@ def _import_tables(db, src: Source) -> tuple[int, int, tuple]:
     absent = {kind: [row for row in source[kind] if key(kind, row) not in have[kind]] for kind in IMPORTED}
     scope = {kind: {key(kind, row): row for row in source[kind]
                     if key(kind, row) not in have[kind] or _belongs(kind, row, touched)} for kind in IMPORTED}
-    import_selected_rows(db, {kind: list(scope[kind].values()) for kind in IMPORTED})
+    write, scope["artifact"] = _artifacts_due(db, source["artifact"], have["artifact"])
+    import_selected_rows(db, {kind: list(scope[kind].values()) for kind in IMPORTED} | {"artifact": write})
     return len(absent["event"]), len(absent["run_todo"]), (scope, touched)
 
 
