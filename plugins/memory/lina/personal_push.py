@@ -116,13 +116,25 @@ def _default_remote(push: _Push) -> str:
 def _push_setting(key: str) -> bool:
     parts = key.split(".")
     return key.lower() == "push.default" or (
-        len(parts) >= 3 and parts[0].lower() == "remote" and parts[-1].lower() == "push")
+        len(parts) >= 3 and parts[0].lower() == "remote" and parts[-1].lower() in {"push", "mirror"})
+
+
+def _is_true(value: str) -> bool:
+    """git's boolean: true, yes, on, or a non-zero number."""
+    value = value.strip().lower()
+    return value in {"true", "yes", "on"} or (value.lstrip("-").isdigit() and int(value) != 0)
 
 
 def _configured_sources(push: _Push, remote: str) -> list[str]:
-    """What git pushes when the command names no refspec: the remote's ``remote.<name>.push`` refspecs, else what
-    ``push.default`` sends."""
-    settings = [entry.split("\n", 1) for entry in _git(push, "config", "-z", "--list").split("\0") if "\n" in entry]
+    """What git pushes when the command names no refspec: every ref when the remote is a mirror
+    (``remote.<name>.mirror``), else the remote's ``remote.<name>.push`` refspecs, else what ``push.default`` sends."""
+    settings = []
+    for entry in _git(push, "config", "-z", "--list").split("\0"):
+        key, has_value, value = entry.partition("\n")
+        if key:
+            settings.append((key, value if has_value else "true"))  # a key with no value is a true boolean
+    if _is_true(next((value for key, value in reversed(settings) if key == f"remote.{remote}.mirror"), "")):
+        return ["--all"]
     refspecs = [value for key, value in settings if key == f"remote.{remote}.push"]
     if refspecs:
         return _refspec_sources(refspecs)

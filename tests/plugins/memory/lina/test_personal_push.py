@@ -157,6 +157,26 @@ def test_a_colon_refspec_with_clean_branches_is_allowed(repo, tmp_path):
     assert _push(repo, "git push origin :") is None
 
 
+def test_a_remote_set_to_mirror_inspects_every_ref(repo):
+    _documents_branch(repo)
+    _git(repo, "push", "-q", "origin", "documents")
+    _mark(_commit_on(repo, "documents", "private/more.txt", "Synthetic second contract page\n"))
+    _git(repo, "config", "remote.origin.mirror", "true")
+
+    assert _push(repo, "git push origin")["action"] == "block"
+    _git(repo, "config", "remote.origin.mirror", "false")
+    assert _push(repo, "git push origin") is None
+    assert _push(repo, "git -c remote.origin.mirror=true push origin")["action"] == "block"
+
+
+def test_a_mirror_remote_with_clean_refs_is_allowed(repo, tmp_path):
+    _mark(tmp_path / "elsewhere" / "id-card.pdf")
+    _commit(repo, "docs/guide.md", "How to build the synthetic project\n")
+    _git(repo, "config", "remote.origin.mirror", "true")
+
+    assert _push(repo, "git push origin") is None
+
+
 def test_a_push_default_that_cannot_be_resolved_is_refused(repo, tmp_path):
     _mark(tmp_path / "elsewhere" / "id-card.pdf")
     _git(repo, "config", "push.default", "sideways")

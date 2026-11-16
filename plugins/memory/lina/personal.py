@@ -53,8 +53,14 @@ _GH_PUBLIC = {
     "gist": {"create", "edit"},
     "release": {"create", "edit", "upload"},
 }
-_UPLOAD_FLAGS = ("-F", "--form", "--form-string", "-T", "--upload-file", "-d", "--data", "--data-binary",
-                 "--data-raw", "--data-urlencode", "--json", "--post-file", "--body-file")
+# gh api's flags that add request parameters or a body (the request is then a write).
+_GH_API_LONG = {"--field", "--raw-field", "--input"}
+_GH_API_SHORT = "fF"
+# The upload and request-body options of curl and wget (long, and the short letters of curl's -F -T -d); curl takes a
+# short option's value attached (``-Ffile=@x``) and a long option abbreviated (``--upload``).
+_UPLOAD_LONG = {"--form", "--form-string", "--upload-file", "--data", "--data-binary", "--data-raw",
+                "--data-urlencode", "--json", "--post-file", "--post-data", "--body-file", "--body-data"}
+_UPLOAD_SHORT = "FTd"
 # Connectors that publish to public places, and the words of their tools that write there.
 _PUBLIC_CONNECTORS = {"github", "gitlab", "x", "twitter", "reddit", "medium", "wordpress"}
 _PUBLISHING_WORDS = ("create", "comment", "post", "publish", "upload", "update", "edit", "reply")
@@ -131,6 +137,22 @@ def _words(command: str) -> list[list[str]]:
     return [words for words in commands if words]
 
 
+def _has_option(words: list[str], long_flags: set[str], short_letters: str, abbreviated: bool = False) -> bool:
+    """Whether a command's words carry one of the options, in any spelling the tool reads: ``--flag value``,
+    ``--flag=value``, a short letter alone, in a cluster or with its value attached (``-Ffile=@x``), and with
+    *abbreviated* a long name cut short. A short letter anywhere in a ``-x...`` word counts, so a value that
+    happens to hold the letter is read as the option: the call is then checked for personal material, which is
+    the safe side of a guess."""
+    for word in words:
+        if word.startswith("--"):
+            name = word.split("=", 1)[0]
+            if name in long_flags or (abbreviated and len(name) >= 4 and any(flag.startswith(name) for flag in long_flags)):
+                return True
+        elif len(word) > 1 and word.startswith("-") and any(letter in word[1:] for letter in short_letters):
+            return True
+    return False
+
+
 def _command_destination(words: list[str]) -> Optional[str]:
     program = Path(words[0]).name
     rest = words[1:]
@@ -138,10 +160,9 @@ def _command_destination(words: list[str]) -> Optional[str]:
         return "public: git push"
     if program == "gh" and len(rest) >= 2 and rest[1] in _GH_PUBLIC.get(rest[0], set()):
         return f"public: gh {rest[0]} {rest[1]}"
-    if program == "gh" and rest[:1] == ["api"] and any(flag in rest for flag in ("-f", "-F", "--field", "--input")):
+    if program == "gh" and rest[:1] == ["api"] and _has_option(rest, _GH_API_LONG, _GH_API_SHORT):
         return "public: gh api"
-    if program in {"curl", "wget", "http", "https"} and any(
-            word == flag or word.startswith(flag + "=") for word in rest for flag in _UPLOAD_FLAGS):
+    if program in {"curl", "wget", "http", "https"} and _has_option(rest, _UPLOAD_LONG, _UPLOAD_SHORT, True):
         return f"third party: {program} upload"
     return None
 
