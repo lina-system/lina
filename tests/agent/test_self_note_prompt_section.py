@@ -203,3 +203,14 @@ def test_a_long_marker_still_leaves_the_notes_tail_inside_the_section_limit(home
     assert len(content) <= MAX_SYSTEM_PROMPT_SECTION_CHARS
     assert "If you need the full instructions" in content
     assert content.rstrip().endswith("final line two")
+
+
+def test_the_frozen_sections_are_recovered_from_a_real_persisted_prompt(home):
+    from agent.system_prompt import _restore_plugin_prompt_sections
+    _write_note(home, NOTE_A)
+    prompt = build_system_prompt(_agent("20261115_090000_cccccc"))
+
+    restored = _restore_plugin_prompt_sections(prompt)
+
+    assert [section.id for section in restored] == ["agent-self-note"]
+    assert NOTE_A in restored[0].content
