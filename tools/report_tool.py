@@ -15,7 +15,8 @@ from tools.registry import registry, tool_error
 REPORT_SCHEMA = {
     "name": "report",
     "description": (
-        "Write a report, or a new version of one, when you have more to tell than about three short chat messages: "
+        "Write a long report, or a new version of one, as a live page. "
+        "Use it when you have more to tell than about three short chat messages: "
         "a long result, findings, a plan, a review. The full text (markdown: headings, tables, lists, links, images "
         "by URL) goes into the report; the chat gets one line. Returns the report's id, its page address and "
         "`reference`: send `reference` as its own line in your message, after at most one short sentence, and never "
