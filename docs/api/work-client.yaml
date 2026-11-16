@@ -9,7 +9,8 @@ info:
   version: 0.1.0
   description: >
     Goals (goal cards with their work cards and the evidence that closed them), work cards
-    (summary and detail), and the owner inbox with one write: answer an item as the owner.
+    (summary and detail), the result records of runs (lina#527) and the owner inbox with one write: answer an
+    item as the owner.
     A work card is a goal-mode kanban card, any card whose body has a `## To-dos` section, or any
     blocked or triage card (lina#664); a goal card above it, when there is one, is its link-child. Times are Unix epoch seconds.
 servers:
@@ -105,6 +106,27 @@ paths:
                 $ref: "#/components/schemas/WorkCardDetail"
         "404":
           description: No such card.
+  /work/artifacts:
+    get:
+      operationId: findArtifacts
+      summary: The result records at a Desk path or under a Desk folder, with their runs, to-dos and goals.
+      parameters:
+        - name: path
+          in: query
+          required: true
+          description: A Desk path (`Areas/Dev/G1/OT-.../plan.md`) or folder (`Areas/Dev/G1`); a `desk:` prefix is accepted.
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: What touches the path; empty lists when nothing does.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ArtifactLookup"
+        "503":
+          description: The work record cannot be read.
   /work/inbox:
     get:
       operationId: getWorkInbox
@@ -376,11 +398,76 @@ components:
           enum: [issue, check]
         done:
           type: boolean
+    Artifact:
+      type: object
+      additionalProperties: false
+      description: >
+        One result file of a worker run, tied to the run's to-do and goal (lina#527). `kind` starts as `draft` for
+        every file a run leaves in `out/`; only the owner's acceptance makes it `final`. `repo` and `commit` stay
+        null until the forge (lina#448); until then `path` is the file's Desk path,
+        `<area folder>/<goal id>/<run id>/<file>` (a to-do with no goal: `Inbox/<to-do id>/<run id>/<file>`).
+      required: [id, run, task, goal, repo, path, commit, kind, createdAt]
+      properties:
+        id:
+          type: integer
+        run:
+          type: string
+          description: The worker run (`OT-...`) that wrote the file.
+        task:
+          type: string
+          nullable: true
+          description: The run's to-do in the work record (`T..`).
+        goal:
+          type: string
+          nullable: true
+          description: The goal of the run or of its to-do (`G..`).
+        repo:
+          type: string
+          nullable: true
+        path:
+          type: string
+        commit:
+          type: string
+          nullable: true
+        kind:
+          type: string
+          enum: [draft, final]
+        createdAt:
+          type: integer
+    ArtifactLookup:
+      type: object
+      additionalProperties: false
+      required: [path, artifacts, runs, tasks, goals]
+      properties:
+        path:
+          type: string
+          description: The path asked for, without a `desk:` prefix or surrounding slashes.
+        artifacts:
+          type: array
+          items:
+            $ref: "#/components/schemas/Artifact"
+        runs:
+          type: array
+          items:
+            type: string
+        tasks:
+          type: array
+          items:
+            type: string
+        goals:
+          type: array
+          items:
+            type: string
     WorkerRun:
       type: object
       additionalProperties: false
-      required: [id, kind, firstSeenAt, lastSeenAt]
+      required: [id, kind, firstSeenAt, lastSeenAt, artifacts]
       properties:
+        artifacts:
+          type: array
+          description: The run's result records.
+          items:
+            $ref: "#/components/schemas/Artifact"
         id:
           type: string
         kind:
@@ -467,7 +554,7 @@ components:
       type: object
       additionalProperties: false
       required: [id, title, goalTitle, agent, state, reason, elapsedSeconds, todoProgress, now, plain,
-                 todos, workerRuns, runsAwaitingVerdict, gates, comments, runs]
+                 todos, workerRuns, runsAwaitingVerdict, gates, comments, runs, artifacts]
       properties:
         readOnly:
           $ref: "#/components/schemas/ReadOnly"
@@ -544,6 +631,11 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/CardRun"
+        artifacts:
+          type: array
+          description: Result records of the record's to-dos and goals that link this card (`kanban:<card>`).
+          items:
+            $ref: "#/components/schemas/Artifact"
     Evidence:
       type: object
       additionalProperties: false
@@ -566,7 +658,7 @@ components:
     WorkGoal:
       type: object
       additionalProperties: false
-      required: [id, title, agent, state, reason, elapsedSeconds, workCards, evidence]
+      required: [id, title, agent, state, reason, elapsedSeconds, workCards, evidence, artifacts]
       properties:
         readOnly:
           $ref: "#/components/schemas/ReadOnly"
@@ -596,6 +688,11 @@ components:
           description: Completion summary and metadata of the goal card and its done work cards.
           items:
             $ref: "#/components/schemas/Evidence"
+        artifacts:
+          type: array
+          description: Result records of the goal card and of its work cards, as on a card.
+          items:
+            $ref: "#/components/schemas/Artifact"
     GoalList:
       type: object
       additionalProperties: false
