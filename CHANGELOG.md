@@ -147,6 +147,7 @@ Hermes Agent upstream changes are not listed here; see the upstream history on t
 - `lina work import --from <work.db>` copies a run's result records (`work.artifact`, draft and final) after their runs, to-dos and goals, and counts and compares them in its check, so an import that loses one fails and writes nothing; a work.db older than migration 0024 still imports (lina#527).
 - A repeated `lina work import --from <work.db>` brings a result record the source has since made final into the store as final, never turns a final record back into a draft, and fails its check when a record in the store differs from the source's (lina#527); before, a draft imported once stayed a draft while the check reported a match.
 - A resumed or forked session recovers its frozen plugin-section bytes (the self note and the Korean rule section) from the persisted prompt: the recovery required the start-date line right after the section container, but the active-profile line sits between them, so it always came back empty.
+- A run's result records (lina#527) for a to-do with no goal go to the Desk's own Inbox folder (a numbered `0_Inbox` of an adopted Desk) instead of a second literal `Inbox/`, and a record keeps its path and its acceptance when its area is renamed or its goal moves to another area; before, the next `run-sync` added a second draft beside a record the owner had already made final.
 
 ### Added
 

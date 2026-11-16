@@ -170,7 +170,9 @@ the goal or to-do id:
 
 - `<area folder>/<goal id>/<run id>/<file>` for a run of a goal (the goal's area under the Desk's Areas folder,
   for example `Areas/Dev/G1/OT-ALP1116091559/plan.md`);
-- `Inbox/<to-do id>/<run id>/<file>` for a to-do with no goal.
+- `<Inbox folder>/<to-do id>/<run id>/<file>` for a to-do with no goal (the Desk's Inbox folder, numbered or not).
+
+A record keeps the path it was first given: renaming an area or moving a goal does not move or duplicate it.
 
 A result starts as a **draft**, whoever's to-do it serves; that includes work an assigned agent prepares for the
 owner's to-do (section 7). It becomes **final** only when the owner accepts it once: `lina work artifact final <id>`,

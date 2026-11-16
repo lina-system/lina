@@ -101,3 +101,36 @@ def test_only_the_owners_final_makes_a_draft_final_and_a_final_file_is_never_ove
     code, _out, err = work.run("artifact", "final", str(draft["id"] + 100))
     assert code != 0 and f"#{draft['id'] + 100}" in err
 
+
+@pytest.mark.parametrize("edit", [("A1", "--title", "Engineering"), ("G1", "--parent", "A2")],
+                         ids=["area renamed", "goal moved to another area"])
+def test_an_organization_edit_keeps_each_result_record_and_its_acceptance(work, edit):
+    work.ok("add", "목표", "--by", "alpha", "--area", "Ops", "--title", "운영 정리", "--basis", "운영 정리해 줘",
+            "--done", "운영이 돈다", "--check", "false")
+    run_id = _end(work, "T1", {"plan.md": "first\n", "notes.md": "draft one\n"})
+    notes, plan = _artifacts(work, "list", run_id)
+    work.ok("artifact", "final", str(plan["id"]))
+
+    work.ok("edit", *edit)
+    work.ok("edit", "G1", "--title", "빌드 기기 정리 2")
+    _deliver(work, run_id, {"plan.md": "first\n", "notes.md": "draft two\n"})
+    _deliver(work, run_id, {"plan.md": "first\n", "notes.md": "draft two\n"})
+
+    assert [(a["id"], a["path"], a["kind"]) for a in _artifacts(work, "list", run_id)] == [
+        (notes["id"], f"Areas/Dev/G1/{run_id}/notes.md", "draft"), (plan["id"], f"Areas/Dev/G1/{run_id}/plan.md", "final")]
+    assert (work.desk / notes["path"]).read_text(encoding="utf-8") == "draft two\n"
+    assert sorted(p.relative_to(work.desk).as_posix() for p in work.desk.glob(f"Areas/*/G1/{run_id}")) == [
+        f"Areas/Dev/G1/{run_id}"]
+
+
+def test_a_goal_less_result_goes_to_the_desks_own_inbox_folder(work, tmp_path):
+    from hermes_cli.work import artifacts
+    numbered, literal = tmp_path / "numbered", tmp_path / "literal"
+    (numbered / "0_Inbox").mkdir(parents=True)
+    (literal / "Inbox").mkdir(parents=True)
+    db = ledger.open_db()
+    try:
+        assert [artifacts.placement(db, "OT1", "T9", None, "plan.md", desk) for desk in (numbered, literal, None)] == [
+            "0_Inbox/T9/OT1/plan.md", "Inbox/T9/OT1/plan.md", "Inbox/T9/OT1/plan.md"]
+    finally:
+        db.close()

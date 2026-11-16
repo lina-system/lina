@@ -5,9 +5,11 @@ its to-do (the run's first) and goal, and the file's place: ``repo`` and ``commi
 lina#448, so ``path`` is the file's Desk path. The path carries the goal or to-do id, so a result is found from the id:
 
     <area folder>/<goal id>/<run id>/<file>      a run for a goal (the goal's area under the Desk's Areas folder)
-    Inbox/<to-do id>/<run id>/<file>             a run for a to-do with no goal
+    <Inbox folder>/<to-do id>/<run id>/<file>    a run for a to-do with no goal (the Desk's Inbox folder)
 
-The file is copied there when a Desk is configured. Every record written at a run's end is a ``draft``, and a draft
+A record keeps the path it was first given: a later delivery of the same file finds it by run and the file's path
+inside the run's ``out/``, so renaming an area or moving a goal does not make a second record. The file is copied
+there when a Desk is configured. Every record written at a run's end is a ``draft``, and a draft
 stays the run's latest delivered file; only :func:`finalize` (the owner's explicit action) makes it ``final``, and a
 final file is never overwritten.
 """
@@ -37,21 +39,25 @@ def served(values) -> dict:
             "createdAt": int(datetime.datetime.fromisoformat(str(r["created_at"])).timestamp())}
 
 
+def _para_folder(desk: Path | None, name: str) -> str:
+    """The Desk's folder for PARA *name* (an adopted Desk may number it, ``0_Inbox``); *name* with no Desk."""
+    if desk is None:
+        return name
+    from hermes_cli.desk import desk_layout
+    return desk_layout(desk)[name].relative_to(desk).as_posix()
+
+
 def _area_folder(db, goal_id: str, desk: Path | None) -> str:
     title = db.execute("SELECT a.title FROM goal g JOIN area a ON a.id = g.area_id WHERE g.id = ?",
                        (goal_id,)).fetchone()[0]
-    areas = "Areas"
-    if desk is not None:
-        from hermes_cli.desk import desk_layout
-        areas = desk_layout(desk)["Areas"].relative_to(desk).as_posix()
-    return f"{areas}/{title}"
+    return f"{_para_folder(desk, 'Areas')}/{title}"
 
 
 def placement(db, run_id: str, todo_id: str | None, goal_id: str | None, name: str, desk: Path | None) -> str:
     """The Desk path of *name* (a path under the run's ``out/``)."""
     if goal_id:
         return f"{_area_folder(db, goal_id, desk)}/{goal_id}/{run_id}/{name}"
-    return f"Inbox/{todo_id or 'none'}/{run_id}/{name}"
+    return f"{_para_folder(desk, 'Inbox')}/{todo_id or 'none'}/{run_id}/{name}"
 
 
 def _owners(db, run_id: str) -> tuple[str | None, str | None, str]:
@@ -64,23 +70,39 @@ def _owners(db, run_id: str) -> tuple[str | None, str | None, str]:
     return todo_id, goal_id, agent
 
 
+def _recorded(db, run_id: str) -> dict[str, tuple]:
+    """The run's records by the file's path inside the run's ``out/``: what follows ``/<goal or to-do id>/<run id>/``
+    in the stored path, the part :func:`placement` takes from no title."""
+    found = {}
+    for row in db.execute(_SELECT + " WHERE run_id = ? ORDER BY id", (run_id,)).fetchall():
+        r = dict(zip(COLUMNS, row))
+        _folder, marker, name = r["path"].partition(f"/{r['goal_id'] or r['todo_id'] or 'none'}/{run_id}/")
+        if marker:
+            found.setdefault(name, row)
+    return found
+
+
 def record(db, run_id: str, out_dir: Path, desk: Path | None, at: str) -> list[dict]:
     """A finished run's files under *out_dir* -> one draft record each (idempotent: a record already there keeps its
-    kind). Returns the run's records for these files."""
+    path and its kind, whatever its area is called now). Returns the run's records for these files."""
     from hermes_cli.worker.runners.base import iter_artifact_files
     out_dir = Path(out_dir)
     if not out_dir.is_dir():
         return []
     todo_id, goal_id, agent = _owners(db, run_id)
+    recorded = _recorded(db, run_id)
     found = []
     for source in iter_artifact_files(out_dir):
-        path = placement(db, run_id, todo_id, goal_id, source.relative_to(out_dir).as_posix(), desk)
-        db.execute("INSERT INTO artifact (run_id, todo_id, goal_id, path, kind, created_at, agent_id) "
-                   "VALUES (?, ?, ?, ?, 'draft', ?, ?) ON CONFLICT (run_id, path) DO NOTHING",
-                   (run_id, todo_id, goal_id, path, at, agent))
-        row = db.execute(_SELECT + " WHERE run_id = ? AND path = ?", (run_id, path)).fetchone()
+        name = source.relative_to(out_dir).as_posix()
+        row = recorded.get(name)
+        if row is None:
+            path = placement(db, run_id, todo_id, goal_id, name, desk)
+            db.execute("INSERT INTO artifact (run_id, todo_id, goal_id, path, kind, created_at, agent_id) "
+                       "VALUES (?, ?, ?, ?, 'draft', ?, ?) ON CONFLICT (run_id, path) DO NOTHING",
+                       (run_id, todo_id, goal_id, path, at, agent))
+            row = db.execute(_SELECT + " WHERE run_id = ? AND path = ?", (run_id, path)).fetchone()
         if desk is not None and row[COLUMNS.index("kind")] == "draft":
-            target = desk / path
+            target = desk / row[COLUMNS.index("path")]
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source, target)
         found.append(served(row))

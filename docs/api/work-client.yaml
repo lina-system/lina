@@ -405,7 +405,8 @@ components:
         One result file of a worker run, tied to the run's to-do and goal (lina#527). `kind` starts as `draft` for
         every file a run leaves in `out/`; only the owner's acceptance makes it `final`. `repo` and `commit` stay
         null until the forge (lina#448); until then `path` is the file's Desk path,
-        `<area folder>/<goal id>/<run id>/<file>` (a to-do with no goal: `Inbox/<to-do id>/<run id>/<file>`).
+        `<area folder>/<goal id>/<run id>/<file>` (a to-do with no goal: `<Inbox folder>/<to-do id>/<run id>/<file>`);
+        a record keeps that path when its area is renamed or its goal moves.
       required: [id, run, task, goal, repo, path, commit, kind, createdAt]
       properties:
         id:
