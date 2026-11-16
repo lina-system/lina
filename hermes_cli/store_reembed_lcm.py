@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 
 from psycopg import Connection
 
-from hermes_cli.store_reembed import SourceCounts, _progress, _vector_literal
+from hermes_cli.store_reembed import SourceCounts, _progress, _vector_literal, embed_bounded, split_note
 
 
 def _write_batch(conn: Connection, agent: str, model: str, identity: str,
@@ -59,7 +59,7 @@ def summaries_left(conn: Connection, model: str) -> int:
 
 
 def reembed_summaries(conn: Connection, embed: Callable[[list[str]], list[list[float]]], counts: SourceCounts,
-                      *, model: str, batch_size: int, from_start: bool, max_chars: int,
+                      *, model: str, batch_size: int, from_start: bool, max_chars: int, max_request_chars: int,
                       max_batches: int | None, out: Callable[[str], None]) -> None:
     """Add summary counts while preserving Honcho's cursor and empty-ctx reporting."""
     if conn.execute("SELECT to_regclass('ctx.summary_nodes') IS NULL").fetchone()[0]:
@@ -84,12 +84,12 @@ def reembed_summaries(conn: Connection, embed: Callable[[list[str]], list[list[f
             if not rows:
                 break
             texts = [text for _, text, _ in rows if text]
-            vectors = embed(texts) if texts else []
+            vectors, requests = embed_bounded(embed, texts, max_request_chars)
             _write_batch(conn, agent, model, identity, rows, vectors, progress)
             after = rows[-1][0]
             counts.batches += 1
             counts.embedded += len(texts)
             embedded += len(texts)
             counts.skipped += len(rows) - len(texts)
-            out(f"memory: LCM {agent}: up to id {after}, {embedded} embedded")
+            out(f"memory: LCM {agent}: up to id {after}, {embedded} embedded{split_note(requests)}")
         counts.notes.append(f"LCM {agent}: {embedded} embedded, resumed after id {resumed}, last id {after}")

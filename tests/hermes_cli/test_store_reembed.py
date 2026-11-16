@@ -208,7 +208,9 @@ def test_a_persistent_429_stops_with_the_progress_saved_and_the_rows_left(_memor
             reembed(_connect(_memory_store), client, ["agent"], batch_size=2, out=lambda line: None)
     assert "rows left: agent 3" in str(stopped.value)
     assert "`lina store reembed --source agent` again to continue" in str(stopped.value)
-    assert sleeps == [1.0, 2.0]
+    # The refused batch of two is halved (lina#763); its first row alone is refused too, which stops the run.
+    assert endpoint.inputs[1:] == [["turn 2", "turn 3"]] * 3 + [["turn 2"]] * 3
+    assert sleeps == [1.0, 2.0, 1.0, 2.0]
     assert memory_store_sql("SELECT last_item_id FROM vec.reembed_progress WHERE source = 'agent'") == [(ids[1],)]
     assert memory_store_sql("SELECT count(*) FROM vec.embeddings")[0][0] == 2
 
