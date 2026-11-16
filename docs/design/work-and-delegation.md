@@ -159,7 +159,34 @@ it; they run at the same time.
 
 **Builds it:** lina#657.
 
-## 13. Screen rules
+## 13. Results open from the to-do and the goal
+
+**Decision.** Every file a run leaves in `out/` is a result record tied to the run, its to-do and its goal, so the
+app opens a result straight from the to-do or the goal, and a file shows which to-do or goal it belongs to. The
+record is a row of `work.artifact` (run, to-do, goal, repo, path, commit, kind, created time), a new table and not a
+link kind, because one link holds one target and a result holds a path and a commit together. Until the forge
+(lina#448) exists, `repo` and `commit` are empty and `path` is the result's Desk path, laid out so the path carries
+the goal or to-do id:
+
+- `<area folder>/<goal id>/<run id>/<file>` for a run of a goal (the goal's area under the Desk's Areas folder,
+  for example `Areas/Dev/G1/OT-ALP1116091559/plan.md`);
+- `<Inbox folder>/<to-do id>/<run id>/<file>` for a to-do with no goal (the Desk's Inbox folder, numbered or not).
+
+A record keeps the path it was first given: renaming an area or moving a goal does not move or duplicate it.
+
+A result starts as a **draft**, whoever's to-do it serves; that includes work an assigned agent prepares for the
+owner's to-do (section 7). It becomes **final** only when the owner accepts it once: `lina work artifact final <id>`,
+the store function the app calls. Nothing else turns a draft final. A draft's Desk copy follows the run's latest
+delivered file; a final file is never overwritten.
+
+**Why.** A run's only output field was its hub folder, and commits were text in `git.txt`, so nothing tied a result
+to the to-do or goal that wanted it, and the app could not open one from either.
+
+**Builds it:** lina#527 (records, the draft-to-final step, `artifacts[]` on a run, a card, a goal and an owner's
+to-do, and the lookup from a path in [work-client.yaml](../api/work-client.yaml)); repo and commit values wait on
+lina#448.
+
+## 14. Screen rules
 
 The owner's screen rules (one detail frame for every detail view, history rows as `time · one sentence`, neutral work
 wording, an in-progress line is one goal or task session) live in

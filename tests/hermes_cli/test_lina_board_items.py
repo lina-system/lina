@@ -239,3 +239,20 @@ def test_a_record_that_fails_to_read_is_an_error_and_the_list_is_empty(work, cli
     assert (listing["owner"], listing["agents"], listing["items"]) == (None, [], [])
     response = client.get("/api/lina/work/items/G1")
     assert response.status_code == 503 and response.json()["detail"]
+
+
+def test_a_todo_and_its_goal_carry_the_result_records_of_its_runs(work, client):
+    """lina#527: a run that ended with a file in ``out/`` gives its to-do and the to-do's goal one draft each."""
+    work.goal_and_todos(todos=2)
+    work.ok("run", "submit", "T1", "--brief", str(work.brief))
+    (run_id,) = [p.stem for p in (work.root / "worker" / "hub" / "jobs").glob("*.json")]
+    out = work.root / "worker" / "hub" / "out" / "alpha" / run_id / "out"
+    out.mkdir(parents=True)
+    (out / "report.txt").write_text("ok\n", encoding="utf-8")
+    _job(work, run_id, state="done", delivery="ok", host="here")
+
+    todo, goal, other = (_detail(client, i) for i in ("T1", "G1", "T2"))
+    assert [(a["run"], a["task"], a["goal"], a["path"], a["kind"]) for a in todo["artifacts"]] == [
+        (run_id, "T1", "G1", f"Areas/Dev/G1/{run_id}/report.txt", "draft")]
+    assert goal["artifacts"] == todo["artifacts"]
+    assert other["artifacts"] == []

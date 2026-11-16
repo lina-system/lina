@@ -20,10 +20,10 @@ REFERENCES = {
 }
 
 
-def rows(db) -> dict:
+def rows(db, kinds=KINDS) -> dict:
     return {kind: [dict(zip(db.columns(kind), row)) for row in db.execute(
         f"SELECT * FROM {kind} ORDER BY " + ("run_id, todo_id" if kind == "run_todo" else "id")).fetchall()]
-            for kind in KINDS}
+            for kind in kinds}
 
 
 def key(kind, row) -> tuple:

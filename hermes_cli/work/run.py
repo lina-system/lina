@@ -240,10 +240,22 @@ def worker_job(run_id: str) -> dict | None:
     return _job_row(job) if job else None
 
 
+def sync(db, rows: list[dict], sessions: list[dict] | None = None) -> list:
+    """``store.sync_runs`` plus the result records of every run that ended with its results fetched (lina#527): one
+    draft per file in its ``out/``. -> the pairs ``sync_runs`` left out."""
+    from hermes_cli.work import artifacts
+    at = store.utc(now())
+    missing = store.sync_runs(db, rows, sessions or [], at)
+    for row in rows:
+        if row.get("result"):
+            artifacts.record(db, row["id"], Path(row["result"]) / "out", ledger.current().desk, at)
+    return missing
+
+
 def _sync_one(db, run_id: str) -> None:
     row = worker_job(run_id)
     if row:
-        store.sync_runs(db, [row], [], store.utc(now()))
+        sync(db, [row])
 
 
 def card_todos(card: str) -> list[str]:

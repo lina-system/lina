@@ -632,3 +632,50 @@ def test_finished_cards_come_as_a_newest_first_page_and_a_total_beside_every_unf
     for bad in ({"finished_limit": -1}, {"finished_limit": "x"}, {"finished_offset": -1},
                 {"finished_offset": "1.5"}, {"finished_limit": ""}):
         assert client.get(f"{WORK}/cards", params=bad).status_code == 422, bad
+
+
+def _ended_run(tmp_path, todo: str, files: dict[str, str]) -> str:
+    """A record run of *todo* that ended with *files* fetched into the scratch hub's ``out/`` (lina#527)."""
+    import json
+    brief = tmp_path / "brief.md"
+    brief.write_text("Write out/plan.md\n", encoding="utf-8")
+    _record("run", "submit", todo, "--brief", str(brief))
+    (job_path,) = (tmp_path / ".hermes" / "worker" / "hub" / "jobs").glob("*.json")
+    job = json.loads(job_path.read_text(encoding="utf-8"))
+    job.update(state="done", delivery="ok", host="here")
+    job_path.write_text(json.dumps(job), encoding="utf-8")
+    for name, text in files.items():
+        target = tmp_path / ".hermes" / "worker" / "hub" / "out" / job["bot"] / job["id"] / "out" / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+    _record("run-sync")
+    return job["id"]
+
+
+def test_a_card_its_worker_run_and_its_goal_carry_result_records_that_a_desk_path_finds(client, conn, tmp_path):
+    """lina#527: a run of a to-do linking ``kanban:<card>`` leaves its files as drafts on the card, on the worker run the
+    card names and on the goal card above it; a Desk path or folder finds the runs, to-dos and goals they belong to."""
+    work_card = _card(conn, "a card the record links")
+    goal_card = _goal(conn, [work_card])
+    _record("add", "목표", "--by", "alpha", "--area", "Dev", "--title", "빌드 기기 정리", "--basis", "기기 정리해 줘",
+            "--done", "빌드 기기가 모두 가동된다", "--check", "false")
+    _record("add", "할 일", "--by", "alpha", "--goal", "G1", "--title", "기기 1 점검", "--why", "멈추지 않게",
+            "--done", "기기가 답한다", "--check", "false", "--link", f"kanban:{work_card}")
+    run_id = _ended_run(tmp_path, "T1", {"plan.md": "# plan\n"})
+    kb.add_comment(conn, work_card, AGENT, f"handed to {run_id}")
+    path = f"Areas/Dev/G1/{run_id}/plan.md"
+
+    card = _card_json(client, work_card)
+    assert [(a["path"], a["kind"], a["task"], a["goal"]) for a in card["artifacts"]] == [(path, "draft", "T1", "G1")]
+    assert [(r["id"], [a["path"] for a in r["artifacts"]]) for r in card["workerRuns"]] == [(run_id, [path])]
+    goal = _valid("WorkGoal", client.get(f"{WORK}/goals/{goal_card}").json())
+    assert goal["artifacts"] == card["artifacts"]
+    listed = _valid("GoalList", client.get(f"{WORK}/goals").json())
+    assert {g["id"]: [a["path"] for a in g["artifacts"]] for g in listed["goals"]} == {goal_card: [path]}
+
+    found = client.get(f"{WORK}/artifacts", params={"path": "Areas/Dev/G1"})
+    assert found.status_code == 200, found.text
+    found = _valid("ArtifactLookup", found.json())
+    assert ([a["path"] for a in found["artifacts"]], found["runs"], found["tasks"], found["goals"]) == (
+        [path], [run_id], ["T1"], ["G1"])
+    assert _valid("ArtifactLookup", client.get(f"{WORK}/artifacts", params={"path": "Inbox"}).json())["artifacts"] == []
