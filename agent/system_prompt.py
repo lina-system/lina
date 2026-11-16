@@ -534,12 +534,15 @@ def date_line(agent: Any) -> str:
 
 
 def _memory_parts(agent: Any) -> list[str]:
-    """Notes and person card: built-in memory/USER.md blocks plus the external provider block (gated
+    """Notes and person card: built-in shared OWNER.md, MEMORY.md and USER.md blocks plus the external provider block (gated
     on the same check ``inject_memory_provider_tools`` uses, so we never advertise tools the toolset
     config gated off). Read at prompt build only: once per session and again after a compaction."""
     parts: list[str] = []
     if agent._memory_store:
-        for enabled, kind in ((agent._memory_enabled, "memory"), (agent._user_profile_enabled, "user")):
+        # The install's shared owner profile leads (lina#467): its bytes come before every per-agent
+        # block, so a change to this agent's notes or profile leaves them in the cached prefix.
+        for enabled, kind in ((agent._user_profile_enabled, "shared"), (agent._memory_enabled, "memory"),
+                              (agent._user_profile_enabled, "user")):
             block = agent._memory_store.format_for_system_prompt(kind) if enabled else None
             if block:
                 parts.append(block)

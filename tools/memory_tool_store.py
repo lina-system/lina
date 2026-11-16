@@ -21,7 +21,15 @@ logger = logging.getLogger("tools.memory_tool")
 # Block header prefixes rendered by _render_block; agent/conversation_compression.py
 # matches them to detect a leftover block for an emptied target — keep in lockstep.
 MEMORY_BLOCK_HEADERS = {
-    "memory": "MEMORY (your personal notes)", "user": "USER PROFILE (who the user is)"}
+    "memory": "MEMORY (your personal notes)", "user": "USER PROFILE (who the user is)",
+    "shared": "SHARED OWNER PROFILE (who the owner is, read by every agent of this install)"}
+
+# The layer each target is, as budget reports and "full" rejections name it (lina#467).
+MEMORY_LAYER_LABELS = {
+    "memory": "agent notes (MEMORY.md)", "user": "per-agent user profile (USER.md)",
+    "shared": "shared owner profile (shared/OWNER.md)"}
+_ENTRY_ATTRS = {"memory": "memory_entries", "user": "user_entries", "shared": "shared_entries"}
+_LIMIT_ATTRS = {"memory": "memory_char_limit", "user": "user_char_limit", "shared": "shared_user_char_limit"}
 
 ENTRY_DELIMITER = "\n§\n"
 
@@ -45,7 +53,7 @@ def _error(message: str, failure_class: str, **extra) -> dict[str, Any]:
 
 def _store_target(filename: str) -> str:
     """The memory tool target that owns a store file, for hints that show the call to make."""
-    return "user" if filename == "USER.md" else "memory"
+    return {"USER.md": "user", "OWNER.md": "shared"}.get(filename, "memory")
 
 
 def _drift_error(path: Path, bak_path: str) -> dict[str, Any]:
@@ -126,8 +134,9 @@ def _no_match_error(entries: list[str], old_text: str, verb: str, **extra) -> di
                   **({"closest_entries": closest} if closest else {}), **extra)
 
 
-def _over_limit(new_total: int, limit: int) -> str:
-    return f"would put memory at {new_total:,}/{limit:,} chars: free at least {new_total - limit:,} chars"
+def _over_limit(target: str, new_total: int, limit: int) -> str:
+    return (f"would put the {MEMORY_LAYER_LABELS[target]} at {new_total:,}/{limit:,} chars: free at least "
+            f"{new_total - limit:,} chars")
 
 
 # Patch content cannot be empty, and 'remove' would drop the sibling facts in the entry.
@@ -186,18 +195,21 @@ class MemoryStore:
     _MAX_CONSOLIDATION_FAILURES_PER_TURN = 3
 
     def __init__(self, memory_char_limit: int = 2200, user_char_limit: int = 1375, *,
-                 memory_enabled: bool = True, user_profile_enabled: bool = True):
+                 memory_enabled: bool = True, user_profile_enabled: bool = True,
+                 shared_user_char_limit: int = 2500):
         self.memory_entries: list[str] = []
         self.user_entries: list[str] = []
+        self.shared_entries: list[str] = []  # the install's shared owner profile (lina#467)
         self.memory_char_limit, self.user_char_limit = memory_char_limit, user_char_limit
+        self.shared_user_char_limit = shared_user_char_limit
         self.memory_enabled, self.user_profile_enabled = memory_enabled, user_profile_enabled
-        self._system_prompt_snapshot: dict[str, str] = {"memory": "", "user": ""}
+        self._system_prompt_snapshot: dict[str, str] = {"shared": "", "memory": "", "user": ""}
         self._consolidation_failures = 0  # per turn; reset by reset_consolidation_failures()
 
     # Per-turn counter of failed at-capacity consolidation attempts; reset at each turn boundary by
     # reset_consolidation_failures() (#42405).
     def target_enabled(self, target: str) -> bool:
-        return self.user_profile_enabled if target == "user" else self.memory_enabled
+        return self.memory_enabled if target == "memory" else self.user_profile_enabled
 
     def reset_consolidation_failures(self) -> None:
         """Call at turn start."""
@@ -237,7 +249,7 @@ class MemoryStore:
                     f"Removed from system prompt; use memory(action=remove, target='{_store_target(filename)}') "
                     f"to delete the original.]")
 
-        for target in ("memory", "user"):
+        for target in ("shared", "memory", "user"):
             path = self._path_for(target)
             from hermes_constants import mkdir_under_hermes_home
 
@@ -299,20 +311,23 @@ class MemoryStore:
 
     @staticmethod
     def _path_for(target: str) -> Path:
-        from tools import memory_tool  # get_memory_dir is monkeypatched there
+        from tools import memory_tool  # read through the facade: tests monkeypatch get_memory_dir there
+        if target == "shared":
+            from tools.memory_tool_shared import SHARED_FILENAME
+            return memory_tool.get_shared_memory_dir() / SHARED_FILENAME
         return memory_tool.get_memory_dir() / ("USER.md" if target == "user" else "MEMORY.md")
 
     def _entries_for(self, target: str) -> list[str]:
-        return self.user_entries if target == "user" else self.memory_entries
+        return getattr(self, _ENTRY_ATTRS[target])
 
     def _set_entries(self, target: str, entries: list[str]):
-        setattr(self, "user_entries" if target == "user" else "memory_entries", entries)
+        setattr(self, _ENTRY_ATTRS[target], entries)
 
     def _char_count(self, target: str) -> int:
         return len(ENTRY_DELIMITER.join(self._entries_for(target)))
 
     def _char_limit(self, target: str) -> int:
-        return self.user_char_limit if target == "user" else self.memory_char_limit
+        return getattr(self, _LIMIT_ATTRS[target])
 
     def _usage(self, target: str) -> str:
         return f"{self._char_count(target):,}/{self._char_limit(target):,}"
@@ -323,15 +338,17 @@ class MemoryStore:
 
     def _failure_with_entries(self, target: str, message: str) -> dict[str, Any]:
         """Over-budget consolidation failure carrying the live entries so the model can consolidate."""
-        return self._consolidation_failure(
-            _error(message, "over_budget", current_entries=self._entries_for(target), usage=self._usage(target)))
+        return self._consolidation_failure(_error(
+            message, "over_budget", layer=MEMORY_LAYER_LABELS[target], current_entries=self._entries_for(target),
+            usage=self._usage(target)))
 
     def _add_overflow(self, target: str, content: str, limit: int) -> dict[str, Any]:
         """A lone add over budget, legacy or one-item batch: the model has not consolidated yet,
         so the live entries come back (its prompt snapshot may predate other sessions' writes)."""
         over = len(ENTRY_DELIMITER.join(self._entries_for(target) + [content])) - limit
         return self._failure_with_entries(target, (
-            f"Memory at {self._char_count(target):,}/{limit:,} chars; adding this entry ({len(content)} chars) "
+            f"The {MEMORY_LAYER_LABELS[target]} is full: {self._char_count(target):,}/{limit:,} chars; adding this "
+            f"entry ({len(content)} chars) "
             f"would exceed the limit by {over:,} chars. Retry as ONE 'operations' batch that "
             f"removes or shortens (patch) stale entries from current_entries below to free at least "
             f"{over:,} chars AND adds this entry — the limit is checked only on the batch result."))
@@ -344,7 +361,7 @@ class MemoryStore:
         its few ``closest_entries``."""
         return self._consolidation_failure(
             _error(message + " No operations were applied (batch is all-or-nothing).", failure_class,
-                   usage=self._usage(target),
+                   layer=MEMORY_LAYER_LABELS[target], usage=self._usage(target),
                    **({"closest_entries": closest_entries} if closest_entries else {})))
 
     def _mutate(self, target: str, mutate, *, skip_drift: bool = False) -> dict[str, Any]:
@@ -401,6 +418,8 @@ class MemoryStore:
             return _error("Content cannot be empty.", "missing_content")
         if scan_error := _scan_memory_content(content):
             return _error(scan_error, "scan_blocked")
+        if repeat := self._shared_repeat(target, content):
+            return repeat
 
         def _add(entries, limit):
             if content in entries:
@@ -424,7 +443,24 @@ class MemoryStore:
             return _error("new_content cannot be empty. Use 'remove' to delete entries.", "missing_content")
         if scan_error := _scan_memory_content(new_content):
             return _error(scan_error, "scan_blocked")
+        if repeat := self._shared_repeat(target, new_content):
+            return repeat
         return self._edit(target, old_text.strip(), new_content, matched_entry)
+
+    def _shared_repeat(self, target: str, content: str) -> Optional[dict[str, Any]]:
+        """The refusal for a per-agent profile write that repeats a shared owner profile entry
+        (lina#467), read from disk so another agent's fresh shared write counts; None otherwise."""
+        if target != "user":
+            return None
+        from tools.memory_tool_shared import find_shared_match
+        if not (match := find_shared_match(self._read_file(self._path_for("shared")), content)):
+            return None
+        entry, kind = match
+        return _error((
+            f"Not saved to the {MEMORY_LAYER_LABELS['user']}: it repeats the {MEMORY_LAYER_LABELS['shared']} "
+            f"entry '{entry}' ({kind} match), which every agent of this install already reads. If that fact "
+            f"changed, patch the shared entry with target='shared'; keep in 'user' only what this agent alone "
+            f"needs."), "shared_duplicate", shared_entry=entry, match=kind)
 
     def patch(self, target: str, old_text: str, new_text: str,
               matched_entry: Optional[str] = None) -> dict[str, Any]:
@@ -450,11 +486,13 @@ class MemoryStore:
             after, message, failure_class = _patch_entry(before, old_text, new_text)
             if after is None:
                 return _error(message, failure_class)
+            if repeat := self._shared_repeat(target, after):
+                return repeat
             patched = entries[:idx] + [after] + entries[idx + 1:]
             new_total = len(ENTRY_DELIMITER.join(patched))
             if new_total > limit:
                 return self._failure_with_entries(target, (
-                    f"Patch would put memory at {new_total:,}/{limit:,} chars. Shorten the new "
+                    f"Patch {_over_limit(target, new_total, limit)}. Shorten the new "
                     f"text, or 'remove' other stale or less important entries to make room "
                     f"(see current_entries below), then retry — all in this turn."))
             return patched, "Entry patched.", {
@@ -505,7 +543,7 @@ class MemoryStore:
             new_total = len(ENTRY_DELIMITER.join(replaced))
             if new_total > limit:
                 return self._failure_with_entries(target, (
-                    f"Replacement {_over_limit(new_total, limit)}. Shorten the new content, or retry as ONE "
+                    f"Replacement {_over_limit(target, new_total, limit)}. Shorten the new content, or retry as ONE "
                     f"'operations' batch with this replace plus removes/shortenings of other stale entries "
                     f"(see current_entries below) — the limit is checked only on the batch result."))
             return replaced, "Entry replaced.", {"replaced_entry": entries[idx]}
@@ -600,6 +638,10 @@ class MemoryStore:
                     op.get("matched_entry"))
                 if msg:  # a failed op's second value is its closest_entries (or None)
                     return self._batch_failure(target, msg, failure_class, closest_entries=previous_content)
+                written = after if act == "patch" else content if act in ("add", "replace") else None
+                if written and (repeat := self._shared_repeat(target, written)):
+                    repeat["error"] = f"Operation {i + 1} ({act}): {repeat['error']} No operations were applied."
+                    return repeat
                 matched.append(previous_content)
                 if after is not None:
                     produced[i + 1] = after
@@ -624,7 +666,7 @@ class MemoryStore:
                 if len(ops) == 1 and ops[0].get("action") == "add":  # the advertised single add
                     return self._add_overflow(target, (ops[0].get("content") or ops[0].get("new_text") or "").strip(), limit)
                 return self._batch_failure(target, (
-                    f"Applying all {len(operations)} operations {_over_limit(new_total, limit)} more. Add "
+                    f"Applying all {len(operations)} operations {_over_limit(target, new_total, limit)} more. Add "
                     f"removes or shortening patches of other stale entries to the same batch, then retry."),
                     "over_budget")
             if not commit:
@@ -660,7 +702,7 @@ class MemoryStore:
         # A successful write means the consolidation loop made progress, so the per-turn failure budget
         # resets (the cap counts consecutive failures, not lifetime ones within a turn) (#42405).
         self._consolidation_failures = 0
-        return {"success": True, "done": True, "target": target,
+        return {"success": True, "done": True, "target": target, "layer": MEMORY_LAYER_LABELS[target],
                 "usage": self._usage_pct(target, self._char_count(target)),
                 "entry_count": len(self._entries_for(target)), **({"message": message} if message else {}),
                 **extra,
@@ -671,7 +713,7 @@ class MemoryStore:
         if not entries:
             return ""
         content, sep = ENTRY_DELIMITER.join(entries), "═" * 46
-        title = MEMORY_BLOCK_HEADERS["user" if target == "user" else "memory"]
+        title = MEMORY_BLOCK_HEADERS[target]
         return f"{sep}\n{title} [{self._usage_pct(target, len(content))}]\n{sep}\n{content}"
 
     @staticmethod

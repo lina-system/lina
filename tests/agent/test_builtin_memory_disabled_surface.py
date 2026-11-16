@@ -73,7 +73,8 @@ class TestBuiltinMemoryToolAvailability:
             hermes_home, memory_enabled=False, user_profile_enabled=True
         )
         definition = _memory_tool_definition()
-        assert definition["parameters"]["properties"]["target"]["enum"] == ["user"]
+        # Both user profile layers (lina#467): this agent's USER.md and the shared owner profile.
+        assert definition["parameters"]["properties"]["target"]["enum"] == ["user", "shared"]
 
     def test_tool_present_when_only_memory_enabled(self, hermes_home):
         _write_memory_config(
@@ -114,7 +115,8 @@ class TestBuiltinMemoryToolAvailability:
         definition = _memory_tool_definition()
 
         assert calls == 1
-        assert definition["parameters"]["properties"]["target"]["enum"] == ["user"]
+        # Both user profile layers (lina#467): this agent's USER.md and the shared owner profile.
+        assert definition["parameters"]["properties"]["target"]["enum"] == ["user", "shared"]
 
     def test_unavailable_snapshot_cannot_survive_failed_recheck(self, monkeypatch):
         from tools import memory_tool as memory_tool_module

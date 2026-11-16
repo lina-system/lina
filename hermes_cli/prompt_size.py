@@ -165,7 +165,7 @@ def compute_prompt_breakdown(platform: str = "cli") -> dict[str, Any]:
 
     # Memory + user profile are joined into ``volatile``; re-derive them from the store so the
     # numbers stay attributable.
-    memory_block = user_block = ""
+    memory_block = user_block = shared_block = ""
     store = getattr(agent, "_memory_store", None)
     if store is not None:
         try:
@@ -173,6 +173,7 @@ def compute_prompt_breakdown(platform: str = "cli") -> dict[str, Any]:
                 memory_block = store.format_for_system_prompt("memory") or ""
             if getattr(agent, "_user_profile_enabled", True):
                 user_block = store.format_for_system_prompt("user") or ""
+                shared_block = store.format_for_system_prompt("shared") or ""
         except Exception:
             pass
 
@@ -189,6 +190,7 @@ def compute_prompt_breakdown(platform: str = "cli") -> dict[str, Any]:
         "skills_index": _size(skills_index),
         "memory": _size(memory_block),
         "user_profile": _size(user_block),
+        "shared_user_profile": _size(shared_block),
         "tools": {"count": len(tools), "json_bytes": _bytes(json.dumps(tools, ensure_ascii=False))},
         "sections": sections,
         "skills_breakdown": _compute_skills_breakdown(skills_index),
@@ -205,7 +207,8 @@ def render_breakdown(data: dict[str, Any]) -> str:
         f"  System prompt total : {sp['bytes']:>8,} B  ({_fmt_kb(sp['bytes'])}, {sp['chars']:,} chars)", "",
         "  Major blocks:",
     ]
-    for label, key in (("skills index", "skills_index"), ("memory", "memory"), ("user profile", "user_profile")):
+    for label, key in (("skills index", "skills_index"), ("memory", "memory"), ("user profile", "user_profile"),
+                       ("shared profile", "shared_user_profile")):
         byts = data[key]["bytes"]
         lines.append(f"    {label:<19}: {byts:>8,} B  ({_fmt_kb(byts)})")
     lines += ["", "  Prompt tiers:"] + [f"    {label:<36}: {byts:>8,} B  ({_fmt_kb(byts)})" for label, _chars, byts in data["sections"]]

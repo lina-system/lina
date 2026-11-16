@@ -1050,6 +1050,9 @@ memory:
   # Character limits (~2.75 chars per token, model-independent)
   memory_char_limit: 2200   # ~800 tokens
   user_char_limit: 1375     # ~500 tokens
+  # Shared owner profile (<LINA home>/shared/OWNER.md): one per install, read by every agent
+  # before its own user profile; `lina memory profile merge` moves repeated entries into it.
+  shared_user_char_limit: 2500
 
   # Periodic memory nudge: remind the agent to consider saving memories
   # every N user turns. Set to 0 to disable. Only active when memory is enabled.
