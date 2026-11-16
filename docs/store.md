@@ -271,6 +271,14 @@ decides it when the turn finishes, from the policy table's route ([memory-layer.
 `MessageStore.set_speakers` changes `unknown` to the route's kind on the turn's rows and never changes a decided kind.
 A backfilled user turn stays `unknown`; it is never taken for the owner.
 
+`lina store owner-backfill` decides those old user turns once, by the rule `lina heart` used before rows had a
+kind: a user turn (`source = 'agent'`) whose session's source in the profile's `state.db` is listed in
+`heart.owner_sources` (config.yaml; default `telegram`, `desktop`, `tui`, `webui`, `imsg_mac`, `cli`) and whose text,
+after a gateway origin header, starts with no machine prefix (`hermes_cli/heart/evidence.py`) becomes `owner`, with
+`speaker_ref` NULL (the sender's handle was never stored). A session `state.db` no longer holds leaves its turns
+`unknown`. It walks every profile, changes only `unknown` rows, so a second run changes nothing, and without
+`--apply` prints per-profile counts and changes nothing. `heart.owner_sources` is read by this command only.
+
 Derived items keep the kinds of their sources: `memory.message_source_speakers` gives a heart journal row's
 `source_speakers` (the distinct, sorted kinds of the uids it cites; a cited row that is gone counts as `unknown`), and
 `ctx.summary_speakers` an LCM-X summary's (of every message under it, through every condensed level). Both are views
