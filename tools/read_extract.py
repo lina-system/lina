@@ -221,8 +221,8 @@ def _ocr_scanned_pdf(mod: Any, path: str, exc: BaseException) -> str:
     pages = list(getattr(exc, "pages", []) or [])
     enabled, api_key, api_url = _hosted_ocr_config()
     hosted_error = ""
+    refused, render_dir = _hosted_ocr_refusal(path)
     if enabled:
-        refused, render_dir = _hosted_ocr_refusal(path)
         if refused:
             return _needs_ocr_warning(path, pages, refused=refused, render_dir=render_dir)
         try:
@@ -230,7 +230,8 @@ def _ocr_scanned_pdf(mod: Any, path: str, exc: BaseException) -> str:
             return mod.to_markdown(path, ocr="hosted", **extra).rstrip("\n") + "\n"
         except Exception as hosted_exc:
             hosted_error = f"{type(hosted_exc).__name__}: {hosted_exc}"
-    return _needs_ocr_warning(path, pages, hosted_error)  # whole doc is scans: the warning IS it
+    # whole doc is scans: the warning IS it
+    return _needs_ocr_warning(path, pages, hosted_error, render_dir=render_dir)
 
 
 def _hosted_ocr_refusal(path: str) -> tuple[str, str]:

@@ -177,21 +177,25 @@ def _commands(tool_name: str, args: dict[str, Any]) -> list[str]:
 
 def _named_paths(texts: list[str], cwd: str, commands: list[str]) -> list[str]:
     """Existing paths the call names, relative ones under *cwd*: whole arguments, shell words, and ``@file`` /
-    ``name=@file`` values. Shell words come from each of *commands* and from every other one-line text; another text
-    of several lines (a file's content) counts only whole. A bare word (no slash, no period) counts only as a file
+    ``name=@file`` values. Shell words come from each of *commands*, each resolved in the directory the command runs
+    in after the ``cd`` before it, and from every other one-line text; another text of several lines (a file's
+    content) counts only whole. A bare word (no slash, no period) counts only as a file
     that exists in *cwd*."""
     found = []
     for text in texts:
-        candidates = [text]
-        for words in _words(text) if text in commands or "\n" not in text else []:
-            candidates += words
-        for candidate in candidates:
+        candidates = [(text, cwd)]
+        if text in commands:
+            candidates += [(word, where) for words, where in personal_push.in_directory(_words(text), cwd)
+                           for word in words]
+        elif "\n" not in text:
+            candidates += [(word, cwd) for words in _words(text) for word in words]
+        for candidate, where in candidates:
             candidate = candidate.split("=@", 1)[-1].lstrip("@") if "@" in candidate else candidate
             if not candidate or len(candidate) > 4096:
                 continue
             bare = "/" not in candidate and "." not in candidate
             try:
-                path = Path(cwd, candidate if bare else Path(candidate).expanduser())
+                path = Path(where, candidate if bare else Path(candidate).expanduser())
                 if path.is_file() if bare else path.exists():
                     found.append(str(path.resolve()))
             except (OSError, ValueError):

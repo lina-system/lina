@@ -146,3 +146,23 @@ def test_a_public_post_on_a_later_line_of_a_command_is_refused(project):
                                      session_id=SESSION, task_id=TASK)
 
     assert refused is not None and refused["action"] == "block" and "public: gh issue create" in refused["message"]
+
+
+@pytest.mark.parametrize("command", ["cd private && cat id.txt", "cd -- private\ncat id.txt", "pushd private\ncat id.txt",
+                                     "cd . && cd private; head -n 3 id.txt | wc -l", "cd missing ; cat private/id.txt"],
+                         ids=["and", "option and newline", "pushd", "two cd", "cd to a missing folder, then a path"])
+def test_a_document_read_after_a_cd_marks_the_job(project, command):
+    assert personal.pre_tool_call("terminal", {"command": command, "workdir": str(project)}, session_id=SESSION,
+                                  task_id=TASK) is None
+
+    assert _marks() == [str((project / "private" / "id.txt").resolve())]
+
+
+@pytest.mark.parametrize("command", ["cat id.txt", "cd . && cat id.txt", "cd private\ncd ..\ncat id.txt",
+                                     "cd\ncat id.txt"],
+                         ids=["no cd", "cd to the same folder", "cd and back", "bare cd"])
+def test_a_document_name_that_is_not_in_the_directory_the_command_runs_in_marks_nothing(project, command):
+    assert personal.pre_tool_call("terminal", {"command": command, "workdir": str(project)}, session_id=SESSION,
+                                  task_id=TASK) is None
+
+    assert _marks() == []

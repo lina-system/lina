@@ -170,12 +170,21 @@ def _outgoing(push: _Push) -> Outgoing:
                     [line[1:] for line in added.splitlines() if line.startswith("+") and not line.startswith("+++")])
 
 
+def in_directory(commands: list[list[str]], cwd: str) -> Iterator[tuple[list[str], str]]:
+    """Each simple command of a shell line with the directory it runs in, following ``cd`` and ``pushd`` (options
+    skipped) from *cwd*. A ``cd`` with no usable target (``cd``, ``cd -``, a folder that does not exist) leaves the directory as it was."""
+    for words in commands:
+        yield words, cwd
+        if Path(words[0]).name in {"cd", "pushd"}:
+            targets = [word for word in words[1:] if word == "-" or not word.startswith("-")]
+            if targets and targets[0] != "-":
+                target = os.path.join(cwd, os.path.expanduser(targets[0]))
+                cwd = target if os.path.isdir(target) else cwd
+
+
 def outgoing(commands: list[list[str]], cwd: str) -> Iterator[Outgoing]:
     """What each ``git push`` of a shell line's simple *commands* would send, following ``cd`` from *cwd*. Raises
     ``Undetermined`` for the first push it cannot tell."""
-    for words in commands:
-        program = Path(words[0]).name
-        if program == "cd" and len(words) >= 2:
-            cwd = os.path.join(cwd, os.path.expanduser(words[1]))
-        elif program == "git" and "push" in words[1:]:
-            yield _outgoing(_parse(words, cwd))
+    for words, where in in_directory(commands, cwd):
+        if Path(words[0]).name == "git" and "push" in words[1:]:
+            yield _outgoing(_parse(words, where))

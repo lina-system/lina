@@ -105,3 +105,17 @@ def test_the_temp_copy_of_a_marked_document_is_made_in_the_job_temp_folder(anydo
     assert "synthetic lease" in text
     assert len(seen) == 1 and seen[0].startswith(f"{folders.temp}/")
     assert list(folders.temp.iterdir()) == []  # the copy itself is removed at once
+
+
+def test_a_marked_scan_read_without_hosted_ocr_renders_into_the_job_temp_folder(anydoc, tmp_path, monkeypatch):
+    monkeypatch.setattr(read_extract, "_hosted_ocr_config", lambda: (False, None, None))
+    marked, plain = _scan(tmp_path, "id-card.pdf"), _scan(tmp_path, "menu.pdf")
+    with scoped_current_session_id(SESSION):
+        personal_work.marks_for_home().mark(SESSION, str(marked.resolve()), "owner")
+        warning = read_extract.extract_document_text(str(marked))
+        other = read_extract.extract_document_text(str(plain))
+
+    folders = personal_work.folders_for(SESSION)
+    assert f"{folders.temp}/page" in warning and "$TMPDIR/page" not in warning
+    assert "$TMPDIR/page" in other
+    assert anydoc.hosted == []
