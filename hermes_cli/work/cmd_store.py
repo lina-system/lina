@@ -18,6 +18,9 @@ from hermes_cli.work.env import current
 from hermes_cli.work.kinds import current as current_kind
 from hermes_cli.work.locale import t
 
+# A work.db's tables an import copies as stored: the record's (KINDS) and a run's result records, which refer to
+# its run, to-do and goal. A work.db older than migration 0024 has no artifact table.
+IMPORTED = (*KINDS, "artifact")
 RUN_COLUMNS = ("id", "runner", "title", "mode", "topic", "agent_id", "goal_id", "device", "created_at", "started_at",
                "last_activity_at", "ended_at", "exit_code", "result_path", "cancelled_at", "background_since")
 
@@ -62,6 +65,8 @@ class Source:
             from hermes_cli.work import store_sqlite
             env = current()
             self.db = store_sqlite.connect(path, env.owner, env.names, readonly=True)
+            self.tables = {r[0] for r in self.db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+            self.kinds = tuple(kind for kind in IMPORTED if kind in self.tables)
 
     def lines(self) -> list[tuple[int, str, dict | None]]:
         if self.db is None:
@@ -78,9 +83,12 @@ class Source:
     def counts(self) -> dict:
         if self.db is None:
             return {}
-        present = {r[0] for r in self.db.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()}
         return {table: self.db.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
-                for table in store.TABLES if table in present}
+                for table in store.TABLES if table in self.tables}
+
+    def rows(self) -> dict:
+        """The rows of every IMPORTED table, none for a table the work.db does not have."""
+        return {kind: [] for kind in IMPORTED} | table_rows(self.db, self.kinds)
 
     def close(self) -> None:
         if self.db is not None:
@@ -166,6 +174,9 @@ def import_selected_rows(db, selected: dict) -> None:
             store.upsert(db, kind, row["id"], {c: v for c, v in row.items() if c != "id"})
     _copy_runs(db, [], [tuple(row[c] for c in ("run_id", "todo_id", "closes", "added_by", "added_at"))
                        for row in selected["run_todo"]])
+    # After their runs, to-dos and goals; a profile's work graph (migrate_memory_work) selects no artifacts.
+    for row in selected.get("artifact", ()):
+        store.upsert(db, "artifact", row["id"], {c: v for c, v in row.items() if c != "id"})
     for row in selected["event"]:
         data = json.loads(row["data"])
         text = data.get("ledger", "{}")
@@ -175,8 +186,8 @@ def import_selected_rows(db, selected: dict) -> None:
         if row["parent_id"] is not None:
             db.execute("UPDATE event SET parent_id = ? WHERE id = ?", (row["parent_id"], row["id"]))
     if db.dialect == "postgres":
-        for kind in ("event", "wait", "decision", "link"):
-            if selected[kind]:
+        for kind in ("event", "wait", "decision", "link", "artifact"):
+            if selected.get(kind):
                 db.execute(f"SELECT setval(pg_get_serial_sequence('work.{kind}', 'id'), "
                            f"GREATEST(COALESCE((SELECT max(id) FROM {kind}), 0), 1), true)")
 
@@ -205,9 +216,9 @@ def _check_counts(src: Source, db, lines, skipped, scope=None) -> tuple[bool, li
         want_rows, touched = scope
         got_rows = {kind: {key(kind, row): row for row in records
                            if key(kind, row) in want_rows[kind] or _belongs(kind, row, touched)}
-                    for kind, records in table_rows(db).items()}
+                    for kind, records in table_rows(db, IMPORTED).items()}
         same = all({k: canonical(db, kind, r) for k, r in want_rows[kind].items()}
-                   == {k: canonical(db, kind, r) for k, r in got_rows[kind].items()} for kind in KINDS)
+                   == {k: canonical(db, kind, r) for k, r in got_rows[kind].items()} for kind in IMPORTED)
         ok = ok and same
         report.append(t("표 내용 {n}행: {result}", n=sum(map(len, want_rows.values())),
                         result=t("일치") if same else t("다름")))
@@ -241,7 +252,7 @@ IDENTIFIER = re.compile(r"[a-z_][a-z0-9_]*")
 def _check_columns(db, src: Source) -> None:
     """Every source table has exactly the store's columns, each a plain identifier: its names become the store's
     SQL (and psql input on Postgres), so anything else stops the import before a write."""
-    for kind in (k for k in KINDS if k in store.TABLES):
+    for kind in (k for k in src.kinds if k in store.TABLES):
         got, want = src.db.columns(kind), db.columns(kind)
         if set(got) != set(want) or not all(IDENTIFIER.fullmatch(c) for c in got):
             die(t("원본 work.db의 {table} 표 열이 저장소와 다르다: {columns}", table=kind,
@@ -264,8 +275,8 @@ def _import_tables(db, src: Source) -> tuple[int, int, tuple]:
     today's Desk paths and repo settings, not the source's (lina#480). An event already in the store must match;
     an item that gets new events here takes the source's projection rows, since its edits live there. -> (new
     events, new run/to-do pairs, the rows to check)."""
-    source, present = table_rows(src.db), table_rows(db)
-    have = {kind: {key(kind, row): row for row in present[kind]} for kind in KINDS}
+    source, present = src.rows(), table_rows(db, IMPORTED)
+    have = {kind: {key(kind, row): row for row in present[kind]} for kind in IMPORTED}
     for row in source["event"]:
         old = have["event"].get(key("event", row))
         if old is not None and _event_data(old["data"]) != _event_data(row["data"]):
@@ -281,10 +292,10 @@ def _import_tables(db, src: Source) -> tuple[int, int, tuple]:
             db.execute(f"DELETE FROM {kind} WHERE id = ?", (i,))
     for todo_id in touched["todo"]:
         db.execute("DELETE FROM run_todo WHERE todo_id = ?", (todo_id,))
-    absent = {kind: [row for row in source[kind] if key(kind, row) not in have[kind]] for kind in KINDS}
+    absent = {kind: [row for row in source[kind] if key(kind, row) not in have[kind]] for kind in IMPORTED}
     scope = {kind: {key(kind, row): row for row in source[kind]
-                    if key(kind, row) not in have[kind] or _belongs(kind, row, touched)} for kind in KINDS}
-    import_selected_rows(db, {kind: list(scope[kind].values()) for kind in KINDS})
+                    if key(kind, row) not in have[kind] or _belongs(kind, row, touched)} for kind in IMPORTED}
+    import_selected_rows(db, {kind: list(scope[kind].values()) for kind in IMPORTED})
     return len(absent["event"]), len(absent["run_todo"]), (scope, touched)
 
 

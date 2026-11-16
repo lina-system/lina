@@ -23,7 +23,7 @@ TABLE = {"영역": "area", "목표": "goal", TODO: "todo", OLD_TODO: "todo", "�
 PREFIX_TABLE = {"A": "area", "G": "goal", "T": "todo", "M": "todo"}
 ITEM_ID = "COALESCE(area_id, goal_id, todo_id)"
 TABLES = ("actor", "setting", "status_label", "area", "project", "goal", "todo", "run", "run_todo", "wait",
-          "decision", "link", "event", "outbox")
+          "decision", "link", "artifact", "event", "outbox")
 EPOCH = "1970-01-01T00:00:00Z"
 OP_KIND = {"add": "created", "edit": "edited", "archive": "edited", "unlink": "edited", "seed-writer": "edited",
            "quote": "said", "basis": "said", "note": "note", "evidence": "evidence", "comment": "comment",

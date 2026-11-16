@@ -2,6 +2,7 @@
 only read, and the copy is checked by row counts per table and by every item's latest record (lina#36)."""
 
 import os
+import re
 import sqlite3
 
 import pytest
@@ -77,6 +78,71 @@ def test_import_from_a_work_db_copies_lines_runs_and_pairs(work):
     assert (counts["event"], counts["run"], counts["run_todo"]) == (7, 1, 1)
     assert _fingerprint(db_file) == before
     assert {i["id"]: i["title"] for i in work.json("--all")["items"]}["T1"] == "Updated fixture task"
+
+
+ARTIFACT_COLUMNS = "id, run_id, todo_id, goal_id, repo, path, commit_sha, kind, created_at, agent_id"
+
+
+def _work_db_with_results(work):
+    """A work.db whose run left a draft and a final result record (lina#527)."""
+    db_file = work.tmp / "old" / "work.db"
+    db_file.parent.mkdir()
+    work.ok("migrate", "--from", str(_source(work)), "--to", str(db_file))
+    with sqlite3.connect(db_file) as conn:
+        conn.execute("INSERT INTO run (id, runner, title, agent_id, goal_id, created_at, ended_at, exit_code) "
+                     "VALUES ('OT-ALP1101000000', 'omo', 'old run', 'alpha', 'G1', '2027-01-15T07:00:00Z', "
+                     "'2027-01-15T08:00:00Z', 0)")
+        conn.execute("INSERT INTO run_todo (run_id, todo_id, closes, added_by, added_at) "
+                     "VALUES ('OT-ALP1101000000', 'T1', 1, 'alpha', '2027-01-15T07:00:00Z')")
+        conn.execute(f"INSERT INTO artifact ({ARTIFACT_COLUMNS}) VALUES "
+                     "(7, 'OT-ALP1101000000', 'T1', 'G1', NULL, 'Areas/Dev/G1/OT-ALP1101000000/notes.md', NULL, "
+                     "'draft', '2027-01-15T08:00:00Z', 'alpha'), "
+                     "(9, 'OT-ALP1101000000', 'T1', 'G1', 'example/repo', 'Areas/Dev/G1/OT-ALP1101000000/report.md', "
+                     "'0123abc', 'final', '2027-01-15T08:00:00Z', 'alpha')")
+        artifacts = conn.execute(f"SELECT {ARTIFACT_COLUMNS} FROM artifact ORDER BY id").fetchall()
+    return db_file, artifacts
+
+
+def _artifacts():
+    db = ledger.open_db()
+    try:
+        return [tuple(r) for r in db.execute(f"SELECT {ARTIFACT_COLUMNS} FROM artifact ORDER BY id").fetchall()]
+    finally:
+        db.close()
+
+
+def test_import_from_a_work_db_keeps_its_draft_and_final_results(work):
+    """PR #772 review: a work.db's result records arrive as stored, the owner's final included, and are counted."""
+    db_file, artifacts = _work_db_with_results(work)
+    out = work.ok("import", "--from", str(db_file))
+    assert re.search(r"^artifact +2 +2  일치$", out, re.MULTILINE)
+    assert _artifacts() == artifacts
+    assert "새 줄 0개" in work.ok("import", "--from", str(db_file))
+    assert _artifacts() == artifacts
+
+
+def test_import_fails_when_a_result_record_does_not_arrive(work):
+    """A store that loses the final record on the way fails the count check, and the import writes nothing."""
+    db_file, _ = _work_db_with_results(work)
+    db = ledger.open_db()
+    try:
+        db.execute("CREATE TRIGGER lose_final AFTER INSERT ON artifact WHEN NEW.kind = 'final' "
+                   "BEGIN DELETE FROM artifact WHERE id = NEW.id; END")
+    finally:
+        db.close()
+    code, out, err = work.run("import", "--from", str(db_file))
+    assert code != 0 and "다르다" in err
+    assert re.search(r"^artifact +2 +1  다름$", out, re.MULTILINE)
+    assert _artifacts() == [] and _counts()["event"] == 0
+
+
+def test_import_from_a_work_db_older_than_result_records(work):
+    """A work.db made before migration 0024 has no artifact table; its record still imports."""
+    db_file, _ = _work_db_with_results(work)
+    with sqlite3.connect(db_file) as conn:
+        conn.execute("DROP TABLE artifact")
+    work.ok("import", "--from", str(db_file))
+    assert (_counts()["run"], _artifacts()) == (1, [])
 
 
 def test_import_from_a_work_db_keeps_its_projects_when_lines_name_old_paths(work):
