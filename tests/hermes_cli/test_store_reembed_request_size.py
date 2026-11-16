@@ -104,3 +104,19 @@ def test_the_request_budget_comes_from_config():
     config = {"embedding": {"base_url": "http://127.0.0.1:9/v1", "max_request_chars": 5000}}
     assert EmbeddingSettings.from_config(config).max_request_chars == 5000
     assert EmbeddingSettings.from_config({"embedding": {"base_url": "http://127.0.0.1:9/v1"}}).max_request_chars == 100_000
+
+
+def test_the_request_budget_default_is_registered_and_read_through_the_loader(tmp_path, monkeypatch):
+    from agent.embedding_client import DEFAULT_MAX_REQUEST_CHARS
+    from hermes_cli.config import _validate_config_key, load_config
+    from hermes_cli.config_defaults import DEFAULT_CONFIG
+
+    assert DEFAULT_CONFIG["embedding"]["max_request_chars"] == DEFAULT_MAX_REQUEST_CHARS
+    assert _validate_config_key("embedding.max_request_chars") == (True, None)
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    assert load_config()["embedding"]["max_request_chars"] == DEFAULT_MAX_REQUEST_CHARS
+    (tmp_path / "config.yaml").write_text(
+        "embedding:\n  base_url: http://127.0.0.1:9/v1\n  max_request_chars: 5000\n")
+    config = load_config()
+    assert config["embedding"]["max_request_chars"] == 5000
+    assert EmbeddingSettings.from_config(config).max_request_chars == 5000
