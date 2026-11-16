@@ -238,7 +238,8 @@ own devices and the model services in use (lina#308). What holds for a document 
 
 - **Marking.** The agent calls `mark_personal` with the document's path when the owner says a document is personal; a
   document named by a tool call (`read_file`, a terminal command) that sits under a folder holding `.lina-personal`
-  is marked by itself before the tool runs. The mark is stored with the job ([store.md](store.md#personal-documents)),
+  is marked by itself before the tool runs; a relative path is read where the tool reads it, under a terminal
+  command's `workdir` or the task's directory. The mark is stored with the job ([store.md](store.md#personal-documents)),
   and a compaction's child session continues the job: it joins in the transaction that writes its summary and kept
   rows, so they are masked too.
 - **Masked numbers.** From the mark on, the job's rows are stored with ID and account numbers masked to their last
@@ -251,10 +252,14 @@ own devices and the model services in use (lina#308). What holds for a document 
   request, gist and release writes and `gh api` writes; GitHub, GitLab and posting connectors' write tools) or to a
   third-party service (`curl`/`wget` uploads such as web OCR or converters; `read_file` skips hosted OCR for it).
   A `git push` from a marked job is also checked on the commits it would send (those on no remote-tracking ref of
-  the remote): a path they add or change that is a marked document, under a marker folder or in the job's folders,
+  the remote, from the refspecs the command names, else the remote's `remote.<name>.push` refspecs, else what
+  `push.default` sends: the current branch, or every local branch for `matching`): a path they add or change that is a marked document, under a marker folder or in the job's folders,
   or an added line with an ID or account number or a line of the document's text, refuses it, and so does a push
   whose commits git cannot tell (no remote-tracking ref, a remote given as a URL, a git error); the message says to
   push from a job without a personal document or to remove the document from the commits.
+  The check reads the call's own words and the repository's configuration; it does not follow shell indirection
+  (variables, `eval`, scripts, command substitution) or git and shell aliases, so a push or upload spelled that way
+  is judged on its words only.
   The message says why, and the refusal is in the run record. `delegate_task`, model calls and the owner's own
   devices and chats are not refused. With the store unreachable, such a post is refused because the marks cannot be
   checked.

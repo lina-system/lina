@@ -3,8 +3,11 @@
 A push's words do not say what it sends: a plain ``git push origin main`` sends every commit the remote does not have
 yet. ``outgoing`` finds those commits the way git knows them, reachable from what is pushed and from no
 remote-tracking ref of the destination remote, and answers the paths they add or change and the lines they add.
-``personal.py`` judges them. A push whose outgoing commits cannot be told (no remote-tracking ref of the remote, a
-remote given as a URL, a pattern refspec, a git error) raises ``Undetermined``.
+What is pushed is git's choice too: the refspecs and ``--all``/``--branches``/``--mirror``/``--tags`` the command
+names, else the remote's ``remote.<name>.push`` refspecs, else what ``push.default`` sends (the current branch, or
+every local branch for ``matching``). ``personal.py`` judges them. A push whose outgoing commits cannot be told (no
+remote-tracking ref of the remote, a remote given as a URL, a pattern refspec, a ``push.default`` it does not know, a
+git error) raises ``Undetermined``.
 """
 
 from __future__ import annotations
@@ -18,6 +21,10 @@ from pathlib import Path
 _TIMEOUT = 30
 _VALUE_OPTIONS = {"-o", "--push-option", "--repo", "--receive-pack", "--exec"}
 _RANGE_FLAGS = {"--all": "--branches", "--branches": "--branches", "--mirror": "--all", "--tags": "--tags"}
+# What a push that names no refspec and whose remote has no push refspec sends, by ``push.default`` (git's default
+# is ``simple``): nothing, the current branch, or every branch the remote also has (here: every local branch).
+_PUSH_DEFAULT = {"nothing": [], "current": ["HEAD"], "simple": ["HEAD"], "upstream": ["HEAD"],
+                 "tracking": ["HEAD"], "matching": ["--branches"]}
 # Each outgoing commit's own change: a merge against its first parent, a rename as a new path.
 _LOG = ("log", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", "--diff-merges=first-parent")
 
@@ -57,7 +64,8 @@ def _git(push: _Push, *args: str) -> str:
 
 def _global_args(words: list[str]) -> tuple[list[str], int]:
     """git's options before ``push`` that choose the repository (``-C``, ``--git-dir``, ``--work-tree``), and where
-    ``push`` is. ``-c`` settings are not carried: the check must not run configuration from the command."""
+    ``push`` is, and the ``-c`` settings that choose what is pushed (``push.default``, ``remote.<name>.push``). Other
+    ``-c`` settings are not carried: the check must not run configuration from the command."""
     kept, index = [], 1
     while index < len(words) and words[index] != "push":
         word = words[index]
@@ -67,6 +75,9 @@ def _global_args(words: list[str]) -> tuple[list[str], int]:
         elif word.startswith(("--git-dir=", "--work-tree=")):
             kept.append(word)
         elif word == "-c":
+            setting = words[index + 1] if index + 1 < len(words) else ""
+            if _push_setting(setting.split("=", 1)[0]):
+                kept += [word, setting]
             index += 1
         index += 1
     return kept, index
@@ -102,9 +113,28 @@ def _default_remote(push: _Push) -> str:
     return "origin"
 
 
-def _sources(push: _Push) -> list[str]:
-    sources = list(push.ranges)
-    specs = iter(push.refspecs)
+def _push_setting(key: str) -> bool:
+    parts = key.split(".")
+    return key.lower() == "push.default" or (
+        len(parts) >= 3 and parts[0].lower() == "remote" and parts[-1].lower() == "push")
+
+
+def _configured_sources(push: _Push, remote: str) -> list[str]:
+    """What git pushes when the command names no refspec: the remote's ``remote.<name>.push`` refspecs, else what
+    ``push.default`` sends."""
+    settings = [entry.split("\n", 1) for entry in _git(push, "config", "-z", "--list").split("\0") if "\n" in entry]
+    refspecs = [value for key, value in settings if key == f"remote.{remote}.push"]
+    if refspecs:
+        return _refspec_sources(refspecs)
+    mode = next((value for key, value in reversed(settings) if key == "push.default"), "simple")
+    if mode not in _PUSH_DEFAULT:
+        raise Undetermined(f"push.default {mode} is not one the check knows")
+    return list(_PUSH_DEFAULT[mode])
+
+
+def _refspec_sources(refspecs: list[str]) -> list[str]:
+    sources = []
+    specs = iter(refspecs)
     for spec in specs:
         if spec == "tag":
             spec = f"refs/tags/{next(specs, '')}"
@@ -113,14 +143,20 @@ def _sources(push: _Push) -> list[str]:
             raise Undetermined(f"the refspec {spec} is a pattern")
         if source:
             sources.append(source)
-    return sources or (["HEAD"] if not push.refspecs else [])
+    return sources
+
+
+def _sources(push: _Push, remote: str) -> list[str]:
+    if push.ranges or push.refspecs:
+        return [*push.ranges, *_refspec_sources(push.refspecs)]
+    return _configured_sources(push, remote)
 
 
 def _outgoing(push: _Push) -> Outgoing:
     remote = push.remote or _default_remote(push)
     if not _git(push, "for-each-ref", "--count=1", "--format=%(refname)", f"refs/remotes/{remote}/").strip():
         raise Undetermined(f"no remote-tracking ref of {remote}")
-    sources = _sources(push)
+    sources = _sources(push, remote)
     if not sources:
         return Outgoing([], [])
     span = [*sources, "--not", f"--remotes={remote}", "--"]

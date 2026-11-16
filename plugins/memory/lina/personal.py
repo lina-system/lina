@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shlex
 from pathlib import Path
 from typing import Any, Optional
@@ -139,8 +140,18 @@ def destination(tool_name: str, args: dict[str, Any]) -> Optional[str]:
     return None
 
 
-def _named_paths(texts: list[str]) -> list[str]:
-    """Existing paths the call names: whole arguments, shell words, and ``@file`` / ``name=@file`` values."""
+def _working_dir(tool_name: str, args: dict[str, Any], task_id: str) -> str:
+    """Where the call's relative paths start: a terminal command's ``workdir``, else the task's directory, the one
+    ``tools/file_tools_paths.py`` resolves relative file paths against (the terminal's recorded cwd)."""
+    from tools.file_tools_paths import _resolve_base_dir
+    base = str(_resolve_base_dir(task_id or "default"))
+    workdir = str(args.get("workdir") or "") if tool_name == "terminal" else ""
+    return os.path.join(base, os.path.expanduser(workdir)) if workdir else base
+
+
+def _named_paths(texts: list[str], cwd: str) -> list[str]:
+    """Existing paths the call names, relative ones under *cwd*: whole arguments, shell words, and ``@file`` /
+    ``name=@file`` values."""
     found = []
     for text in texts:
         candidates = [text]
@@ -151,8 +162,9 @@ def _named_paths(texts: list[str]) -> list[str]:
             if not candidate or len(candidate) > 4096 or ("/" not in candidate and "." not in candidate):
                 continue
             try:
-                if Path(candidate).expanduser().exists():
-                    found.append(str(Path(candidate).expanduser().resolve()))
+                path = Path(cwd, Path(candidate).expanduser())
+                if path.exists():
+                    found.append(str(path.resolve()))
             except (OSError, ValueError):
                 continue
     return list(dict.fromkeys(found))
@@ -180,12 +192,13 @@ def _derived_lines(marked: list[str], folders) -> set[str]:
     return lines
 
 
-def carries_personal(texts: list[str], marked: list[str], folders) -> Optional[str]:
+def carries_personal(texts: list[str], marked: list[str], folders, cwd: str) -> Optional[str]:
     """Why the call carries a marked document or text derived from it, or None."""
-    for path in _named_paths(texts):
+    named = _named_paths(texts, cwd)
+    for path in named:
         if personal_work.is_marked(marked, path) or folders.holds(path) or personal_work.marker_folder(path):
             return f"it names the personal document {path}"
-    sent = texts + [_read_text(Path(path)) for path in _named_paths(texts)]
+    sent = texts + [_read_text(Path(path)) for path in named]
     if any(personal_numbers.find(text) for text in sent):
         return "it carries an ID or account number"
     names = {Path(p).name for p in marked if len(Path(p).name) >= 5}
@@ -198,14 +211,6 @@ def carries_personal(texts: list[str], marked: list[str], folders) -> Optional[s
 
 
 _PUSH_HOW = "push from a job without a personal document, or remove the document from the commits"
-
-
-def _terminal_cwd(args: dict[str, Any], task_id: str) -> str:
-    """Where a terminal command starts on this machine: its ``workdir``, the task's recorded cwd, else this
-    process's."""
-    from tools.terminal_tool import get_session_cwd
-    from tools.terminal_tool_config import _safe_getcwd
-    return str(args.get("workdir") or get_session_cwd(task_id) or _safe_getcwd())
 
 
 def pushed_personal(command: str, cwd: str, marked: list[str], folders) -> Optional[str]:
@@ -227,8 +232,8 @@ def pushed_personal(command: str, cwd: str, marked: list[str], folders) -> Optio
     return None
 
 
-def _mark_from_folders(texts: list[str], session_id: str) -> None:
-    folder_marked = [path for path in _named_paths(texts) if personal_work.marker_folder(path)]
+def _mark_from_folders(texts: list[str], session_id: str, cwd: str) -> None:
+    folder_marked = [path for path in _named_paths(texts, cwd) if personal_work.marker_folder(path)]
     if not folder_marked:
         return
     marks = personal_work.marks_for_home()
@@ -250,18 +255,19 @@ def pre_tool_call(tool_name: str = "", args: Optional[dict[str, Any]] = None, se
     where = destination(tool_name, args)
     if not session:
         return None
+    cwd = _working_dir(tool_name, args, task_id)
     try:
-        _mark_from_folders(texts, session)
+        _mark_from_folders(texts, session, cwd)
         if where is None:
             return None
         marks = personal_work.marks_for_home()
         marked = marks.marked_paths(session)
         job = marks.job_of(session)
         folders = personal_work.folders_for(job)
-        why = carries_personal(texts, marked, folders) if marked or any(
-            personal_work.marker_folder(p) for p in _named_paths(texts)) else None
+        why = carries_personal(texts, marked, folders, cwd) if marked or any(
+            personal_work.marker_folder(p) for p in _named_paths(texts, cwd)) else None
         if why is None and marked and tool_name == "terminal":
-            why = pushed_personal(str(args.get("command") or ""), _terminal_cwd(args, task_id), marked, folders)
+            why = pushed_personal(str(args.get("command") or ""), cwd, marked, folders)
         if why is None:
             return None
         marks.record(job, "refused", {"tool": tool_name, "destination": where, "why": why})

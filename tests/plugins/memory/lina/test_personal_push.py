@@ -96,6 +96,54 @@ def test_a_push_whose_outgoing_commits_cannot_be_told_is_refused(repo, tmp_path)
         refused["message"]
 
 
+def _documents_branch(repo: Path) -> Path:
+    _git(repo, "checkout", "-q", "-b", "documents")
+    document = _commit(repo, "private/contract.txt", "Synthetic lease contract for a test tenant\n")
+    _git(repo, "checkout", "-q", "main")
+    return document
+
+
+def test_a_push_by_the_remote_s_push_refspec_of_a_branch_with_a_personal_document_is_refused(repo):
+    _mark(_documents_branch(repo))
+    _git(repo, "config", "remote.origin.push", "documents:documents")
+
+    refused = _push(repo, "git push origin")
+
+    assert refused["message"].startswith("Refused (public: git push): the commits it sends carry the personal "
+                                         "document ")
+    assert _push(repo, "git push")["action"] == "block"
+
+
+def test_a_push_by_the_remote_s_push_refspec_of_a_clean_branch_is_allowed(repo, tmp_path):
+    _mark(tmp_path / "elsewhere" / "id-card.pdf")
+    _git(repo, "checkout", "-q", "-b", "documents")
+    _commit(repo, "docs/guide.md", "How to build the synthetic project\n")
+    _git(repo, "checkout", "-q", "main")
+    _git(repo, "config", "remote.origin.push", "documents:documents")
+
+    assert _push(repo, "git push origin") is None
+
+
+def test_a_matching_push_default_inspects_every_branch(repo):
+    _mark(_documents_branch(repo))
+
+    assert _push(repo, "git -c push.default=matching push origin")["action"] == "block"
+    _git(repo, "config", "push.default", "matching")
+    assert _push(repo, "git push origin")["action"] == "block"
+
+
+def test_a_push_default_that_cannot_be_resolved_is_refused(repo, tmp_path):
+    _mark(tmp_path / "elsewhere" / "id-card.pdf")
+    _git(repo, "config", "push.default", "sideways")
+
+    refused = _push(repo, "git push origin")
+
+    assert refused["message"].startswith("Refused (public: git push): the commits it sends cannot be checked "
+                                         "(error: malformed value for push.default: sideways")
+    assert "push from a job without a personal document, or remove the document from the commits" in \
+        refused["message"]
+
+
 def test_a_push_from_a_job_without_a_mark_is_not_checked(repo):
     _commit(repo, "private/contract.txt", f"주민등록번호 {NUMBER}\n")
 
