@@ -387,7 +387,7 @@ and can only append to the run record.
 notes) mask ID and account numbers in every text field of a row whose session's job carries a mark: Korean resident
 and foreign registration numbers, driver's licence and passport numbers, card numbers (Luhn-checked) and bank account
 numbers keep their last four characters (`900101-1234567` -> `******-***4567`). The rules are fixed code in
-`agent/personal_numbers.py`; dates, amounts, phone numbers and millisecond timestamps are not matched. The job is
+`hermes_state_personal_numbers.py`; dates, amounts, phone numbers and millisecond timestamps are not matched. The job is
 looked up only for a text that has such a number, so other rows cost no query. JSON-backed fields (structured
 content, tool call arguments and results, reasoning items) are masked by their decoded strings, so a label that
 `json.dumps` escapes (`계좌번호`) is still read, and are serialized again with their shape kept. The unmasked value is

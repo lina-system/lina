@@ -148,7 +148,7 @@ def _masked_numbers(value: Any) -> tuple[Any, int]:
     """*value* (one text column, or a row's columns in ``TEXT_FIELDS`` order) with its ID and account numbers masked,
     and the count. JSON-backed text (``CONTENT_JSON_PREFIX`` content, tool calls, reasoning items) is masked by its
     decoded strings and serialized again, so the stored JSON keeps its shape and still parses."""
-    from agent import personal_numbers
+    import hermes_state_personal_numbers as personal_numbers
     if isinstance(value, tuple):
         items = [_masked_numbers(item) for item in value]
         return tuple(item for item, _ in items), sum(count for _, count in items)

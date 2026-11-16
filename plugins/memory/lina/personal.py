@@ -18,7 +18,8 @@ import shlex
 from pathlib import Path
 from typing import Any, Optional
 
-from agent import personal_numbers, personal_work
+import hermes_state_personal_numbers as personal_numbers
+from agent import personal_work
 
 from . import personal_push
 

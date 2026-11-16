@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from agent.personal_numbers import find, mask_json, mask_text, mask_value
+from hermes_state_personal_numbers import find, mask_json, mask_text, mask_value
 
 POSITIVES = [
     ("주민번호 900101-1234567입니다", "주민번호 ******-***4567입니다", "registration"),
