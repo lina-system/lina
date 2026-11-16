@@ -178,8 +178,24 @@ def _outgoing(push: _Push) -> Outgoing:
     top = Path(_git(push, "rev-parse", "--show-toplevel").strip())
     names = _git(push, *_LOG, "--format=", "--name-only", "--diff-filter=d", "-z", *span)
     added = _git(push, *_LOG, "--format=", "-p", "--unified=0", *span)
+    # What a push publishes is the files it changes and the messages that travel with them: each outgoing commit's
+    # message and the message of each annotated tag it names.
+    messages = _git(push, *_LOG, "--format=%B", *span)
     return Outgoing(list(dict.fromkeys(str(top / name) for name in names.split("\0") if name.strip())),
-                    [line[1:] for line in added.splitlines() if line.startswith("+") and not line.startswith("+++")])
+                    [*(line[1:] for line in added.splitlines() if line.startswith("+") and not line.startswith("+++")),
+                     *messages.splitlines(), *_tag_messages(push, sources)])
+
+
+def _tag_messages(push: _Push, sources: list[str]) -> list[str]:
+    """The lines of each annotated tag the push names (``git push origin v1``): a tag object has a message of its own,
+    which no commit of the pushed range holds. ``--tags`` stands for every tag of the repository."""
+    names = _git(push, "for-each-ref", "--format=%(refname)", "refs/tags/").split() if "--tags" in sources else []
+    named = [source for source in sources if not source.startswith("-") and ".." not in source]
+    lines: list[str] = []
+    for source in dict.fromkeys([*names, *named]):
+        if _git(push, "cat-file", "-t", source).strip() == "tag":
+            lines.extend(_git(push, "cat-file", "tag", source).splitlines())
+    return lines
 
 
 def in_directory(commands: list[list[str]], cwd: str) -> Iterator[tuple[list[str], str]]:

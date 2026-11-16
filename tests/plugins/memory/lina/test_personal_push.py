@@ -177,6 +177,58 @@ def test_a_mirror_remote_with_clean_refs_is_allowed(repo, tmp_path):
     assert _push(repo, "git push origin") is None
 
 
+def _empty_commit(repo: Path, message: str) -> None:
+    _git(repo, "commit", "-q", "--allow-empty", "-m", message)
+
+
+def test_an_outgoing_commit_message_with_an_id_number_is_refused(repo, tmp_path):
+    _mark(tmp_path / "elsewhere" / "id-card.pdf")
+    _empty_commit(repo, f"Contract ID {NUMBER}")
+
+    refused = _push(repo, "git push origin main")
+
+    assert refused["message"].startswith("Refused (public: git push): the commits it sends carry an ID or account "
+                                         "number")
+
+
+def test_an_outgoing_commit_message_with_personal_text_is_refused(repo, tmp_path):
+    document = tmp_path / "private" / "contract.txt"
+    document.parent.mkdir()
+    document.write_text("Synthetic lease between the test tenant and the test landlord\n", encoding="utf-8")
+    _mark(document)
+    _empty_commit(repo, "Synthetic lease between the test tenant and the test landlord")
+
+    refused = _push(repo, "git push origin main")
+
+    assert refused["message"].startswith("Refused (public: git push): the commits it sends carry text from a "
+                                         "personal document")
+
+
+def test_a_clean_commit_message_is_allowed(repo, tmp_path):
+    _mark(tmp_path / "elsewhere" / "id-card.pdf")
+    _empty_commit(repo, "Describe the build in the guide")
+
+    assert _push(repo, "git push origin main") is None
+
+
+def test_an_annotated_tag_message_with_an_id_number_is_refused(repo, tmp_path):
+    _mark(tmp_path / "elsewhere" / "id-card.pdf")
+    _git(repo, "tag", "-a", "v1", "-m", f"Release for ID {NUMBER}")  # on a commit the remote already has
+
+    for command in ("git push origin v1", "git push origin refs/tags/v1", "git push origin --tags"):
+        refused = _push(repo, command)
+        assert refused["message"].startswith("Refused (public: git push): the commits it sends carry an ID or "
+                                             "account number"), command
+
+
+def test_a_clean_annotated_tag_is_allowed(repo, tmp_path):
+    _mark(tmp_path / "elsewhere" / "id-card.pdf")
+    _git(repo, "tag", "-a", "v1", "-m", "Release of the synthetic project")
+
+    assert _push(repo, "git push origin v1") is None
+    assert _push(repo, "git push origin --tags") is None
+
+
 def test_a_push_default_that_cannot_be_resolved_is_refused(repo, tmp_path):
     _mark(tmp_path / "elsewhere" / "id-card.pdf")
     _git(repo, "config", "push.default", "sideways")
