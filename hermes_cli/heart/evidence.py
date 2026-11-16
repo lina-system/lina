@@ -42,6 +42,12 @@ def is_owner(speaker: str | None) -> bool:
     return speaker == "owner"
 
 
+def owner_before_speakers(role: str | None, source: str | None, content: str, owner_sources: Iterable[str]) -> bool:
+    """How ``lina heart`` told the owner before rows stored a speaker kind (lina#324): a user turn of a session from
+    one of *owner_sources* whose text has no machine prefix. Only ``lina store owner-backfill`` decides by it now."""
+    return role == "user" and source in owner_sources and not owner_text(content).startswith(MACHINE_PREFIXES)
+
+
 def uids(value: str) -> list[str]:
     pieces = [piece.strip() for piece in value.split(",") if piece.strip()]
     if not pieces or any(any(char.isspace() for char in piece) for piece in pieces):

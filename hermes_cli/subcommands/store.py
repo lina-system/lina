@@ -66,6 +66,9 @@ def _run_action(args) -> int:
     if args.store_action == "reembed":
         from hermes_cli.store_reembed import run
         return run(args)
+    if args.store_action == "owner-backfill":
+        from hermes_cli.store_owner_backfill import run
+        return run(args)
     actions[args.store_action]()
     return 0
 
@@ -115,4 +118,7 @@ def build_store_parser(subparsers) -> None:
                          help="with --source messages: import the message collector's stored chunk vectors from its "
                               "SQLite index (read-only) instead of embedding; the rest is left for reembed")
     sub.add_parser("upgrade", help="Upgrade Honcho: backup, rehearsal migration, one migration job, smoke test")
+    owner = sub.add_parser("owner-backfill", help="Mark user turns stored before speaker kinds (lina#324) as the "
+                                                  "owner's, by their session source; counts only without --apply")
+    owner.add_argument("--apply", action="store_true", help="change the rows (default: count, change nothing)")
     parser.set_defaults(func=_cmd_store, store_parser=parser)
