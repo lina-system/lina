@@ -40,8 +40,16 @@ def get_memory_dir() -> Path:
     return get_hermes_home() / "memories"
 
 
+def get_shared_memory_dir() -> Path:
+    """The install's shared area (``<root>/shared/``, beside the shared Nous token store): every
+    profile of the install resolves the same directory, so the shared owner profile is one file."""
+    from hermes_constants import get_default_hermes_root
+    return get_default_hermes_root() / "shared"
+
+
 from tools.memory_tool_store import (
-    ENTRY_DELIMITER, FAILURE_CLASS, MEMORY_BLOCK_HEADERS, PATCH_DROP_HINT, MemoryStore, _scan_memory_content)
+    ENTRY_DELIMITER, FAILURE_CLASS, MEMORY_BLOCK_HEADERS, MEMORY_LAYER_LABELS, PATCH_DROP_HINT, MemoryStore,
+    _scan_memory_content)
 
 
 def load_on_disk_store() -> MemoryStore:
@@ -54,7 +62,8 @@ def load_on_disk_store() -> MemoryStore:
         mem_cfg = get_builtin_memory_config(config)
         memory_enabled, user_profile_enabled = get_builtin_memory_store_flags(config)
         store = MemoryStore(int(mem_cfg.get("memory_char_limit", 2200)), int(mem_cfg.get("user_char_limit", 1375)),
-                            memory_enabled=memory_enabled, user_profile_enabled=user_profile_enabled)
+                            memory_enabled=memory_enabled, user_profile_enabled=user_profile_enabled,
+                            shared_user_char_limit=int(mem_cfg.get("shared_user_char_limit", 2500)))
     except Exception:
         store = MemoryStore()  # config optional — fall back to defaults rather than break /memory
     store.load_from_disk()
@@ -131,7 +140,7 @@ def _batch_op_line(op: dict[str, Any]) -> str:
 def _apply_write_gate(store: MemoryStore, action: str, target: str, content: Optional[str],
                       old_text: Optional[str], operations: Optional[list[dict[str, Any]]] = None) -> Optional[str]:
     """Gate one mutating op, or (``operations`` set) a whole batch as a single unit."""
-    label = "user profile" if target == "user" else "memory"
+    label = MEMORY_LAYER_LABELS[target]
     if operations is not None:
         return _gate_or_stage(store, f"apply {len(operations)} op(s) to {label}",
                               "\n".join(_batch_op_line(op) for op in operations),
@@ -325,14 +334,14 @@ def _memory_target_error(
     if target is None:
         FAILURE_CLASS.set("invalid_args")
         return {"success": False, "error": (
-            "Missing required target. Retry with target='memory' or target='user' at the top level. "
+            "Missing required target. Retry with target='memory', 'user' or 'shared' at the top level. "
             "For a batch, remove target from every operation; use separate calls for different stores. "
             "Nothing was written or staged.")}
-    if not isinstance(target, str) or target not in {"memory", "user"}:
+    if not isinstance(target, str) or target not in MEMORY_LAYER_LABELS:
         from tools.registry import _bound_error_text
         FAILURE_CLASS.set("invalid_args")
         return {"success": False,
-                "error": _bound_error_text(f"Invalid memory target '{target}'. Use 'memory' or 'user'.")}
+                "error": _bound_error_text(f"Invalid memory target '{target}'. Use 'memory', 'user' or 'shared'.")}
     if isinstance(operations, list):
         for index, op in enumerate(operations, 1):
             # A nested target equal to the call's (or null) is redundant, not wrong; only a
@@ -345,9 +354,9 @@ def _memory_target_error(
                     "Nothing was written or staged.")}
     if store.target_enabled(target):
         return None
-    label = "USER.md" if target == "user" else "MEMORY.md"
     FAILURE_CLASS.set("disabled")
-    return {"success": False, "error": f"Built-in {label} writes are disabled in memory config.", "target": target}
+    return {"success": False, "error": f"Built-in {MEMORY_LAYER_LABELS[target]} writes are disabled in memory config.",
+            "target": target}
 
 
 def apply_memory_pending(payload: dict[str, Any], store: MemoryStore) -> dict[str, Any]:
@@ -370,6 +379,13 @@ def apply_memory_pending(payload: dict[str, Any], store: MemoryStore) -> dict[st
                                      payload.get("matched_entry"))
 
 
+# Replaced as one unit when only one built-in store is enabled (_SINGLE_TARGET_TEXT).
+_TARGETS_TEXT = (
+    "TARGETS: 'shared' = who the owner is, for every agent of this install (name, role, preferences, "
+    "standing rules); stored once, read by all agents. 'user' = what only you learned about the user; a "
+    "fact already in 'shared' is refused there. 'memory' = your notes (environment, conventions, tool "
+    "quirks, lessons).")
+
 MEMORY_SCHEMA = {
     "name": "memory",
     "description": (
@@ -389,8 +405,7 @@ MEMORY_SCHEMA = {
         "stay small.\n\n"
         "IF FULL: an add is rejected with the current entries shown. Reissue as ONE batch that "
         "removes or shortens enough stale entries and adds the new one together.\n\n"
-        "TARGETS: 'user' = who the user is (name, role, preferences, style). 'memory' = your "
-        "notes (environment, conventions, tool quirks, lessons).\n\n"
+        f"{_TARGETS_TEXT}\n\n"
         "SKIP: trivial/obvious info, easily re-discovered facts, raw data dumps, task progress, "
         "completed-work logs, temporary TODO state (use session_search for those). Reusable "
         "procedures belong in a skill, not memory."
@@ -403,8 +418,9 @@ MEMORY_SCHEMA = {
         "properties": {
             "target": {
                 "type": "string",
-                "enum": ["memory", "user"],
-                "description": "Which memory store: 'memory' for personal notes, 'user' for user profile."
+                "enum": ["memory", "user", "shared"],
+                "description": ("Which memory store: 'memory' for personal notes, 'user' for this agent's user "
+                                "profile, 'shared' for the owner profile every agent reads.")
             },
             "operations": {
                 "type": "array",
@@ -443,23 +459,24 @@ _SINGLE_TARGET_TEXT = {
     ("memory",): ("The enabled built-in store: 'memory' for personal notes.",
                   "TARGET: only 'memory' is enabled for personal notes (environment, conventions, "
                   "tool quirks, lessons)."),
-    ("user",): ("The enabled built-in store: 'user' for user profile.",
-                "TARGET: only 'user' is enabled for user profile facts (name, role, preferences, style).")}
+    ("user", "shared"): ("The enabled built-in stores: 'shared' for the owner profile every agent reads, 'user' "
+                          "for this agent's user profile.",
+                          "TARGETS: only the user profile is enabled: 'shared' = who the owner is, for every "
+                          "agent of this install (name, role, preferences, style); 'user' = what only you "
+                          "learned about the user; a fact already in 'shared' is refused there.")}
 
 
 def _build_memory_schema_overrides() -> dict[str, Any]:
     """Narrow the advertised target surface using the availability snapshot."""
     flags = _memory_surface_flags.get() or get_builtin_memory_store_flags()
     _memory_surface_flags.set(None)
-    targets = [t for t, on in zip(("memory", "user"), flags) if on]
+    targets = [t for t, on in zip(("memory", "user", "shared"), (*flags, flags[1])) if on]
     parameters = copy.deepcopy(MEMORY_SCHEMA["parameters"])
     target_schema, description = parameters["properties"]["target"], MEMORY_SCHEMA["description"]
     target_schema["enum"] = targets
     if narrowed := _SINGLE_TARGET_TEXT.get(tuple(targets)):
         target_schema["description"], replacement = narrowed
-        description = description.replace(
-            "TARGETS: 'user' = who the user is (name, role, preferences, style). 'memory' = your "
-            "notes (environment, conventions, tool quirks, lessons).", replacement)
+        description = description.replace(_TARGETS_TEXT, replacement)
     return {"description": description, "parameters": parameters}
 
 

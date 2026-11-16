@@ -1308,6 +1308,7 @@ DEFAULT_CONFIG = {
         "write_approval": False,
         "memory_char_limit": 2200,   # ~800 tokens at 2.75 chars/token
         "user_char_limit": 1375,     # ~500 tokens at 2.75 chars/token
+        "shared_user_char_limit": 2500,  # the install's shared owner profile, read by every agent (lina#467)
         # Periodic built-in memory review; 0 when an external provider auto-extracts.
         "nudge_interval": 10,
         "external_messages": {"enabled": True, "spool": ""},  # Host-level collector source and spool.

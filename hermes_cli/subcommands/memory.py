@@ -49,6 +49,17 @@ def build_memory_parser(subparsers, *, cmd_memory: Callable) -> None:
     _cache_parser.add_argument("--fingerprints", default=None,
                                help="prefix fingerprints (memory.prefix_fingerprints) for exact common prefixes")
     _cache_parser.add_argument("--format", choices=["md", "tsv"], default="md")
+    _profile_parser = memory_sub.add_parser(
+        "profile", help="The built-in user profile: the shared owner layer and each agent's own layer")
+    _profile_sub = _profile_parser.add_subparsers(dest="memory_profile_command", required=True)
+    _merge_parser = _profile_sub.add_parser(
+        "merge", help="Move user profile entries repeated across this install's profiles into the shared one",
+        description="Lists user profile entries that two or more profiles repeat (identical or differing only "
+                    "in case, spacing or punctuation) and diverged versions of one fact, with each layer's "
+                    "budget. A dry run unless --apply; --apply asks you to type 'merge', backs up every file it "
+                    "rewrites (<file>.bak-<timestamp>) and never merges diverged versions.")
+    _merge_parser.add_argument("--apply", action="store_true",
+                               help="move the listed entries after typed confirmation")
     memory_parser.set_defaults(func=cmd_memory)
     from hermes_cli.external_messages import ingest_command
     external = memory_sub.add_parser("external-messages", help="Control external message collection")

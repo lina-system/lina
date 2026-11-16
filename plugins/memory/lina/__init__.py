@@ -27,7 +27,7 @@ from typing import Any, Optional
 
 from agent.memory_provider import MemoryProvider, RecallStatus, ctx_bound
 
-from . import grade, lcm, links, personal, search, speaker, terms
+from . import grade, korean, lcm, links, personal, search, speaker, terms
 from .identity import OWNER_HANDLE, IdentityRegistry, SourceKey
 from .policy import load_policy, signals_for_turn, turn_start_index
 from .record import TurnRecord, build_record, turn_rows
@@ -363,8 +363,10 @@ class LinaMemoryProvider(MemoryProvider):
             logger.warning("lina-memory could not write Honcho's conclusions to the person's brain page: %s", exc)
 
     def prefetch(self, query: str, *, session_id: str = "") -> str:
+        """Found memory for the turn, then a Korean agent's words for the turn's concepts (``korean.py``, lina#380)."""
         honcho = self._honcho.prefetch(query, session_id=session_id) if self._honcho_on else ""
-        return self._with_external_messages(honcho, query)
+        found = self._with_external_messages(honcho, query)
+        return "\n\n".join(part for part in (found, korean.turn_block(self._message_store, query)) if part)
 
     def recall_query(self, query: str, *, session_id: str = "") -> str:
         """Explicit ``memory_recall``. Honcho's prefetch is cadence-gated; this is not."""
