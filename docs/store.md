@@ -712,6 +712,7 @@ embedding:
   model: qwen3-embedding-8b   # through magpie: hub/nous/qwen/qwen3-embedding-8b, as GET <base_url>/models lists it
   dimensions: 1024
   # api_key_env: LINA_EMBEDDING_API_KEY   batch_size: 64   timeout: 60   max_chars: 8000   max_retries: 8
+  # max_request_chars: 100000
 ```
 
 The default `qwen3-embedding-8b` is the bare model id an OpenAI-compatible provider takes. A node whose models come
@@ -816,6 +817,12 @@ otherwise 1 s doubling up to 60 s, and sends the same batch again, up to `embedd
 far saved and one line giving the rows left per source and the command that continues the run. `--max-rate N` keeps
 the run under N requests per second, so a long run leaves room under a provider limit it shares with other agents
 (default: no cap). An agent's own search does not retry: a search inside a turn fails at once instead of waiting.
+
+One request of `reembed` carries at most `embedding.max_request_chars` characters (default 100,000, a value measured
+to pass on one endpoint, not a known upstream limit), so a batch of long rows such as LCM summaries goes out as several
+requests; the batch is still written in one transaction with its progress row. A request of several texts the
+endpoint answers 429 to through every retry is halved and its halves sent instead; a single text that is still refused
+stops the run as above, and a timeout or 5xx is not split. The batch line then says `split into N requests`.
 
 `eval-search` scores the top-5 hit rate per source: today's search of each source (the store's full-text search
 for `agent` and `messages`, Honcho's conclusion search for `memory`) against one vector search over all of the

@@ -2713,6 +2713,9 @@ DEFAULT_CONFIG = {
         # e.g. "us-central1" only if your models are region-pinned.
         "region": "global",
     },
+    # Embedding endpoint settings read by agent/embedding_client.py. max_request_chars: characters of text
+    # in one `lina store reembed` request; a larger batch is cut into runs of at most this many (lina#763).
+    "embedding": {"max_request_chars": 100_000},
     # Managed llama.cpp runtime (docs: user-guide/local-models): official binaries, one supervised
     # llama-server in router mode. No context/VRAM knobs by design.
     "local_runtime": {
