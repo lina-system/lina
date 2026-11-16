@@ -26,7 +26,7 @@ from hermes_state_compaction_display import later_tool_copy_ids, not_a_later_too
 from hermes_state_detached_results import SessionDetachedResultsMixin
 from hermes_state_todo import SessionTodoResultMixin
 from hermes_state_store import (
-    content_digest, delete_rows, insert_rows, rewrite_rows, rows_with_text, text_columns_sql, text_sql)
+    delete_rows, insert_rows, rewrite_rows, rows_with_text, text_columns_sql, text_sql)
 from hermes_state_identity import (
     _absorbed_uids_json, _restore_identity_columns, _stable_tool_key, _tool_call_uid_map, _tool_call_uid_or_none, _tool_call_uids_json, _uid_list)
 
@@ -514,7 +514,8 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
         def _do(conn):
             row = conn.execute("SELECT id FROM transcript_rows WHERE session_id = ? AND role = ? "
                 "AND content_digest = ? AND active = 1 ORDER BY id DESC LIMIT 1",
-                (session_id, role, content_digest(self._encode_content(content)))).fetchone()
+                (session_id, role, self.message_store.row_content_digest(
+                    session_id, self._encode_content(content)))).fetchone()
             if row is None:
                 return False
             conn.execute("UPDATE transcript_rows SET display_kind = ?, display_metadata = ? WHERE id = ?",

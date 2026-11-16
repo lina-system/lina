@@ -99,3 +99,50 @@ def test_a_word_that_is_no_file_or_a_file_in_an_unmarked_folder_marks_nothing(pr
     assert personal.pre_tool_call("terminal", args, session_id=SESSION, task_id=TASK) is None
 
     assert _marks() == []
+
+
+@pytest.mark.parametrize("command", ["cat private/id.txt\necho done",
+                                     "echo start\nhead -n 3 private/id.txt | wc -l\necho done",
+                                     "echo start && ls\ncat \\\n  private/id.txt"],
+                         ids=["first line", "middle line", "last line, continued"])
+def test_a_multiline_command_marks_the_document_on_any_of_its_lines(project, command):
+    assert personal.pre_tool_call("terminal", {"command": command, "workdir": str(project)}, session_id=SESSION,
+                                  task_id=TASK) is None
+
+    assert _marks() == [str((project / "private" / "id.txt").resolve())]
+
+
+def test_a_heredoc_of_plain_prose_marks_nothing(project):
+    command = "cat > notes.md <<'EOF'\nIt's a short note: nothing to read here\nEOF"
+
+    assert personal.pre_tool_call("terminal", {"command": command, "workdir": str(project)}, session_id=SESSION,
+                                  task_id=TASK) is None
+
+    assert _marks() == []
+
+
+def test_a_multiline_command_naming_a_file_in_an_unmarked_folder_marks_nothing(project, bare):
+    bare("unmarked")
+
+    assert personal.pre_tool_call("terminal", {"command": "echo start\ncat passport\necho done"},
+                                  session_id=SESSION, task_id=TASK) is None
+
+    assert _marks() == []
+
+
+def test_a_whole_filename_with_spaces_still_marks_the_job(project):
+    (project / "private" / "scan of id.txt").write_text("Synthetic identity card scan\n", encoding="utf-8")
+
+    assert personal.pre_tool_call("read_file", {"path": str(project / "private" / "scan of id.txt")},
+                                  session_id=SESSION, task_id=TASK) is None
+
+    assert _marks() == [str((project / "private" / "scan of id.txt").resolve())]
+
+
+def test_a_public_post_on_a_later_line_of_a_command_is_refused(project):
+    command = f"cd {project}\ngh issue create --title notes --body-file private/id.txt"
+
+    refused = personal.pre_tool_call("terminal", {"command": command, "workdir": str(project)},
+                                     session_id=SESSION, task_id=TASK)
+
+    assert refused is not None and refused["action"] == "block" and "public: gh issue create" in refused["message"]

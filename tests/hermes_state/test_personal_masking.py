@@ -108,6 +108,59 @@ def test_structured_fields_of_a_marked_job_are_masked_by_their_decoded_text(db, 
     assert tool["content"] == [{"type": "text", "text": f"{LABELLED_MASKED}, {MASKED}"}]
 
 
+SIDECAR = f"{LABELLED}\n\n[recall] a synthetic memory note"
+
+
+def _api_content_backfills():
+    """Each writer that stamps the ``api_content`` sidecar onto a user row already persisted, found by the content the
+    turn holds: (name, call returning the rows changed)."""
+    from hermes_state_worker_lifecycle import worker_api_content, worker_message_api_content
+    return [
+        ("set_message_api_content", lambda db, sid, row_id: db.set_message_api_content(sid, row_id, LABELLED, SIDECAR)),
+        ("set_latest_user_api_content", lambda db, sid, row_id: db.set_latest_user_api_content(sid, LABELLED, SIDECAR)),
+        ("worker session.message_api_content", lambda db, sid, row_id: db._execute_write(
+            lambda conn: worker_message_api_content(
+                db, conn, sid, {"row_id": row_id, "content": LABELLED, "api_content": SIDECAR}))["value"]),
+        ("worker session.api_content", lambda db, sid, row_id: db._execute_write(
+            lambda conn: worker_api_content(db, conn, sid, {"content": LABELLED, "api_content": SIDECAR}))["value"]),
+    ]
+
+
+@pytest.mark.parametrize("session", ["marked", "plain"])
+@pytest.mark.parametrize("backfill", [call for _, call in _api_content_backfills()],
+                         ids=[name for name, _ in _api_content_backfills()])
+def test_a_sidecar_backfill_finds_a_user_row_persisted_before_it(db, tmp_path, session, backfill):
+    """The row is written first (preflight compaction, an early flush), so the backfill finds it by the content the turn
+    holds: for a marked job that is the number in full, while the row's digest is of the masked text."""
+    if session == "marked":
+        PersonalMarks(db.message_store).mark("marked", "/synthetic/docs/bankbook.pdf", "owner")
+    db.append_message(session, "user", content=LABELLED)
+    [row] = db.get_messages(session)
+
+    assert backfill(db, session, row["id"]) == 1
+
+    reloaded = SessionDB(db_path=tmp_path / "state.db")
+    try:
+        [row] = reloaded.get_messages(session)
+    finally:
+        reloaded.close()
+    assert row["api_content"] == (SIDECAR.replace(LABELLED, LABELLED_MASKED) if session == "marked" else SIDECAR)
+
+
+@pytest.mark.parametrize("session", ["marked", "plain"])
+def test_lookups_by_content_find_the_row_of_a_marked_job(db, session):
+    """The other lookups of this turn's row by its content: the display-kind stamp and held-row coverage."""
+    if session == "marked":
+        PersonalMarks(db.message_store).mark("marked", "/synthetic/docs/bankbook.pdf", "owner")
+    db.append_message(session, "user", content=LABELLED)
+    [row] = db.get_messages(session)
+
+    assert db.set_latest_matching_message_display_kind(session, role="user", content=LABELLED, display_kind="note")
+    assert db._execute_write(lambda conn: db._matching_active_ids(
+        conn, session, {"role": "user", "content": LABELLED})) == [row["id"]]
+    assert db.get_messages(session)[0]["display_kind"] == "note"
+
+
 def test_structured_fields_of_an_unmarked_job_are_stored_unchanged(db):
     _structured_turn(db, "plain")
 

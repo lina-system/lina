@@ -90,14 +90,27 @@ def _strings(value: Any) -> list[str]:
     return []
 
 
+def _tokens(line: str, quotes: str = "'\"", escape: str = "\\") -> list[str]:
+    lexer = shlex.shlex(line, posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
+    lexer.quotes, lexer.escape = quotes, escape
+    return list(lexer)
+
+
 def _words(command: str) -> list[list[str]]:
-    """The simple commands of a shell line, split on ``&&``, ``||``, ``;`` and ``|``."""
-    try:
-        lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
-        lexer.whitespace_split = True
-        tokens = list(lexer)
-    except ValueError:
-        tokens = command.split()
+    """The simple commands of a shell text, split on newlines, ``&&``, ``||``, ``;`` and ``|``. A backslash at a line's
+    end continues it and a quoted string may span lines; a line whose quote never closes (a heredoc's prose) is read
+    with quotes and backslashes taken as letters."""
+    tokens, pending = [], []
+    for line in command.replace("\\\n", "").split("\n"):
+        pending.append(line)
+        try:
+            tokens += [*_tokens("\n".join(pending)), ";"]
+        except ValueError:
+            continue
+        pending = []
+    for line in pending:
+        tokens += [*_tokens(line, quotes="", escape=""), ";"]
     commands, current = [], []
     for token in tokens:
         if token and set(token) <= set("&|;()"):
@@ -149,13 +162,20 @@ def _working_dir(tool_name: str, args: dict[str, Any], task_id: str) -> str:
     return os.path.join(base, os.path.expanduser(workdir)) if workdir else base
 
 
-def _named_paths(texts: list[str], cwd: str) -> list[str]:
+def _commands(tool_name: str, args: dict[str, Any]) -> list[str]:
+    """The call's shell commands: a terminal command, whatever its lines."""
+    return [str(args.get("command") or "")] if tool_name == "terminal" else []
+
+
+def _named_paths(texts: list[str], cwd: str, commands: list[str]) -> list[str]:
     """Existing paths the call names, relative ones under *cwd*: whole arguments, shell words, and ``@file`` /
-    ``name=@file`` values. A bare word (no slash, no period) counts only as a file that exists in *cwd*."""
+    ``name=@file`` values. Shell words come from each of *commands* and from every other one-line text; another text
+    of several lines (a file's content) counts only whole. A bare word (no slash, no period) counts only as a file
+    that exists in *cwd*."""
     found = []
     for text in texts:
         candidates = [text]
-        for words in _words(text) if "\n" not in text else []:
+        for words in _words(text) if text in commands or "\n" not in text else []:
             candidates += words
         for candidate in candidates:
             candidate = candidate.split("=@", 1)[-1].lstrip("@") if "@" in candidate else candidate
@@ -193,9 +213,9 @@ def _derived_lines(marked: list[str], folders) -> set[str]:
     return lines
 
 
-def carries_personal(texts: list[str], marked: list[str], folders, cwd: str) -> Optional[str]:
-    """Why the call carries a marked document or text derived from it, or None."""
-    named = _named_paths(texts, cwd)
+def carries_personal(texts: list[str], named: list[str], marked: list[str], folders) -> Optional[str]:
+    """Why the call (its *texts*, and the existing paths they name) carries a marked document or text derived from
+    it, or None."""
     for path in named:
         if personal_work.is_marked(marked, path) or folders.holds(path) or personal_work.marker_folder(path):
             return f"it names the personal document {path}"
@@ -233,8 +253,8 @@ def pushed_personal(command: str, cwd: str, marked: list[str], folders) -> Optio
     return None
 
 
-def _mark_from_folders(texts: list[str], session_id: str, cwd: str) -> None:
-    folder_marked = [path for path in _named_paths(texts, cwd) if personal_work.marker_folder(path)]
+def _mark_from_folders(named: list[str], session_id: str) -> None:
+    folder_marked = [path for path in named if personal_work.marker_folder(path)]
     if not folder_marked:
         return
     marks = personal_work.marks_for_home()
@@ -257,16 +277,17 @@ def pre_tool_call(tool_name: str = "", args: Optional[dict[str, Any]] = None, se
     if not session:
         return None
     cwd = _working_dir(tool_name, args, task_id)
+    named = _named_paths(texts, cwd, _commands(tool_name, args))
     try:
-        _mark_from_folders(texts, session, cwd)
+        _mark_from_folders(named, session)
         if where is None:
             return None
         marks = personal_work.marks_for_home()
         marked = marks.marked_paths(session)
         job = marks.job_of(session)
         folders = personal_work.folders_for(job)
-        why = carries_personal(texts, marked, folders, cwd) if marked or any(
-            personal_work.marker_folder(p) for p in _named_paths(texts, cwd)) else None
+        why = carries_personal(texts, named, marked, folders) if marked or any(
+            personal_work.marker_folder(p) for p in named) else None
         if why is None and marked and tool_name == "terminal":
             why = pushed_personal(str(args.get("command") or ""), cwd, marked, folders)
         if why is None:

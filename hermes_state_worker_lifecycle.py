@@ -3,7 +3,7 @@ import json
 import time
 
 from hermes_state_runtime import RuntimeStoreError
-from hermes_state_store import content_digest, rewrite_rows
+from hermes_state_store import rewrite_rows
 
 
 _IDENTITY_FIELDS = frozenset({
@@ -146,6 +146,10 @@ def worker_billing_route(db, conn, session_id, payload):
     return {'value': None}
 
 
+def _row_content_digest(db, session_id, payload):
+    return db.message_store.row_content_digest(session_id, db._encode_content(payload['content']))
+
+
 def worker_api_content(db, conn, session_id, payload):
     from hermes_state_messages import _scrub_surrogates
     if set(payload) != {'content', 'api_content'} or not isinstance(payload['api_content'], str):
@@ -153,7 +157,7 @@ def worker_api_content(db, conn, session_id, payload):
     row = conn.execute(
         "SELECT id FROM transcript_rows WHERE id=(SELECT id FROM transcript_rows WHERE session_id=? "
         "AND role='user' AND active=1 ORDER BY id DESC LIMIT 1) AND content_digest IS ?",
-        (session_id, content_digest(db._encode_content(payload['content'])))).fetchone()
+        (session_id, _row_content_digest(db, session_id, payload))).fetchone()
     value = rewrite_rows(conn, db.message_store, [row['id']] if row else [],
                          {'api_content': _scrub_surrogates(payload['api_content'])})
     return {'value': value}
@@ -174,7 +178,7 @@ def worker_message_api_content(db, conn, session_id, payload):
     return {'value': rewrite_rows(conn, db.message_store, [_row_id(payload)],
         {'api_content': _scrub_surrogates(payload['api_content'])},
         where_sql=" AND session_id=? AND role='user' AND active=1 AND content_digest IS ?",
-        where_params=(session_id, content_digest(db._encode_content(payload['content']))))}
+        where_params=(session_id, _row_content_digest(db, session_id, payload)))}
 
 
 def worker_user_content(db, conn, session_id, payload):

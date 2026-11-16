@@ -507,6 +507,12 @@ class MessageStore:
         with self._writer_cursor() as cur:
             return masked if session_is_marked(cur, session_id) else value
 
+    def row_content_digest(self, session_id: Optional[str], encoded_content: Any) -> Optional[str]:
+        """The ``content_digest`` a row of *session_id* holding *encoded_content* has (inside ``write()``): of the
+        content as ``put_text`` writes it, masked when the job is marked personal. A lookup of a row by the content
+        a caller holds compares with this, never with ``content_digest`` of the caller's own text."""
+        return content_digest(self._personal_masked(encoded_content, session_id))
+
     def texts(self, uids: Iterable[Optional[str]]) -> dict[str, TextRow]:
         """Text rows by uid; a uid with no row is left out."""
         wanted = list(dict.fromkeys(u for u in uids if u))
