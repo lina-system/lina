@@ -151,7 +151,7 @@ def _working_dir(tool_name: str, args: dict[str, Any], task_id: str) -> str:
 
 def _named_paths(texts: list[str], cwd: str) -> list[str]:
     """Existing paths the call names, relative ones under *cwd*: whole arguments, shell words, and ``@file`` /
-    ``name=@file`` values."""
+    ``name=@file`` values. A bare word (no slash, no period) counts only as a file that exists in *cwd*."""
     found = []
     for text in texts:
         candidates = [text]
@@ -159,11 +159,12 @@ def _named_paths(texts: list[str], cwd: str) -> list[str]:
             candidates += words
         for candidate in candidates:
             candidate = candidate.split("=@", 1)[-1].lstrip("@") if "@" in candidate else candidate
-            if not candidate or len(candidate) > 4096 or ("/" not in candidate and "." not in candidate):
+            if not candidate or len(candidate) > 4096:
                 continue
+            bare = "/" not in candidate and "." not in candidate
             try:
-                path = Path(cwd, Path(candidate).expanduser())
-                if path.exists():
+                path = Path(cwd, candidate if bare else Path(candidate).expanduser())
+                if path.is_file() if bare else path.exists():
                     found.append(str(path.resolve()))
             except (OSError, ValueError):
                 continue

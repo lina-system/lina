@@ -239,9 +239,9 @@ own devices and the model services in use (lina#308). What holds for a document 
 - **Marking.** The agent calls `mark_personal` with the document's path when the owner says a document is personal; a
   document named by a tool call (`read_file`, a terminal command) that sits under a folder holding `.lina-personal`
   is marked by itself before the tool runs; a relative path is read where the tool reads it, under a terminal
-  command's `workdir` or the task's directory. The mark is stored with the job ([store.md](store.md#personal-documents)),
-  and a compaction's child session continues the job: it joins in the transaction that writes its summary and kept
-  rows, so they are masked too.
+  command's `workdir` or the task's directory, where a bare file name (`passport`) counts when that file exists.
+  The mark is stored with the job ([store.md](store.md#personal-documents)), and a compaction's child session
+  continues the job: it joins in the transaction that writes its summary and kept rows, so they are masked too.
 - **Masked numbers.** From the mark on, the job's rows are stored with ID and account numbers masked to their last
   four characters, in the transcript and in `memory.messages` alike.
 - **Derived files.** `mark_personal` answers with the job's `work_dir` and `temp_dir`; extracts, page images and

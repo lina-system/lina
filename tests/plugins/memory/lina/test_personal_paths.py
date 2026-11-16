@@ -62,3 +62,40 @@ def test_a_relative_path_missing_under_the_workdir_marks_nothing(project, tmp_pa
                                   session_id=SESSION, task_id=TASK) is None
 
     assert _marks() == []
+
+
+@pytest.fixture
+def bare(tmp_path):
+    """A marked folder and an unmarked one, each holding an extensionless document: the task's directory is set to
+    the one a test names."""
+    from tools.terminal_tool import clear_session_cwd, record_session_cwd
+    folders = {}
+    for name, marked in (("marked", True), ("unmarked", False)):
+        folder = tmp_path / name
+        folder.mkdir()
+        if marked:
+            (folder / personal_work.MARKER_FILE).write_text("", encoding="utf-8")
+        (folder / "passport").write_text("Synthetic passport scan\n", encoding="utf-8")
+        folders[name] = folder
+    yield lambda name: record_session_cwd(TASK, str(folders[name])) or folders[name]
+    clear_session_cwd(TASK)
+
+
+@pytest.mark.parametrize("tool_name, args", [("read_file", {"path": "passport"}),
+                                             ("terminal", {"command": "cat passport"})])
+def test_an_extensionless_document_in_a_marked_folder_marks_the_job(project, bare, tool_name, args):
+    folder = bare("marked")
+
+    assert personal.pre_tool_call(tool_name, args, session_id=SESSION, task_id=TASK) is None
+
+    assert _marks() == [str((folder / "passport").resolve())]
+
+
+@pytest.mark.parametrize("folder, args", [("marked", {"command": "echo hello passport-free words"}),
+                                          ("unmarked", {"command": "cat passport"})])
+def test_a_word_that_is_no_file_or_a_file_in_an_unmarked_folder_marks_nothing(project, bare, folder, args):
+    bare(folder)
+
+    assert personal.pre_tool_call("terminal", args, session_id=SESSION, task_id=TASK) is None
+
+    assert _marks() == []
