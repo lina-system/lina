@@ -191,3 +191,19 @@ lina#448.
 The owner's screen rules (one detail frame for every detail view, history rows as `time · one sentence`, neutral work
 wording, an in-progress line is one goal or task session) live in
 [lina-app#123](https://github.com/lina-system/lina-app/issues/123) and are not restated here.
+
+## 14. Long reports are a report and a link
+
+**Decision.** In chat an agent answers in short messages (lina#261). When it has more to say than about three short
+messages' worth, it writes a report with the `report` tool and sends one line: at most one short sentence and the
+reference line the tool returns. The full text lives on the report's page, which always shows its newest version; an
+edit is a new version of the same report, so the link the owner already has stays current. A report built from the
+owner's private material is served only to the owner's own session.
+
+**Why.** People do not send walls of text in a chat (the owner, 11-06: "a long report should feel like sending a link
+to a live web page"). A report that changes in place also keeps a progress question from costing another long message.
+
+**Builds it:** lina#263 (record, tool, client API, page, Telegram rendering; `docs/api/work-client.yaml` "Reports" and
+`ReportReference`, [store.md](../store.md#reports-reports)); the chat card is lina-app#50. Until lina#261 and lina#566
+add the shared work-style text to the base instructions, this line reaches agents through the `report` tool's
+description.

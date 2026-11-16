@@ -36,6 +36,8 @@ _HERMES_CORE_TOOLS = CoreTools([
     "mac_use", "mac_status", "mac_screenshot", "mac_unlock_status", "mac_unlock", "mac_unlock_revoke",
     # Service-gated connector account status and authorization links.
     "manage_connections",
+    # Long reports as a record and a live page (lina#263); check_fn hides it where no store is set up.
+    "report",
 ])
 
 # Webhook payloads are untrusted third-party content: no file/system execution.
@@ -95,6 +97,8 @@ TOOLSETS = {
         "LINA Helper on the configured Macs: choose the desktop-control target, status, screenshot, screen unlock",
         ["mac_use", "mac_status", "mac_screenshot", "mac_unlock_status", "mac_unlock", "mac_unlock_revoke"],
     ),
+    "report": _ts("Reports: a long result as a record with versions and a live page, sent in chat as one line",
+                  ["report"]),
     "terminal": _ts("Terminal/command execution and process management tools", ["terminal", "process_manage"]),
     "skills": _ts(
         "Access, create, edit, and manage skill documents with specialized "
