@@ -568,6 +568,27 @@ def test_since_replays_the_talk_turns_and_read_marks_a_reconnecting_client_misse
         assert _next(ws, pool) == {"cursor": missed["cursor"], "events": []}
 
 
+def test_a_report_written_and_updated_by_an_agent_arrives_as_reports_events(work, client, pool):
+    import importlib
+    import json
+
+    from tools.registry import registry
+    importlib.import_module("tools.report_tool")
+    report = {"title": "Costs", "summary": "Costs fell.", "body": "Details."}
+
+    def next_events(ws):
+        message = _next(ws, pool)
+        while not message["events"]:  # a keepalive may land before the write's batch
+            message = _next(ws, pool)
+        return _events(message)
+    with client.websocket_connect(_url()) as ws:
+        _next(ws, pool)
+        made = json.loads(registry.dispatch("report", report))
+        assert next_events(ws) == [("reports", "created", made["id"])]
+        registry.dispatch("report", {**report, "id": made["id"], "body": "Corrected."})
+        assert next_events(ws) == [("reports", "updated", made["id"])]
+
+
 def test_the_stream_is_behind_the_dashboard_socket_credential(work, client, pool):
     with pytest.raises(WebSocketDisconnect), client.websocket_connect("/api/lina/events?token=wrong") as ws:
         ws.receive_json()

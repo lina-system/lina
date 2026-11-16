@@ -92,6 +92,7 @@ CONFIGURABLE_TOOLSETS = [
     ("yuanbao",          "🤖 Yuanbao",                  "group info, member queries, DM"),
     ("computer_use",     "🖱️  Computer Use (macOS/Windows/Linux)", "background desktop control via cua-driver"),
     ("lina_helper",      "🖥️  LINA Helper (Macs)",      "mac_use, mac_status, mac_screenshot, mac_unlock (devices.macs)"),
+    ("report",           "📄 Reports",                 "a long result as a report and a live page (needs LINA's store)"),
 ]
 
 

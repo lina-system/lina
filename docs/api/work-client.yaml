@@ -142,6 +142,85 @@ paths:
           description: Empty text, or the author is the card's assignee.
         "404":
           description: No such card.
+  # Reports (lina#263): served by hermes_cli/web_routers/lina_reports.py under /api/lina, behind the same dashboard
+  # auth gate. tests/hermes_cli/test_lina_reports_api.py validates served JSON against these schemas. An update is
+  # announced on GET /api/lina/events as source `reports` (docs/api/board-client.yaml ChangeEvent).
+  /reports:
+    servers:
+      - url: /api/lina
+    get:
+      operationId: listReports
+      summary: Reports, newest change first, optionally of one work card and one goal (no bodies).
+      parameters:
+        - name: card
+          in: query
+          required: false
+          description: Only reports of this work card (the id `/work/cards/{id}` takes).
+          schema:
+            type: string
+        - name: goal
+          in: query
+          required: false
+          description: Only reports of this goal.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The reports.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportList"
+        "503":
+          description: The store cannot be read.
+  /reports/{id}:
+    servers:
+      - url: /api/lina
+    get:
+      operationId: getReport
+      summary: One report with its newest body, or with one earlier version's.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - name: version
+          in: query
+          required: false
+          description: Show this version's title, summary and body instead of the newest.
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: The report.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Report"
+        "404":
+          description: No such report or version, or a private report and the request is not the owner's session.
+        "503":
+          description: The store cannot be read.
+  /reports/{id}/page:
+    servers:
+      - url: /api/lina
+    get:
+      operationId: getReportPage
+      summary: >
+        The report as a plain HTML page, for a browser that opens the link a chat message carries. Its newest
+        version; it reloads itself every 30 s. Raw HTML in the body is shown as text, only http(s), mailto and
+        same-site addresses are kept, and the Content-Security-Policy allows no script.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The page.
+          content:
+            text/html:
+              schema:
+                type: string
+        "401":
+          description: Not signed in (the dashboard's auth gate).
+        "404":
+          description: No such report, or a private report and the request is not the owner's session.
 components:
   parameters:
     Id:
@@ -684,6 +763,116 @@ components:
         author:
           type: string
           default: owner
+    ReportSummary:
+      type: object
+      additionalProperties: false
+      description: >
+        One report without its body. The app's report card (lina-app#50) shows `title`, `summary`, `agent`,
+        `updatedAt` and `version`, and opens `page` or GET /reports/{id}.
+      required: [id, title, summary, agent, card, goal, private, version, createdAt, updatedAt, page]
+      properties:
+        id:
+          type: string
+          description: rep_ and 12 hex digits.
+        title:
+          type: string
+        summary:
+          type: string
+          description: One line, the line the chat shows.
+        agent:
+          type: string
+          description: The agent that wrote it.
+        card:
+          type: string
+          nullable: true
+        goal:
+          type: string
+          nullable: true
+        private:
+          type: boolean
+          description: Written from the owner's private material; served only to the owner's session.
+        version:
+          type: integer
+          description: The newest version's number (1 for a report never edited).
+        createdAt:
+          type: integer
+        updatedAt:
+          type: integer
+        page:
+          type: string
+          description: The page's path on this server (GET /api/lina/reports/{id}/page).
+    ReportList:
+      type: object
+      additionalProperties: false
+      required: [reports]
+      properties:
+        reports:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReportSummary"
+    ReportVersion:
+      type: object
+      additionalProperties: false
+      required: [version, at, title, summary]
+      properties:
+        version:
+          type: integer
+        at:
+          type: integer
+        title:
+          type: string
+        summary:
+          type: string
+    Report:
+      type: object
+      additionalProperties: false
+      description: >
+        A report: the ReportSummary fields, the body of `shownVersion` (markdown; `title` and `summary` are that
+        version's too) and every version's number, time and line.
+      required: [id, title, summary, agent, card, goal, private, version, createdAt, updatedAt, page, body,
+                 shownVersion, versions]
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        summary:
+          type: string
+        agent:
+          type: string
+        card:
+          type: string
+          nullable: true
+        goal:
+          type: string
+          nullable: true
+        private:
+          type: boolean
+        version:
+          type: integer
+        createdAt:
+          type: integer
+        updatedAt:
+          type: integer
+        page:
+          type: string
+        body:
+          type: string
+        shownVersion:
+          type: integer
+        versions:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReportVersion"
+    ReportReference:
+      type: string
+      pattern: "^\\[\\[report:rep_[0-9a-f]{12}\\|[^|\\s]+\\|.+\\]\\]$"
+      description: >
+        A chat message's reference to a report: a line of its own, `[[report:<id>|<page address>|<summary>]]`,
+        that the `report` tool returns (gateway/report_reference.py). Fields: `id` the report's id, `page` the page
+        address (the dashboard's public URL and /api/lina/reports/{id}/page), `summary` its one line. A client with
+        report cards shows a card for the line and reads GET /reports/{id}; a platform without cards (Telegram)
+        sends the summary line and the page link instead. The report's body is never in the message.
     AnswerResult:
       type: object
       additionalProperties: false
