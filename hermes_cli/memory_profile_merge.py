@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 CONFIRM_WORD = "merge"
+SHARED_SOURCE = "<shared>"  # never a profile name: profile ids are [a-z0-9][a-z0-9_-]*
 
 
 @dataclass
@@ -74,7 +75,7 @@ def build_plan(profiles: list[tuple[str, Path]], shared_path: Path) -> Plan:
                 profiles={name: home / "memories" / "USER.md" for name, home in profiles}, entries={})
     for name, path in plan.profiles.items():
         plan.entries[name] = list(dict.fromkeys(MemoryStore._read_file(path)))
-    items = [("shared", entry) for entry in plan.shared_entries]
+    items = [(SHARED_SOURCE, entry) for entry in plan.shared_entries]
     items += [(name, entry) for name, entries in plan.entries.items() for entry in entries]
     for members in _groups(items):
         group = [items[i] for i in members]
@@ -82,11 +83,11 @@ def build_plan(profiles: list[tuple[str, Path]], shared_path: Path) -> Plan:
         if len({entry_key(entry) for _source, entry in group}) > 1 or len(sources) < 2:
             plan.diverged.append(group)
             continue
-        shared_copy = next((entry for source, entry in group if source == "shared"), None)
+        shared_copy = next((entry for source, entry in group if source == SHARED_SOURCE), None)
         counts = Counter(entry for _source, entry in group)
         wording = shared_copy or counts.most_common(1)[0][0]  # ties: the first one met
         plan.moves.append(Move(wording, "identical" if len(counts) == 1 else "near-identical",
-                               [(source, entry) for source, entry in group if source != "shared"]))
+                               [(source, entry) for source, entry in group if source != SHARED_SOURCE]))
     return plan
 
 
@@ -104,15 +105,42 @@ def _limits(plan: Plan) -> tuple[int, dict[str, int]]:
     return int(shared), per_profile
 
 
-def _merged_shared(plan: Plan, current: list[str]) -> list[str]:
+def _same_fact(a: str, b: str) -> bool:
+    from tools.memory_tool_shared import NEAR_DUPLICATE_RATIO, entry_key, similarity
+    key_a, key_b = entry_key(a), entry_key(b)
+    return key_a == key_b or similarity(key_a, key_b) >= NEAR_DUPLICATE_RATIO
+
+
+def _settle(plan: Plan, current: list[str]) -> tuple[list[str], list[Move], list[Move]]:
+    """Hold the plan against the shared layer as it is now: ``(merged entries, moves still valid,
+    moves gone stale)``. A move is stale when the shared layer no longer matches what the owner
+    confirmed (the shared copy was edited or removed, or a new entry about the same fact appeared):
+    it is not applied, so a corrected shared fact is never joined by the old wording."""
     from tools.memory_tool_shared import entry_key
-    present = {entry_key(entry) for entry in current}
-    return current + [move.wording for move in plan.moves if entry_key(move.wording) not in present]
-
-
-def _removals(plan: Plan) -> dict[str, set[str]]:
-    removals: dict[str, set[str]] = {}
+    merged, valid, stale = list(current), [], []
     for move in plan.moves:
+        planned = [entry for entry in plan.shared_entries if _same_fact(entry, move.wording)]
+        now = [entry for entry in merged if _same_fact(entry, move.wording)]
+        if planned:
+            ok = sorted(now) == sorted(planned)
+        else:
+            ok = all(entry_key(entry) == entry_key(move.wording) for entry in now)
+        if not ok:
+            stale.append(move)
+            continue
+        valid.append(move)
+        if not now:
+            merged.append(move.wording)
+    return merged, valid, stale
+
+
+def _merged_shared(plan: Plan, current: list[str]) -> list[str]:
+    return _settle(plan, current)[0]
+
+
+def _removals(plan: Plan, moves: list[Move] | None = None) -> dict[str, set[str]]:
+    removals: dict[str, set[str]] = {}
+    for move in plan.moves if moves is None else moves:
         for name, entry in move.holders:
             removals.setdefault(name, set()).add(entry)
     return removals
@@ -181,15 +209,17 @@ def _rewrite(path: Path, rewrite) -> tuple[list[str], list[str], Path | None]:
 
 def apply(plan: Plan) -> tuple[bool, list[str]]:
     """Write the plan: the shared layer first (so a stop halfway leaves a copy, never a loss), then
-    each profile drops the entries that moved. Re-reads every file under its lock, so an entry a
-    profile changed after the plan was shown stays. ``(ok, report lines)``."""
+    each profile drops the entries that moved. Re-reads every file under its lock: an entry a
+    profile changed after the plan was shown stays, and a move whose shared copy changed is skipped
+    (``ok`` is False then). ``(ok, report lines)``."""
     from hermes_constants import mkdir_under_hermes_home
     from tools.memory_tool_store import MEMORY_LAYER_LABELS
     shared_limit, _user_limits = _limits(plan)
     full: list[int] = []
+    outcome: dict[str, list[Move]] = {"valid": [], "stale": []}
 
     def _shared(current: list[str]) -> list[str]:
-        merged = _merged_shared(plan, current)
+        merged, outcome["valid"], outcome["stale"] = _settle(plan, current)
         if _size(merged) > shared_limit:
             full.append(_size(merged))
             return current
@@ -203,13 +233,17 @@ def apply(plan: Plan) -> tuple[bool, list[str]]:
                        f"memory.shared_user_char_limit, then run the merge again."]
     lines = [f"{MEMORY_LAYER_LABELS['shared']}: {len(after) - len(before)} entries added"
              + (f" (backup {backup})" if backup else "")]
-    for name, gone in _removals(plan).items():
+    for move in outcome["stale"]:
+        lines.append(f"The shared layer changed since the plan, so this stays where it is: {move.wording}")
+    for name, gone in _removals(plan, outcome["valid"]).items():
         path = plan.profiles[name]
         before, after, backup = _rewrite(path, lambda entries, gone=gone: [e for e in entries if e not in gone])
         kept = sorted(gone - set(before))
         lines.append(f"{name}: {len(before) - len(after)} entries removed" + (f" (backup {backup})" if backup else ""))
         lines += [f"  {name} changed this entry since the plan, so it stays: {entry}" for entry in kept]
-    return True, lines
+    if outcome["stale"]:
+        lines.append(f"{len(outcome['stale'])} moves were not applied; run the merge again to see the current plan.")
+    return not outcome["stale"], lines
 
 
 def merge_command(args) -> int:

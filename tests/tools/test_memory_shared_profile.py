@@ -107,6 +107,7 @@ def test_concurrent_processes_writing_the_shared_layer_keep_every_entry(install)
     for proc in procs:
         proc.stdin.write(b"g")
         proc.stdin.close()
+        proc.stdin = None  # communicate() would flush the closed handle on Python 3.11
     for proc in procs:
         _out, err = proc.communicate(timeout=120)
         assert proc.returncode == 0, err.decode()

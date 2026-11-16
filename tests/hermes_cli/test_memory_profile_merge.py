@@ -88,3 +88,59 @@ def test_apply_refuses_when_the_shared_layer_would_be_full(install):
     assert result.returncode == 1
     assert "The shared owner profile (shared/OWNER.md) is full" in result.stdout
     assert _snapshot(install) == before
+
+
+def _plan_and_apply(root: Path, monkeypatch, between=None):
+    """Build the plan, let *between* change files (the owner reading the prompt), then apply."""
+    from hermes_cli import memory_profile_merge as merge
+    monkeypatch.setenv("HOME", str(root.parent))
+    monkeypatch.setenv("HERMES_HOME", str(root))
+    monkeypatch.setenv("LINA_HOME", str(root))
+    profiles = [(name, root / "profiles" / name) for name in sorted(p.name for p in (root / "profiles").iterdir())]
+    plan = merge.build_plan(profiles, root / "shared" / "OWNER.md")
+    if between:
+        between()
+    return merge.apply(plan)
+
+
+def test_a_shared_entry_corrected_after_the_plan_is_not_joined_by_the_old_wording(install, monkeypatch):
+    shared = install / "shared" / "OWNER.md"
+    shared.parent.mkdir()
+    shared.write_text("Prefers short answers!")  # near-identical to the profiles' wording: a planned move
+
+    def corrected():
+        shared.write_text("Prefers long answers")
+
+    ok, lines = _plan_and_apply(install, monkeypatch, corrected)
+    assert ok is False and any("shared layer changed since the plan" in line for line in lines)
+    text = shared.read_text()
+    assert "Prefers long answers" in text and "Prefers short answers" not in text  # the old wording never joins it
+    for name in "abc":  # nothing moved out of the profiles
+        assert "Prefers short answers" in _user_md(install, name).read_text()
+
+
+def test_a_fact_added_to_the_shared_layer_after_the_plan_stops_that_move_only(install, monkeypatch):
+    shared = install / "shared" / "OWNER.md"
+
+    def added():
+        shared.parent.mkdir(exist_ok=True)
+        shared.write_text("Prefers short answer")  # a new entry, near the planned fact but not equal
+
+    ok, lines = _plan_and_apply(install, monkeypatch, added)
+    assert ok is False
+    assert "Ask before deleting files" in shared.read_text()  # the other planned move went through
+    assert "Prefers short answers" not in shared.read_text()
+    for name in "abc":
+        assert "Prefers short answers" in _user_md(install, name).read_text()
+
+
+def test_a_profile_named_shared_is_not_taken_for_the_shared_layer(install, monkeypatch):
+    home = install / "profiles" / "shared"
+    (home / "memories").mkdir(parents=True)
+    (home / "config.yaml").write_text("memory:\n  user_char_limit: 2500\n")
+    (home / "memories" / "USER.md").write_text(ENTRY_DELIMITER.join(["Prefers short answers", "Only here"]))
+    ok, lines = _plan_and_apply(install, monkeypatch)
+    assert ok is True, lines
+    assert "Prefers short answers" not in _user_md(install, "shared").read_text()  # moved like any profile's
+    assert "Only here" in _user_md(install, "shared").read_text()
+    assert "Prefers short answers" in (install / "shared" / "OWNER.md").read_text()
