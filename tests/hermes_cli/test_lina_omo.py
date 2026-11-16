@@ -289,3 +289,46 @@ def test_a_change_of_routing_sources_changes_the_build_digest(tmp_path):
     policy = source / "policy.default.json"
     policy.write_text(policy.read_text() + "\n")
     assert lina_omo_routing.source_digest(source) != before
+
+
+# lina#590 left a build made from older sources under the LINA home writing a removed proxy's names (11-16).
+
+def _stale_build(world) -> Path:
+    """The build of an older LINA: another stamp, and a cli that would write the old names (here: exit 99)."""
+    _install(world)
+    build = lina_omo_routing.build_dir(world["root"])
+    (build / ".source-sha256").write_text("0" * 64 + "\n")
+    cli = lina_omo_routing.cli_path(world["root"])
+    cli.write_text("import sys\nsys.exit(99)\n")
+    return cli
+
+
+@pytest.mark.platforms("posix")
+@pytest.mark.parametrize("verb", ["plan", "check", "apply"])
+def test_routing_rebuilds_a_build_made_from_other_sources_before_it_runs(world, verb):
+    cli = _stale_build(world)
+    assert _lina_omo("routing", verb) == 0  # the stale cli would exit 99
+    assert lina_omo_routing.built_digest(world["root"]) == lina_omo_routing.source_digest()
+    assert "sys.exit(99)" not in cli.read_text()
+    assert world["calls"]()[-1][:2] == ["ocx-omo", verb]
+
+
+@pytest.mark.platforms("posix")
+def test_the_daily_sync_and_status_rebuild_too_and_a_failed_rebuild_runs_nothing(world, monkeypatch):
+    _stale_build(world)
+    assert lina_omo_routing.apply(world["root"]) == 0
+    assert lina_omo_routing.built_digest(world["root"]) == lina_omo_routing.source_digest()
+
+    cli = _stale_build(world)
+
+    def broken(*args, **kwargs):
+        raise lina_deps.DepsError("npm ci failed")
+
+    monkeypatch.setattr(lina_deps, "npm", broken)
+    lines = []
+    assert lina_omo_routing.run_verb("apply", [], world["root"], out=lines.append) == 2
+    assert lina_omo_routing.apply(world["root"]) == 2
+    code, text = lina_omo_routing.check(world["root"])
+    assert code == 2 and "out of date" in text and "lina omo install" in text
+    assert any("npm ci failed" in line for line in lines)
+    assert "sys.exit(99)" in cli.read_text()  # the old cli is neither run nor replaced half-way

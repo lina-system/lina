@@ -6,7 +6,8 @@ routing keys of each route and backing the file up before it writes. Its argumen
 ``check`` exits 0 when the routing is in step and 10 when there are changes to review.
 
 The build copies the sources into ``vendor/ocx-omo/`` and runs ``npm ci`` + ``npm run build`` there with the
-pinned Node, so the checkout stays clean; it is redone when the sources change (``.source-sha256``).
+pinned Node, so the checkout stays clean; it is redone when the sources change (``.source-sha256``). Every verb checks that stamp first and rebuilds a
+build made from other sources (lina#765), so a LINA update cannot leave the old tool writing a removed proxy's names.
 
 ocx-omo gets ``--remote-id <id>`` of the node's ``worker.proxy`` (lina#587), reads ``providers.magpie`` of omo's
 catalog and writes ``magpie/<remote_id>/<provider>/<id>`` (``magpie/<provider>/<id>`` with ``remote_id: ""``, passed as
@@ -115,15 +116,34 @@ def catalog_problem() -> str | None:
     return None if isinstance(models, list) and models else missing
 
 
-def _missing(root: Path) -> str | None:
-    if not cli_path(root).exists() or not lina_omo.node_bin(root).exists():
+def built_digest(root: Path) -> str | None:
+    """The source digest the built ocx-omo under ``vendor/ocx-omo`` was made from (None: no stamp)."""
+    try:
+        return (build_dir(root) / ".source-sha256").read_text(encoding="utf-8-sig").strip()
+    except OSError:
+        return None
+
+
+def _missing(root: Path, run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> str | None:
+    """Why ocx-omo cannot run (None when it can). A build made from other sources than the ones this LINA ships is
+    rebuilt first: the build is a copy under the LINA home that a LINA update does not touch, and running the old
+    copy kept writing a removed proxy's model names into ``omo.jsonc`` after the sources had moved on."""
+    node = lina_omo.node_bin(root)
+    if not cli_path(root).exists() or not node.exists():
         return "ocx-omo is not built under the LINA home: run `lina omo install`"
+    if built_digest(root) == source_digest():
+        return None
+    try:
+        build(root, node.parent.parent, run=run)
+    except lina_deps.DepsError as exc:
+        return f"ocx-omo: the build under the LINA home is out of date and could not be rebuilt ({exc}): run `lina omo install`"
     return None
 
 
-def _argv(root: Path, verb: str, args: list[str]) -> tuple[list[str] | None, str | None]:
+def _argv(root: Path, verb: str, args: list[str],
+          run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> tuple[list[str] | None, str | None]:
     """ocx-omo's command line for this node's proxy, else why it cannot run (not built, a wrong ``worker.proxy``)."""
-    problem = _missing(root)
+    problem = _missing(root, run)
     if problem:
         return None, problem
     try:
@@ -136,7 +156,7 @@ def run_verb(verb: str, args: list[str], root: Path | None = None,
              run: Callable[..., subprocess.CompletedProcess] = subprocess.run, out=print) -> int:
     """Run ocx-omo with its output on this terminal; returns its exit code (2 when it is not built)."""
     root = root or lina_deps.lina_root()
-    command, problem = _argv(root, verb, args)
+    command, problem = _argv(root, verb, args, run)
     if problem:
         out(problem)
         return 2
@@ -145,7 +165,7 @@ def run_verb(verb: str, args: list[str], root: Path | None = None,
 
 def check(root: Path, run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> tuple[int, str]:
     """``check`` with its output captured, for ``lina omo status``."""
-    command, problem = _argv(root, "check", [])
+    command, problem = _argv(root, "check", [], run)
     if problem:
         return 2, problem
     result = run(command, env=lina_omo.omo_env(), capture_output=True, text=True,
@@ -160,7 +180,7 @@ def prepare(root: Path, run: Callable[..., subprocess.CompletedProcess] = subpro
 
 def apply(root: Path, run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> int:
     """The route source's ``apply`` with its output captured (the daily sync, lina#531)."""
-    command, problem = _argv(root, "apply", [])
+    command, problem = _argv(root, "apply", [], run)
     if problem:
         return 2
     return run(command, env=lina_omo.omo_env(), capture_output=True, text=True, encoding="utf-8",

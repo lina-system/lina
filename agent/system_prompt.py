@@ -155,7 +155,8 @@ def _restore_plugin_prompt_sections(prompt: str) -> tuple:
     if end < 0:
         return ()
     after_end = end + len(PLUGIN_SECTIONS_END)
-    if not prompt[after_end:].startswith("\n\nConversation started:"):
+    # The renderer-owned line that follows the container: the active-profile line, then the start date.
+    if not prompt[after_end:].startswith(("\n\nActive Hermes profile:", "\n\nConversation started:")):
         return ()
     framed = prompt[start:after_end]
     restored = []

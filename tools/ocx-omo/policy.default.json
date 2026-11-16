@@ -2,7 +2,6 @@
   "providers": [
     "codex",
     "claude",
-    "antigravity",
     "grok"
   ],
   "extras": {
@@ -14,12 +13,6 @@
       {
         "model": "gpt-6-astra",
         "reasoning": "max"
-      }
-    ],
-    "categories.artistry": [
-      {
-        "model": "gemini-4-argon",
-        "reasoning": "high"
       }
     ],
     "categories.ultrabrain": [
@@ -53,10 +46,6 @@
       }
     ],
     "categories.quick": [
-      {
-        "model": "gemini-3.8-flash",
-        "reasoning": "low"
-      },
       {
         "model": "grok-4.7-fast",
         "reasoning": "low"
@@ -94,19 +83,11 @@
     ],
     "agents.explore": [
       {
-        "model": "gemini-3.8-flash",
-        "reasoning": "low"
-      },
-      {
         "model": "grok-4.7-fast",
         "reasoning": "low"
       }
     ],
     "agents.librarian": [
-      {
-        "model": "gemini-3.8-flash",
-        "reasoning": "low"
-      },
       {
         "model": "grok-4.7-fast",
         "reasoning": "low"
