@@ -310,6 +310,24 @@ def test_a_promotion_stays_a_proposal_until_accepted_and_accepting_rewrites_no_f
     assert (again["phases"]["promote"]["calls"], again["phases"]["promote"]["proposals"]) == (0, 0)
 
 
+def test_an_edited_owner_message_confirms_only_by_its_newest_version(_memory_store, tmp_path, capsys, extractor):
+    from hermes_cli.brain.dream.phases import _owner_messages
+    from hermes_state_store import agent_id_for
+    dsn = _memory_store.superuser_dsn()
+    _extracted(capsys, tmp_path, dsn, {**CHAT, **MAIL})
+    agent = agent_id_for(Path(os.environ["HERMES_HOME"]) / "state.db")
+    _owner_message(dsn, "agent:test:o1", "응 미나 보컬 녹음 합정에서 하는 거 맞아")
+    _owner_message(dsn, "agent:test:o2", "미나는 합정이 아니라 성수에서 녹음해")
+    with psycopg.connect(dsn) as conn:
+        assert {uid for uid, _, _ in _owner_messages(conn, "미나", agent, 5)} == {"agent:test:o1", "agent:test:o2"}
+    # The owner edits o1: the newer version, kept under the same base uid, no longer names her.
+    _owner_message(dsn, "agent:test:o1#2c1f9a0e7b3d4a58", "응 보컬 녹음 합정에서 하는 거 맞아")
+
+    with psycopg.connect(dsn) as conn:
+        found = [uid for uid, _, _ in _owner_messages(conn, "미나", agent, 5)]
+    assert found == ["agent:test:o2"]
+
+
 def test_the_promote_phase_spends_only_its_own_budget(_memory_store, tmp_path, capsys, extractor, monkeypatch):
     dsn = _memory_store.superuser_dsn()
     _extracted(capsys, tmp_path, dsn, CHAT)

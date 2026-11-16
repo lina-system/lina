@@ -519,9 +519,15 @@ def _owner_messages(conn, slug: str, agent_id: str, most: int) -> list[tuple]:
     if not names:
         return []
     patterns = ["%" + re.sub(r"([\\%_])", r"\\\1", name.strip()) + "%" for name in names]
+    # An edited message keeps its earlier versions under the same base uid (``uid#digest``): the newest version of
+    # each is chosen first, and only then do the name match, the forgotten flag and the limit apply.
     return conn.execute(
-        "SELECT uid, content, ts FROM memory.messages WHERE agent_id = %s AND speaker = 'owner' AND grade = 'owner' "
-        "AND forgotten_at IS NULL AND content ILIKE ANY(%s) ORDER BY ts DESC NULLS LAST, message_id DESC LIMIT %s",
+        "SELECT uid, content, ts FROM ("
+        " SELECT DISTINCT ON (split_part(uid, '#', 1)) message_id, uid, content, ts, forgotten_at"
+        " FROM memory.messages WHERE agent_id = %s AND speaker = 'owner' AND grade = 'owner'"
+        " ORDER BY split_part(uid, '#', 1), message_id DESC"
+        ") newest WHERE forgotten_at IS NULL AND content ILIKE ANY(%s)"
+        " ORDER BY ts DESC NULLS LAST, message_id DESC LIMIT %s",
         (agent_id, patterns, most)).fetchall()
 
 
