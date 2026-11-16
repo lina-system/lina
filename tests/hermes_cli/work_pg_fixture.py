@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -11,8 +12,21 @@ from pathlib import Path
 
 import pytest
 
+from hermes_cli import store_migrations
 from hermes_cli.work.store_pg import PgDb, PgError, connect
 from tests.waiting import wait_until
+
+# Every migration that builds part of the work schema (0004's tables and views, later views and tables over them).
+WORK_MIGRATIONS = tuple(p for p in store_migrations.migration_files()
+                        if re.search(r"search_path TO work\b", p.read_text(encoding="utf-8")))
+
+
+def reset_work_schema(db: PgDb) -> None:
+    """Drop the work schema and the ledger rows of every migration that built it, so the next connect rebuilds the
+    whole schema; the migrations' numbers are read from their file names."""
+    versions = ", ".join(f"'{p.name.split('_', 1)[0]}'" for p in WORK_MIGRATIONS)
+    db.run_sql("DROP SCHEMA IF EXISTS work CASCADE; DO $$ BEGIN IF to_regclass('memory.schema_migrations') "
+               f"IS NOT NULL THEN DELETE FROM memory.schema_migrations WHERE version IN ({versions}); END IF; END $$")
 
 
 def command(argv: list[str]) -> subprocess.CompletedProcess[str]:

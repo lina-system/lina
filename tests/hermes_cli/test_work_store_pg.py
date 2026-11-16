@@ -38,7 +38,8 @@ def test_agent_tables_are_forced_rls_when_helper_exists(pg_db: PgDb):
                          "JOIN pg_attribute a ON a.attrelid=c.oid WHERE n.nspname='work' "
                          "AND c.relkind='r' AND a.attname='agent_id' AND NOT a.attisdropped").fetchall()
     # Then every such table is forced through the named policy.
-    assert {row[0] for row in rows} == {"area", "project", "goal", "todo", "run", "wait", "decision", "link", "event", "outbox"}
+    assert {row[0] for row in rows} == {"area", "project", "goal", "todo", "run", "wait", "decision", "link", "event", "outbox",
+                                        "artifact"}
     assert all(row[1:] == (True, True, True) for row in rows)
 
 
