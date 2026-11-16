@@ -87,6 +87,57 @@ def test_a_marked_document_is_masked_in_the_store_and_refused_for_public_posts_b
     assert [detail["deleted"] for kind, detail in events if kind == "cleaned"] == [1]
 
 
+class _Compressor:
+    """The context engine's ``compress``, answering a fixed summary and retained exchange (no model call)."""
+
+    compression_count = 1
+    last_prompt_tokens = last_completion_tokens = 0
+    _last_summary_error = None
+    _last_compress_aborted = False
+    _last_aux_model_failure_model = _last_aux_model_failure_error = None
+
+    def __init__(self, compressed: list[dict]) -> None:
+        self._compressed = compressed
+
+    def compress(self, *_args, **_kwargs) -> list[dict]:
+        return [dict(message) for message in self._compressed]
+
+    def __getattr__(self, name: str):
+        from unittest.mock import MagicMock
+        return MagicMock(name=name)
+
+
+@pytest.mark.parametrize("marked", [True, False])
+def test_a_rotated_compaction_child_of_a_marked_job_is_stored_masked(home, document, memory_store_sql, marked):
+    from hermes_state import SessionDB
+    db = SessionDB(home / "state.db")
+    agent = make_agent(SESSION, db)
+    try:
+        if marked:
+            _provider(agent).handle_tool_call("mark_personal", {"path": str(document)})
+        run_turn(agent, "계약서 읽어줘", "읽었어요.")
+        drain(agent)
+        agent.compression_in_place = False
+        agent.context_compressor = _Compressor([
+            {"role": "user", "content": f"[CONTEXT COMPACTION] The owner gave the number {NUMBER}."},
+            {"role": "user", "content": f"내 등록번호는 {NUMBER}이야"},
+            {"role": "assistant", "content": f"{NUMBER}로 확인했어요."}])
+        agent._compress_context([{"role": "user", "content": f"synthetic page {i} " * 40} for i in range(6)], "sys",
+                                approx_tokens=10_000)
+        child = agent.session_id
+        stored = memory_store_sql("SELECT content FROM memory.messages WHERE session_id = %s ORDER BY message_id",
+                                  (child,))
+    finally:
+        agent.shutdown_memory_provider()
+        db.close()
+
+    number = MASKED if marked else NUMBER
+    assert child != SESSION
+    assert [content for (content,) in stored] == [
+        f"[CONTEXT COMPACTION] The owner gave the number {number}.", f"내 등록번호는 {number}이야",
+        f"{number}로 확인했어요."]
+
+
 def test_a_document_read_from_a_marker_folder_is_marked_for_the_job(home, tmp_path, memory_store_sql):
     from hermes_cli.plugins import _dispatch_pre_tool_call_hooks
     from hermes_state import SessionDB

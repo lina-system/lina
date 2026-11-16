@@ -239,15 +239,22 @@ own devices and the model services in use (lina#308). What holds for a document 
 - **Marking.** The agent calls `mark_personal` with the document's path when the owner says a document is personal; a
   document named by a tool call (`read_file`, a terminal command) that sits under a folder holding `.lina-personal`
   is marked by itself before the tool runs. The mark is stored with the job ([store.md](store.md#personal-documents)),
-  and a compaction's child session continues the job.
+  and a compaction's child session continues the job: it joins in the transaction that writes its summary and kept
+  rows, so they are masked too.
 - **Masked numbers.** From the mark on, the job's rows are stored with ID and account numbers masked to their last
   four characters, in the transcript and in `memory.messages` alike.
 - **Derived files.** `mark_personal` answers with the job's `work_dir` and `temp_dir`; extracts, page images and
-  copies go there, and both are deleted when the session ends, with the count in the job's run record.
+  copies go there, and both are deleted when the session ends, with the count in the job's run record. Every file in
+  them counts as personal for the job, so a scan made there is not sent to hosted OCR either.
 - **No public post, no third-party upload.** lina-memory's `pre_tool_call` hook refuses a call that would carry the
   document, a derived file, a line of its text or an ID number to a public place (`git push`; `gh` issue, pull
   request, gist and release writes and `gh api` writes; GitHub, GitLab and posting connectors' write tools) or to a
   third-party service (`curl`/`wget` uploads such as web OCR or converters; `read_file` skips hosted OCR for it).
+  A `git push` from a marked job is also checked on the commits it would send (those on no remote-tracking ref of
+  the remote): a path they add or change that is a marked document, under a marker folder or in the job's folders,
+  or an added line with an ID or account number or a line of the document's text, refuses it, and so does a push
+  whose commits git cannot tell (no remote-tracking ref, a remote given as a URL, a git error); the message says to
+  push from a job without a personal document or to remove the document from the commits.
   The message says why, and the refusal is in the run record. `delegate_task`, model calls and the owner's own
   devices and chats are not refused. With the store unreachable, such a post is refused because the marks cannot be
   checked.

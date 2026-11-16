@@ -368,7 +368,7 @@ and every compaction child that continued it. Migration `0023_personal_documents
 
 | Table | Holds |
 | --- | --- |
-| `memory.personal_job_sessions` | `session_id` -> `job_id` (a compaction child joins its parent's job) |
+| `memory.personal_job_sessions` | `session_id` -> `job_id` (a compaction child joins its parent's job in the transaction that publishes it, before its rows) |
 | `memory.personal_marks` | `job_id`, `path`, `how` (`owner` or `folder`), `marked_at` |
 | `memory.personal_job_events` | the job's run record: `work_folder` (folders made, per `device`), `cleaned` (`deleted` file count, `outcome`), `refused` (`tool`, `destination`, `why`); never document text |
 
@@ -388,7 +388,8 @@ Derived files of a marked document go under the job's folders on the device that
 `agent/personal_work.py` only: `<home>/personal-work/<job>/` and `<temp dir>/lina-personal-<job>/`. When the job
 ends (lina-memory's session end, or the end of a `job_folders` block by success, failure or cancel) exactly those two
 folders are deleted, never a pattern over their parent, and the count deleted goes to the run record. `read_file`'s
-extractor makes its temp copies of a personal document in the job's temp folder and never sends it to hosted OCR.
+extractor makes its temp copies of a personal document in the job's temp folder and never sends it, or any file in
+the job's two folders, to hosted OCR.
 
 ### What stays in each profile's `state.db`
 

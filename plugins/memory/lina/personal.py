@@ -19,6 +19,8 @@ from typing import Any, Optional
 
 from agent import personal_numbers, personal_work
 
+from . import personal_push
+
 logger = logging.getLogger(__name__)
 
 MARK_TOOL = "mark_personal"
@@ -195,6 +197,36 @@ def carries_personal(texts: list[str], marked: list[str], folders) -> Optional[s
     return None
 
 
+_PUSH_HOW = "push from a job without a personal document, or remove the document from the commits"
+
+
+def _terminal_cwd(args: dict[str, Any], task_id: str) -> str:
+    """Where a terminal command starts on this machine: its ``workdir``, the task's recorded cwd, else this
+    process's."""
+    from tools.terminal_tool import get_session_cwd
+    from tools.terminal_tool_config import _safe_getcwd
+    return str(args.get("workdir") or get_session_cwd(task_id) or _safe_getcwd())
+
+
+def pushed_personal(command: str, cwd: str, marked: list[str], folders) -> Optional[str]:
+    """Why the commits a line's ``git push`` would send carry a personal document or text from one, or cannot be
+    shown not to; None when every push sends nothing personal."""
+    lines = None
+    try:
+        for sent in personal_push.outgoing(_words(command), cwd):
+            for path in sent.paths:
+                if personal_work.is_marked(marked, path) or folders.holds(path) or personal_work.marker_folder(path):
+                    return f"the commits it sends carry the personal document {path}"
+            if any(personal_numbers.find(line) for line in sent.added):
+                return "the commits it sends carry an ID or account number"
+            lines = _derived_lines(marked, folders) if lines is None else lines
+            if lines and any(line.strip() in lines for line in sent.added):
+                return "the commits it sends carry text from a personal document"
+    except personal_push.Undetermined as exc:
+        return f"the commits it sends cannot be checked ({exc}); {_PUSH_HOW}"
+    return None
+
+
 def _mark_from_folders(texts: list[str], session_id: str) -> None:
     folder_marked = [path for path in _named_paths(texts) if personal_work.marker_folder(path)]
     if not folder_marked:
@@ -207,9 +239,10 @@ def _mark_from_folders(texts: list[str], session_id: str) -> None:
 
 
 def pre_tool_call(tool_name: str = "", args: Optional[dict[str, Any]] = None, session_id: str = "",
-                  **_kwargs) -> Optional[dict[str, str]]:
+                  task_id: str = "", **_kwargs) -> Optional[dict[str, str]]:
     """The ``pre_tool_call`` hook: mark documents from marked folders, refuse public posts and third-party uploads
-    of personal material. A store that cannot be reached refuses such a post rather than let it through."""
+    of personal material, and a marked job's ``git push`` whose commits carry it. A store that cannot be reached
+    refuses such a post rather than let it through."""
     from hermes_state_store import StoreUnavailableError
     args = args if isinstance(args, dict) else {}
     session = session_id or personal_work.current_session_id()
@@ -227,6 +260,8 @@ def pre_tool_call(tool_name: str = "", args: Optional[dict[str, Any]] = None, se
         folders = personal_work.folders_for(job)
         why = carries_personal(texts, marked, folders) if marked or any(
             personal_work.marker_folder(p) for p in _named_paths(texts)) else None
+        if why is None and marked and tool_name == "terminal":
+            why = pushed_personal(str(args.get("command") or ""), _terminal_cwd(args, task_id), marked, folders)
         if why is None:
             return None
         marks.record(job, "refused", {"tool": tool_name, "destination": where, "why": why})

@@ -63,6 +63,25 @@ def test_a_marked_scan_is_not_sent_to_hosted_ocr_and_an_unmarked_one_is(anydoc, 
     assert f"{folders.temp}/page" in refused
 
 
+@pytest.mark.parametrize("folder", ["work", "temp"])
+def test_a_scan_derived_in_the_job_folders_is_not_sent_to_hosted_ocr(anydoc, tmp_path, folder):
+    document = _scan(tmp_path, "id-card.pdf")
+    with scoped_current_session_id(SESSION):
+        marks = personal_work.marks_for_home()
+        job = marks.mark(SESSION, str(document.resolve()), "owner")
+        derived = _scan(getattr(personal_work.open_job_folders(marks, job), folder), "scan.pdf")
+        refused = read_extract.extract_document_text(str(derived))
+        personal_work.end_job(marks, job, "success")
+    (tmp_path / "plain").mkdir()
+    elsewhere = _scan(tmp_path / "plain", "scan.pdf")
+    with scoped_current_session_id("read-unmarked"):
+        used = read_extract.extract_document_text(str(elsewhere))
+
+    assert "Hosted OCR was not used: it is a personal document" in refused
+    assert anydoc.hosted == [str(elsewhere)]
+    assert used == "hosted text\n"
+
+
 def _docx(text: str) -> bytes:
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as zf:

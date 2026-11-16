@@ -129,15 +129,18 @@ def job_folders(marks, job_id: str) -> Iterator[JobFolders]:
 
 
 def personal_folders_for(path: str, session_id: Optional[str] = None) -> Optional[JobFolders]:
-    """The current job's folders when *path* is a personal document of it (marked, or under a marker folder),
-    else None. A store that cannot be reached raises: the caller decides without guessing."""
+    """The current job's folders when *path* is a personal document of it (marked, under a marker folder, or in
+    the job's own work or temp folder, where what was derived from one lives), else None. A store that cannot be
+    reached raises: the caller decides without guessing."""
     session = session_id or current_session_id()
     if not session:
         return None
     marks = marks_for_home()
-    if marker_folder(path) is None and not is_marked(marks.marked_paths(session), path):
+    job = marks.job_of(session)
+    if (not folders_for(job).holds(path) and marker_folder(path) is None
+            and not is_marked(marks.marked_paths(session), path)):
         return None
-    return open_job_folders(marks, marks.job_of(session))
+    return open_job_folders(marks, job)
 
 
 def is_marked(marked_paths: list[str], path: str) -> bool:

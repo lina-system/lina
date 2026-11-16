@@ -427,20 +427,9 @@ class LinaMemoryProvider(MemoryProvider):
             logger.warning("lina-memory could not end the personal job of session %s: %s", self._session_id, exc)
 
     def on_session_switch(self, new_session_id: str, **kwargs) -> None:
-        if kwargs.get("parent_session_id") and not kwargs.get("reset"):
-            self._continue_personal_job(str(kwargs["parent_session_id"]), new_session_id)
         self._claim(new_session_id)
         if self._honcho_on:
             self._honcho.on_session_switch(new_session_id, **kwargs)
-
-    @staticmethod
-    def _continue_personal_job(parent_session_id: str, session_id: str) -> None:
-        """A compaction's child session continues its parent's job, marks and work folders included."""
-        from agent import personal_work
-        try:
-            personal_work.marks_for_home().continue_job(parent_session_id, session_id)
-        except Exception as exc:  # health: allow BLE001 -- the switch goes on; the child's rows are then unmarked
-            logger.warning("lina-memory could not carry the personal job into session %s: %s", session_id, exc)
 
     def on_pre_compress(self, messages: list[dict[str, Any]]) -> str:
         return self._honcho.on_pre_compress(messages) if self._honcho_on else ""

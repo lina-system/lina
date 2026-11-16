@@ -18,6 +18,15 @@ MARKED_SQL = ("SELECT EXISTS (SELECT 1 FROM memory.personal_job_sessions s JOIN 
               " ON m.agent_id = s.agent_id AND m.job_id = s.job_id WHERE s.session_id = %s)")
 
 
+def continue_job(cur, parent_session_id: str, session_id: str) -> bool:
+    """*session_id* continues *parent_session_id* (a compaction's child) and joins the parent's job when that job has
+    a session row, i.e. a mark (on the caller's cursor). Returns whether it joined."""
+    cur.execute("INSERT INTO memory.personal_job_sessions (session_id, job_id)"
+                " SELECT %s, job_id FROM memory.personal_job_sessions WHERE session_id = %s"
+                " ON CONFLICT DO NOTHING", (session_id, parent_session_id))
+    return cur.rowcount > 0
+
+
 def session_is_marked(cur, session_id: str) -> bool:
     """Whether the job *session_id* belongs to carries a personal-document mark (on the caller's cursor)."""
     cur.execute(MARKED_SQL, (session_id,))
@@ -59,13 +68,8 @@ class PersonalMarks:
             return [row[0] for row in cur.fetchall()]
 
     def continue_job(self, parent_session_id: str, session_id: str) -> bool:
-        """*session_id* continues *parent_session_id* (a compaction's child): it joins the parent's job when that
-        job has a mark. Returns whether it joined."""
         with self._store._cursor() as cur:
-            cur.execute("INSERT INTO memory.personal_job_sessions (session_id, job_id)"
-                        " SELECT %s, job_id FROM memory.personal_job_sessions WHERE session_id = %s"
-                        " ON CONFLICT DO NOTHING", (session_id, parent_session_id))
-            return cur.rowcount > 0
+            return continue_job(cur, parent_session_id, session_id)
 
     def record(self, job_id: str, kind: str, detail: dict[str, Any], *, device: Optional[str] = None) -> None:
         with self._store._cursor() as cur:
