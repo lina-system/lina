@@ -17,6 +17,10 @@ row-level security does not limit, so it covers every agent's rows.
 
 The client retries a rate-limited batch (lina#652); when it gives up, the run stops with one line of the rows left per
 source and the command that continues it. ``--max-rate`` caps the requests per second.
+
+One request carries at most ``embedding.max_request_chars`` characters, so a batch of long rows (LCM summaries) goes
+out as several requests; a request of several texts the endpoint keeps answering 429 to is halved and its halves
+sent instead (lina#763). The vectors of a batch are still written in its one transaction.
 """
 
 from __future__ import annotations
@@ -25,7 +29,7 @@ from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from agent.embedding_client import EmbeddingRetriesExhausted
+from agent.embedding_client import DEFAULT_MAX_REQUEST_CHARS, EmbeddingRetriesExhausted
 from hermes_state_store import SHARED_VECTOR_OWNER
 
 SOURCES = ("agent", "messages", "memory")
@@ -147,6 +151,52 @@ def _items(conn, source: str, model: str, after: int, limit: int, max_chars: int
     return items
 
 
+def _request_groups(texts: list[str], max_request_chars: int) -> Iterator[list[str]]:
+    """*texts* in order, cut into runs of at most *max_request_chars* characters (a longer text alone)."""
+    group: list[str] = []
+    size = 0
+    for text in texts:
+        if group and size + len(text) > max_request_chars:
+            yield group
+            group, size = [], 0
+        group.append(text)
+        size += len(text)
+    if group:
+        yield group
+
+
+def _embed_halving(embed: Callable[[list[str]], list[list[float]]],
+                   texts: list[str]) -> tuple[list[list[float]], int]:
+    try:
+        return embed(texts), 1
+    except EmbeddingRetriesExhausted as exc:
+        # Only a 429 means the request may be too large; a timeout or 5xx, or one text, stops the run as before.
+        if exc.status != 429 or len(texts) < 2:
+            raise
+    middle = len(texts) // 2
+    first, first_requests = _embed_halving(embed, texts[:middle])
+    second, second_requests = _embed_halving(embed, texts[middle:])
+    return first + second, first_requests + second_requests
+
+
+def embed_bounded(embed: Callable[[list[str]], list[list[float]]], texts: list[str],
+                  max_request_chars: int) -> tuple[list[list[float]], int]:
+    """The vectors of *texts* in order and the number of requests that returned them: requests of at most
+    *max_request_chars* characters, each halved while the endpoint answers 429 to it through every retry."""
+    vectors: list[list[float]] = []
+    requests = 0
+    for group in _request_groups(texts, max_request_chars):
+        got, sent = _embed_halving(embed, group)
+        vectors.extend(got)
+        requests += sent
+    return vectors, requests
+
+
+def split_note(requests: int) -> str:
+    """The progress line's note of a batch sent as more than one request."""
+    return f", split into {requests} requests" if requests > 1 else ""
+
+
 def _write_batch(conn, source: str, model: str, items: list[_Item], vectors: list[list[float]]) -> None:
     kind = "document" if source == "memory" else "chunk"
     with conn.transaction():
@@ -170,7 +220,8 @@ def _write_batch(conn, source: str, model: str, items: list[_Item], vectors: lis
 
 def reembed_source(conn, embed: Callable[[list[str]], list[list[float]]], *, source: str, model: str,
                    batch_size: int, from_start: bool = False, max_chars: int = DEFAULT_MAX_CHARS,
-                   max_batches: Optional[int] = None, out: Callable[[str], None] = print) -> SourceCounts:
+                   max_request_chars: int = DEFAULT_MAX_REQUEST_CHARS, max_batches: Optional[int] = None,
+                   out: Callable[[str], None] = print) -> SourceCounts:
     """Embed *source* in batches of *batch_size*, committing each batch with its progress row."""
     if from_start:
         conn.execute("DELETE FROM vec.reembed_progress WHERE source = %s AND model = %s", (source, model))
@@ -183,19 +234,21 @@ def reembed_source(conn, embed: Callable[[list[str]], list[list[float]]], *, sou
         if not items:
             break
         texts = [item.text for item in items if item.text]
-        vectors = embed(texts) if texts else []
+        vectors, requests = embed_bounded(embed, texts, max_request_chars)
         _write_batch(conn, source, model, items, vectors)
         counts.batches += 1
         counts.embedded += len(texts)
         counts.covered += sum(item.covered for item in items)
         counts.skipped += len(items) - len(texts) - sum(item.covered for item in items)
         counts.last_item_id = items[-1].item_id
-        out(f"{source}: batch {counts.batches}, up to id {counts.last_item_id}, {counts.embedded} embedded")
+        out(f"{source}: batch {counts.batches}, up to id {counts.last_item_id}, {counts.embedded} embedded"
+            f"{split_note(requests)}")
     return counts
 
 
 def reembed(connect: Callable[[], Any], client: Any, sources: Sequence[str], *, batch_size: int,
-            from_start: bool = False, max_chars: int = DEFAULT_MAX_CHARS, max_batches: Optional[int] = None,
+            from_start: bool = False, max_chars: int = DEFAULT_MAX_CHARS,
+            max_request_chars: int = DEFAULT_MAX_REQUEST_CHARS, max_batches: Optional[int] = None,
             out: Callable[[str], None] = print) -> list[SourceCounts]:
     with connect() as conn:
         width = _table_width(conn)
@@ -206,11 +259,13 @@ def reembed(connect: Callable[[], Any], client: Any, sources: Sequence[str], *, 
         try:
             for source in sources:
                 counts = reembed_source(conn, client.embed, source=source, model=client.model, batch_size=batch_size,
-                                        from_start=from_start, max_chars=max_chars, max_batches=max_batches, out=out)
+                                        from_start=from_start, max_chars=max_chars,
+                                        max_request_chars=max_request_chars, max_batches=max_batches, out=out)
                 if source == "memory":
                     from hermes_cli.store_reembed_lcm import reembed_summaries
                     reembed_summaries(conn, client.embed, counts, model=client.model, batch_size=batch_size,
-                                      from_start=from_start, max_chars=max_chars, max_batches=max_batches, out=out)
+                                      from_start=from_start, max_chars=max_chars,
+                                      max_request_chars=max_request_chars, max_batches=max_batches, out=out)
                 counts.left = rows_left(conn, source, client.model)
                 out(counts.line())
                 results.append(counts)
@@ -247,7 +302,7 @@ def run(args) -> int:
         with EmbeddingClient(settings, max_rate=args.max_rate) as client:
             reembed(_owner_connect, client, expand_sources(args.source),
                     batch_size=args.batch_size or settings.batch_size, from_start=args.from_start,
-                    max_chars=max_chars, max_batches=args.max_batches)
+                    max_chars=max_chars, max_request_chars=settings.max_request_chars, max_batches=args.max_batches)
     except (ReembedError, EmbeddingError, StoreUnavailableError) as exc:
         print(f"reembed: {exc}")
         return 1

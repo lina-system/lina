@@ -44,6 +44,9 @@ DEFAULT_MODEL = "qwen3-embedding-8b"
 DEFAULT_DIMENSIONS = 1024
 DEFAULT_KEY_ENV = "LINA_EMBEDDING_API_KEY"
 DEFAULT_BATCH_SIZE = 64
+# Characters of text in one request of `lina store reembed` (lina#763): 100,434 passed where about 220,000 kept answering
+# 429 on one endpoint. A measured safe value, not a known upstream limit.
+DEFAULT_MAX_REQUEST_CHARS = 100_000
 DEFAULT_TIMEOUT = 60.0
 DEFAULT_MAX_RETRIES = 8
 BACKOFF_FIRST_S = 1.0
@@ -55,7 +58,12 @@ class EmbeddingError(RuntimeError):
 
 
 class EmbeddingRetriesExhausted(EmbeddingError):
-    """The endpoint kept answering 429 or 5xx, or timing out, through every retry."""
+    """The endpoint kept answering 429 or 5xx, or timing out, through every retry. ``status`` is the last answer's
+    HTTP status, None when the requests timed out."""
+
+    def __init__(self, message: str, *, status: Optional[int] = None) -> None:
+        super().__init__(message)
+        self.status = status
 
 
 class EmbeddingModelMismatch(ValueError):
@@ -126,6 +134,7 @@ class EmbeddingSettings:
     timeout: float = DEFAULT_TIMEOUT
     send_dimensions: bool = True
     max_retries: int = DEFAULT_MAX_RETRIES
+    max_request_chars: int = DEFAULT_MAX_REQUEST_CHARS
 
     @classmethod
     def from_config(cls, config: Optional[Mapping[str, Any]] = None) -> EmbeddingSettings:
@@ -149,6 +158,7 @@ class EmbeddingSettings:
             timeout=float(section.get("timeout") or DEFAULT_TIMEOUT),
             send_dimensions=bool(section.get("send_dimensions", True)),
             max_retries=max(0, int(section.get("max_retries", DEFAULT_MAX_RETRIES))),
+            max_request_chars=max(1, int(section.get("max_request_chars") or DEFAULT_MAX_REQUEST_CHARS)),
         )
 
 
@@ -245,7 +255,8 @@ class EmbeddingClient:
             if failures > self.settings.max_retries:
                 raise EmbeddingRetriesExhausted(
                     f"embedding endpoint answered {response.status_code} {failures} times in a row "
-                    f"(embedding.max_retries {self.settings.max_retries}): {response.text[:300]}")
+                    f"(embedding.max_retries {self.settings.max_retries}): {response.text[:300]}",
+                    status=response.status_code)
             self._sleep(_retry_after(response.headers.get("retry-after"))
                         or min(BACKOFF_CAP_S, BACKOFF_FIRST_S * 2 ** (failures - 1)))
 
