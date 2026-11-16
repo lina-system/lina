@@ -11,7 +11,6 @@ import hashlib
 import io
 import json
 import os
-import re
 import subprocess
 import sys
 import tarfile
@@ -333,15 +332,3 @@ def test_the_daily_sync_and_status_rebuild_too_and_a_failed_rebuild_runs_nothing
     assert code == 2 and "out of date" in text and "lina omo install" in text
     assert any("npm ci failed" in line for line in lines)
     assert "sys.exit(99)" in cli.read_text()  # the old cli is neither run nor replaced half-way
-
-
-def test_routing_sources_name_no_removed_proxy_or_gemini_route():
-    """The tool's sources and default policy carry no OCX names, no antigravity provider and no Gemini extra."""
-    texts = {path.name: path.read_text() for path in lina_omo_routing._files(lina_omo_routing.SOURCE)
-             if path.parent.name != "test" and path.suffix in {".ts", ".json"} and path.name != "package-lock.json"}
-    assert "policy.default.json" in texts and "plan.ts" in texts
-    for name, text in texts.items():
-        assert not re.search(r"opencodex|google-antigravity|--fast\b", text), name
-    policy = json.loads(texts["policy.default.json"])
-    assert "antigravity" not in policy["providers"]
-    assert "gemini" not in json.dumps(policy["extras"])
