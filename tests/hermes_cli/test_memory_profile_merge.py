@@ -126,7 +126,7 @@ def test_a_fact_added_to_the_shared_layer_after_the_plan_stops_that_move_only(in
         shared.parent.mkdir(exist_ok=True)
         shared.write_text("Prefers short answer")  # a new entry, near the planned fact but not equal
 
-    ok, lines = _plan_and_apply(install, monkeypatch, added)
+    ok, _lines = _plan_and_apply(install, monkeypatch, added)
     assert ok is False
     assert "Ask before deleting files" in shared.read_text()  # the other planned move went through
     assert "Prefers short answers" not in shared.read_text()
