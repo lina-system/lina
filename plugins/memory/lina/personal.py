@@ -61,7 +61,9 @@ _READ_LIMIT = 1 << 20
 _DERIVED_LINE_CHARS = 24
 
 
-def handle_mark(args: dict[str, Any], session_id: str) -> str:
+def handle_mark(args: dict[str, Any], session_id: str, task_id: str = "") -> str:
+    """Mark the document *args* names for the session's job. A relative path starts where the task's file reads start
+    (``_working_dir``), so the mark is the document a later ``read_file`` of the same path opens."""
     from hermes_state_store import StoreUnavailableError
     from tools.registry import tool_error
     raw = str(args.get("path") or "").strip()
@@ -69,25 +71,31 @@ def handle_mark(args: dict[str, Any], session_id: str) -> str:
         return tool_error("path is required: the document the owner said is personal")
     if not session_id:
         return tool_error("no session to mark the document for")
-    path = str(Path(raw).expanduser().resolve())
+    path = str(Path(_working_dir(MARK_TOOL, args, task_id), Path(raw).expanduser()).resolve())
+    if not Path(path).exists():
+        return tool_error(f"nothing to mark: {path} does not exist (a relative path starts in the task's "
+                          "working directory)")
     try:
         marks = personal_work.marks_for_home()
         job = marks.mark(session_id, path, "owner")
         folders = personal_work.open_job_folders(marks, job)
     except StoreUnavailableError as exc:
         return tool_error(f"the mark could not be stored: {exc}")
-    return json.dumps({"marked": path, "job": job, "work_dir": str(folders.work), "temp_dir": str(folders.temp),
-                       "exists": Path(path).exists()}, ensure_ascii=False)
+    return json.dumps({"marked": path, "job": job, "work_dir": str(folders.work), "temp_dir": str(folders.temp)},
+                      ensure_ascii=False)
 
 
 def _strings(value: Any) -> list[str]:
+    """The texts a call's arguments carry: strings, dict keys, and whole numbers as their digits (a number given as
+    a JSON number is still an ID or account number)."""
     if isinstance(value, str):
         return [value]
     if isinstance(value, dict):
-        return [text for item in value.values() for text in _strings(item)]
+        return [text for pair in value.items() for item in pair for text in _strings(item)]
     if isinstance(value, (list, tuple)):
         return [text for item in value for text in _strings(item)]
-    return []
+    digits = personal_numbers.number_text(value)
+    return [digits] if digits is not None else []
 
 
 def _tokens(line: str, quotes: str = "'\"", escape: str = "\\") -> list[str]:
@@ -200,12 +208,22 @@ def _read_text(path: Path) -> str:
     return ""
 
 
+def _files_beneath(root: Path) -> list[Path]:
+    return [p for p in root.rglob("*") if p.is_file() and not p.is_symlink()] if root.is_dir() else []
+
+
+def _marked_documents(marked: list[str]) -> list[Path]:
+    """The documents the marks cover: each marked file, and every file beneath a marked folder."""
+    documents = []
+    for path in map(Path, marked):
+        documents += [path] if path.is_file() else _files_beneath(path)
+    return [p for p in dict.fromkeys(documents) if p.name != personal_work.MARKER_FILE]
+
+
 def _derived_lines(marked: list[str], folders) -> set[str]:
-    """Lines long enough to be the document's own, from marked text documents and the job's derived files."""
-    sources = [Path(p) for p in marked if Path(p).is_file()]
-    for root in (folders.work, folders.temp):
-        if root.is_dir():
-            sources += [p for p in root.rglob("*") if p.is_file() and not p.is_symlink()]
+    """Lines long enough to be the document's own, from marked text documents (those beneath a marked folder too)
+    and the job's derived files."""
+    sources = _marked_documents(marked) + _files_beneath(folders.work) + _files_beneath(folders.temp)
     lines: set[str] = set()
     for source in sources:
         lines.update(line.strip() for line in _read_text(source).splitlines()
@@ -222,7 +240,7 @@ def carries_personal(texts: list[str], named: list[str], marked: list[str], fold
     sent = texts + [_read_text(Path(path)) for path in named]
     if any(personal_numbers.find(text) for text in sent):
         return "it carries an ID or account number"
-    names = {Path(p).name for p in marked if len(Path(p).name) >= 5}
+    names = {p.name for p in [*map(Path, marked), *_marked_documents(marked)] if len(p.name) >= 5}
     if any(name in text for text in texts for name in names):
         return "it names a personal document"
     lines = _derived_lines(marked, folders)

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
-from agent.personal_numbers import find, mask_text, mask_value
+from agent.personal_numbers import find, mask_json, mask_text, mask_value
 
 POSITIVES = [
     ("주민번호 900101-1234567입니다", "주민번호 ******-***4567입니다", "registration"),
@@ -63,3 +65,24 @@ def test_nested_values_are_masked_everywhere_and_keep_their_shape():
     assert count == 2
     assert masked == ("내 번호 ******-***4567", [{"type": "text", "text": "카드 **** **** **** 1111"}], None, 7)
     assert mask_value(masked) == (masked, 0)
+
+
+@pytest.mark.parametrize(("value", "masked", "count"), [
+    ({"id": 9001011234567}, {"id": "*********4567"}, 1),
+    ({"holder": {"card": 4111111111111111}}, {"holder": {"card": "************1111"}}, 1),
+    ({"ids": [9001011234567, 8503155123456.0]}, {"ids": ["*********4567", "*********3456"]}, 2),
+    ({"9001011234567": "registered"}, {"*********4567": "registered"}, 1),
+], ids=["top level", "nested", "list items and a float", "a number as key"])
+def test_numbers_held_as_json_numbers_are_masked_and_the_json_stays_valid(value, masked, count):
+    text, found = mask_json(json.dumps(value))
+
+    assert json.loads(text) == masked
+    assert found == count
+    assert mask_json(text) == (text, 0)
+
+
+def test_ordinary_json_numbers_are_left_alone():
+    text = json.dumps({"ts": 1794795060, "ms": 1794795060000, "count": 42, "size": 1048576, "ratio": 0.5,
+                       "total": 12345678, "ok": True, "items": [1, 2, 3], "20261116": "build"})
+
+    assert mask_json(text) == (text, 0)

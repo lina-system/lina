@@ -63,6 +63,20 @@ def test_a_compaction_child_session_continues_the_marked_job(db, memory_store_sq
     assert marks.job_of("marked-child") == "marked"
 
 
+def test_a_number_held_as_a_json_number_in_a_marked_job_is_stored_masked(db, memory_store_sql):
+    PersonalMarks(db.message_store).mark("marked", "/synthetic/docs/contract.pdf", "owner")
+    held = json.dumps({"id": 9001011234567})
+
+    db.append_message("marked", "assistant", content="", tool_calls=[
+        {"id": "c3", "type": "function", "function": {"name": "note", "arguments": held}}])
+    db.append_message("marked", "tool", tool_call_id="c3", content=held)
+
+    assert not any("9001011234567" in (content or "") + native for _, content, native in _stored(memory_store_sql, "marked"))
+    assistant, tool = db.get_messages("marked")
+    assert json.loads(assistant["tool_calls"][0]["function"]["arguments"]) == {"id": "*********4567"}
+    assert json.loads(tool["content"]) == {"id": "*********4567"}
+
+
 def test_gateway_notes_of_a_marked_job_are_stored_masked(db, memory_store_sql):
     PersonalMarks(db.message_store).mark("marked", "/synthetic/docs/id-card.png", "owner")
 

@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Optional
 
 KEEP = 4
 
@@ -135,15 +135,33 @@ def mask_json(text: str) -> tuple[str, int]:
     return (json.dumps(masked), count) if count else (text, 0)
 
 
+def number_text(value: Any) -> Optional[str]:
+    """The digits of a whole number held as a number (a JSON number, ``9001011234567`` or ``9001011234567.0``), the
+    only numbers that can be an ID or account number; None for anything else, booleans included."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return None
+
+
 def mask_value(value: Any) -> tuple[Any, int]:
-    """*value* with every string inside it (lists, tuples and dicts, keys kept) masked, and the count. A string that
-    holds a JSON array or object (tool call arguments) is masked by its decoded strings (``mask_json``)."""
+    """*value* with every string and whole number inside it (lists, tuples, dicts and their keys) masked, and the
+    count. A string that holds a JSON array or object (tool call arguments) is masked by its decoded values
+    (``mask_json``); a number that is an ID or account number becomes its masked text, so JSON stays valid."""
     if isinstance(value, str):
         return mask_json(value) if value.lstrip()[:1] in ("[", "{") else mask_text(value)
     if isinstance(value, (list, tuple)):
         items = [mask_value(item) for item in value]
         return type(value)(item for item, _ in items), sum(count for _, count in items)
     if isinstance(value, dict):
-        items = {key: mask_value(item) for key, item in value.items()}
-        return {key: item for key, (item, _) in items.items()}, sum(count for _, count in items.values())
+        items = [(mask_value(key), mask_value(item)) for key, item in value.items()]
+        return ({key: item for (key, _), (item, _) in items},
+                sum(key_count + count for (_, key_count), (_, count) in items))
+    digits = number_text(value)
+    if digits is not None:
+        masked, count = mask_text(digits)
+        return (masked, count) if count else (value, 0)
     return value, 0

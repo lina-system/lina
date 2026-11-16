@@ -236,14 +236,17 @@ messenger_author:kakao:k-1  messenger_author:line:u-5  gateway_user:telegram:100
 The owner's personal source documents (contracts, tax returns, ID cards, form scans) may go to workers, the owner's
 own devices and the model services in use (lina#308). What holds for a document marked personal:
 
-- **Marking.** The agent calls `mark_personal` with the document's path when the owner says a document is personal; a
+- **Marking.** The agent calls `mark_personal` with the document's path when the owner says a document is personal (a
+  relative path is the file `read_file` opens, in the task's directory; a path that does not exist is refused, not
+  recorded; a marked folder covers every document beneath it, its text and file names included); a
   document named by a tool call (`read_file`, a terminal command) that sits under a folder holding `.lina-personal`
   is marked by itself before the tool runs; a relative path is read where the tool reads it, under a terminal
   command's `workdir` or the task's directory, where a bare file name (`passport`) counts when that file exists.
   The mark is stored with the job ([store.md](store.md#personal-documents)), and a compaction's child session
   continues the job: it joins in the transaction that writes its summary and kept rows, so they are masked too.
 - **Masked numbers.** From the mark on, the job's rows are stored with ID and account numbers masked to their last
-  four characters, in the transcript and in `memory.messages` alike.
+  four characters, in the transcript and in `memory.messages` alike, a number held as a JSON number
+  (`{"id": 9001011234567}`) included: it is stored as its masked text.
 - **Derived files.** `mark_personal` answers with the job's `work_dir` and `temp_dir`; extracts, page images and
   copies go there, and both are deleted when the session ends, with the count in the job's run record. Every file in
   them counts as personal for the job, so a scan made there is not sent to hosted OCR either.

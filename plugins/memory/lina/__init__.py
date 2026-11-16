@@ -397,7 +397,7 @@ class LinaMemoryProvider(MemoryProvider):
         if tool_name == terms.TERMS_TOOL:
             return terms.handle_tool_call(self._message_store(), args)
         if tool_name == personal.MARK_TOOL:
-            return personal.handle_mark(args, self._session_id)
+            return personal.handle_mark(args, self._session_id, str(kwargs.get("task_id") or ""))
         return self._honcho.handle_tool_call(tool_name, args, **kwargs)
 
     def on_turn_start(self, turn_number: int, message: str, **kwargs) -> None:
