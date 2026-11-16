@@ -447,10 +447,17 @@ class MemorySearch:
                        page.dated.isoformat() if page.dated else None, None, "page", grade=page.grade,
                        fields={"title": page.title, "type": page.type, "path": page.path}, current=True)
         lists = []
+        keyword = "keyword" not in unindexed and "keyword" in reader.legs
         if "semantic" not in unindexed and "semantic" in reader.legs:
-            lists.append([hit(page) for page in reader.semantic(
-                self._embedding(embedder, query), model=embedder.model, limit=limit, types=types)])
-        if "keyword" not in unindexed and "keyword" in reader.legs:
+            try:
+                lists.append([hit(page) for page in reader.semantic(
+                    self._embedding(embedder, query), model=embedder.model, limit=limit, types=types)])
+            except Exception as exc:  # health: allow BLE001 -- the embedding endpoint failing leaves the local keyword leg
+                if not keyword:
+                    raise
+                logger.warning("brain_search: the brain's semantic leg skipped: %s", exc)
+                skipped.append({"source": "brain", "reason": f"its semantic leg failed: {_reason(exc)}"})
+        if keyword:
             lists.append([hit(page) for page in reader.keyword(query, limit=limit, types=types)])
         return lists
 

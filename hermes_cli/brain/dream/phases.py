@@ -17,6 +17,7 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
+from typing import Optional
 
 from hermes_cli.brain.dream.config import Settings
 from hermes_cli.brain.dream.model import Invalid, Item, digest, field_list, numbers, prompt, text
@@ -154,6 +155,13 @@ class Phase:
     def finish(self) -> list:
         return []
 
+    def remember(self, request: Request) -> Optional[object]:
+        """What a later night needs to skip *request* again (JSON), right after its answer was read; None if nothing."""
+        return None
+
+    def restore(self, request: Request, state: object) -> None:
+        """Take back what :meth:`remember` returned, for a request this night skips as already answered."""
+
 
 class AtomsPhase(Phase):
     name = "atoms"
@@ -215,6 +223,7 @@ class ConceptsPhase(Phase):
             "few words. A claim belongs to at most one concept; leave out claims that fit none.")
     SHAPE = '{"concepts": [{"name": "<at most 80 characters>", "items": [<item numbers>]}]}, at most 30 concepts'
     groups: dict = field(default_factory=dict)
+    taken: dict = field(default_factory=dict)
 
     def requests(self) -> list[Request]:
         atoms = self.brain.atoms
@@ -232,9 +241,21 @@ class ConceptsPhase(Phase):
                 raise Invalid("a claim is in more than one concept")
             seen.update(picked)
             found.append((name, [request.context[n - 1] for n in picked]))
-        for name, atoms in found:
-            self.groups.setdefault(alias_key(name), (name, {}))[1].update({atom.atom_id: atom for atom in atoms})
+        self.taken[request.subject] = [[name, [atom.atom_id for atom in atoms]] for name, atoms in found]
+        self._group(request, self.taken[request.subject])
         return []
+
+    def _group(self, request: Request, groups: list) -> None:
+        by_id = {atom.atom_id: atom for atom in request.context}
+        for name, ids in groups:
+            members = {atom_id: by_id[atom_id] for atom_id in ids if atom_id in by_id}
+            self.groups.setdefault(alias_key(name), (name, {}))[1].update(members)
+
+    def remember(self, request: Request) -> Optional[object]:
+        return self.taken.get(request.subject)
+
+    def restore(self, request: Request, state: object) -> None:
+        self._group(request, state)
 
     def finish(self) -> list:
         found = []

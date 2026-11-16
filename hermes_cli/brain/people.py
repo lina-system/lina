@@ -89,7 +89,7 @@ def page_of(conn, person_id: str) -> Optional[PersonPage]:
 
 # ── the card ──
 
-def _trusted_line(line: TimelineLine) -> str:
+def _graded_line(line: TimelineLine) -> str:
     when = line.date.isoformat() if line.date else "undated"
     return f"- {when} (grade {line.grade}, source {line.source_ref or 'unknown'}) {line.text}"
 
@@ -97,12 +97,12 @@ def _trusted_line(line: TimelineLine) -> str:
 def _render(page: PersonPage, compiled: str, chosen: Sequence[TimelineLine]) -> str:
     from plugins.memory.lina.grade import Quoted, data_block
     ordered = list(reversed(chosen))  # oldest first, as on the page
-    trusted = [_trusted_line(line) for line in ordered if line.grade in ("owner", "agent")]
+    own_lines = [_graded_line(line) for line in ordered if line.grade in ("owner", "agent")]
     quoted = [Quoted(line.source_ref or page.slug, line.date.isoformat() if line.date else None, "external",
                      line.text) for line in ordered if line.grade not in ("owner", "agent")]
     parts = [f"## Person card: {page.title}", compiled]
-    if trusted:
-        parts.append("Timeline (oldest first):\n" + "\n".join(trusted))
+    if own_lines:
+        parts.append("Timeline (oldest first):\n" + "\n".join(own_lines))
     if quoted:
         parts.append(data_block(quoted))
     return "\n\n".join(part for part in parts if part)

@@ -25,6 +25,7 @@ else grades compiled truth yet, and an item of unknown origin is external (``plu
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import re
@@ -166,17 +167,26 @@ def _pages_to_index(conn, root_id: Optional[int]) -> list[tuple]:
         " GROUP BY p.slug ORDER BY p.slug", () if root_id is None else (root_id,)).fetchall()
 
 
+def _index_key(sha: str, names: Sequence[str]) -> str:
+    """What the keyword index of a page was built from: its content and its other names (a merge moves names to a
+    page without changing its content)."""
+    return hashlib.sha256("\0".join([sha, *names]).encode("utf-8")).hexdigest()
+
+
 def _index_terms(conn, pages: list[tuple], analyzer: str) -> int:
     indexed = dict(conn.execute("SELECT slug, content_sha256 FROM brain.search_docs WHERE analyzer = %s",
                                 (analyzer,)).fetchall())
-    stale = [page for page in pages if indexed.get(page[0]) != page[4]]
+    stale = [page for page in pages if indexed.get(page[0]) != _index_key(page[4], page[5])]
     with conn.transaction(), conn.cursor() as cur:
         cur.executemany("DELETE FROM brain.search_docs WHERE slug = %s AND analyzer = %s",
                         [(page[0], analyzer) for page in stale if page[0] in indexed])
+        # A page whose terms were built from other names has a vector built from them too: embed it again.
+        cur.execute("DELETE FROM vec.embeddings WHERE kind = 'page' AND item_id = ANY(%s)",
+                    ([page[1] for page in stale if page[0] in indexed],))
         for slug, _page_id, title, compiled, sha, names in stale:
             found = page_terms(title, names, compiled, analyzer)
             cur.execute("INSERT INTO brain.search_docs (slug, analyzer, content_sha256, length) "
-                        "VALUES (%s, %s, %s, %s)", (slug, analyzer, sha, sum(found.values())))
+                        "VALUES (%s, %s, %s, %s)", (slug, analyzer, _index_key(sha, names), sum(found.values())))
             cur.executemany("INSERT INTO brain.search_terms (slug, analyzer, term, tf) VALUES (%s, %s, %s, %s)",
                             [(slug, analyzer, term, count) for term, count in sorted(found.items())])
     return len(stale)

@@ -189,3 +189,37 @@ def test_the_index_rewrites_only_the_pages_whose_file_changed(wiki):
     assert (first.rewritten_terms, first.vectors) == ({"bigram": len(PAGES)}, len(PAGES))
     assert (again.rewritten_terms, again.vectors) == ({"bigram": 0}, 0)
     assert (changed.rewritten_terms, changed.vectors) == ({"bigram": 1}, 1)
+
+
+def test_the_keyword_leg_still_answers_when_the_embedding_endpoint_fails(agent, wiki):
+    from agent.embedding_client import EmbeddingClient, EmbeddingSettings
+    _import_and_index(wiki, _embedder())
+    _provider(agent)._embedding = EmbeddingClient(
+        EmbeddingSettings(base_url="http://embed.test/v1", model="test-embed"),
+        transport=httpx.MockTransport(lambda request: httpx.Response(500, json={"error": "down"})))
+
+    found = _call(agent, "brain_search", query="믹싱", kinds=["brain"])
+
+    assert {"page:미나", "page:믹싱"} <= {hit["ref"] for hit in found["results"]}
+    assert [skip["source"] for skip in found["skipped"]] == ["brain"]
+    assert "semantic leg failed" in found["skipped"][0]["reason"]
+
+
+def test_an_index_rerun_after_a_merge_reads_the_names_the_page_gained(agent, wiki):
+    from hermes_cli.brain.resolver import DEFAULT_MAPPING, mapping_from
+    from hermes_cli.brain.scan import scan
+    from hermes_cli.brain.search import build_index
+    from hermes_cli.brain.store import owner_connection, sync
+    embedder = _embedder()
+    _import_and_index(wiki, embedder)
+    _provider(agent)._embedding = embedder
+    assert _call(agent, "brain_search", query="마스터링", kinds=["brain"])["results"][0]["ref"] == "page:마스터링"
+
+    with owner_connection() as conn:
+        sync(conn, scan(wiki, mapping_from(DEFAULT_MAPPING), (("마스터링", "믹싱"),)))
+        report = build_index(conn, embedder, analyzers=("bigram",))
+
+    assert report.rewritten_terms["bigram"] == 1  # 믹싱 gained a name; its text did not change
+    assert report.vectors == 1
+    assert _call(agent, "brain_search", query="마스터링", kinds=["brain"])["results"][0]["ref"] == "page:믹싱"
+

@@ -182,6 +182,27 @@ def test_each_phase_stops_at_its_own_budget_and_the_report_says_which(_memory_st
     assert report["spend"]["calls"] == len(fake.prompts)
 
 
+def test_concept_groups_survive_a_night_that_stops_between_batches(_memory_store, tmp_path, capsys, fake, monkeypatch):
+    from hermes_cli.brain.dream import phases
+    root = _wiki(tmp_path / "wiki")
+    _config(tmp_path)
+    _brain(capsys, "import", str(root))
+    _brain(capsys, "dream", "--phase", "atoms", "--json")
+    dsn = _memory_store.superuser_dsn()
+    atoms = _count(dsn, "SELECT count(*) FROM brain.atoms")
+    # Two batches, one call a night, and a group that only both batches together make large enough.
+    monkeypatch.setattr(phases, "CONCEPT_BATCH", (atoms + 1) // 2)
+    _config(tmp_path, concept_min_group=atoms, budget={"concepts": {"calls": 1}})
+
+    first = json.loads(_brain(capsys, "dream", "--phase", "concepts", "--json"))
+    second = json.loads(_brain(capsys, "dream", "--phase", "concepts", "--json"))
+
+    assert (first["phases"]["concepts"]["answered"], first["phases"]["concepts"]["proposals"]) == (1, 0)
+    assert (second["phases"]["concepts"]["answered"], second["phases"]["concepts"]["unchanged"]) == (1, 1)
+    assert second["phases"]["concepts"]["proposals"] == 1
+    assert _count(dsn, "SELECT count(*) FROM brain.proposals WHERE kind = 'new_page'") == 1
+
+
 @pytest.mark.parametrize("broken", ["not json at all", '{"atoms": [{"claim": "x", "items": [99]}]}', "[1, 2]"])
 def test_an_answer_off_its_shape_writes_nothing_and_is_asked_again(_memory_store, tmp_path, capsys, monkeypatch,
                                                                    broken):

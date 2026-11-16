@@ -9,6 +9,7 @@ writes nothing. An input a phase already answered is not sent again, so an uncha
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import uuid
@@ -75,9 +76,11 @@ def _write(conn, writes: list[Atoms | Proposal], phase: str, agent_id: str, cycl
             counts["repeated"] += 1
 
 
-def _answered(conn, agent_id: str, phase: str) -> dict[str, str]:
-    return dict(conn.execute("SELECT subject, digest FROM brain.dream_inputs WHERE agent_id = %s AND phase = %s",
-                             (agent_id, phase)).fetchall())
+def _answered(conn, agent_id: str, phase: str) -> dict[str, tuple[str, object]]:
+    """Each subject the phase answered: (digest of the input, the state the phase kept for it or None)."""
+    return {subject: (digest, state) for subject, digest, state in conn.execute(
+        "SELECT subject, digest, state FROM brain.dream_inputs WHERE agent_id = %s AND phase = %s",
+        (agent_id, phase)).fetchall()}
 
 
 def plan_phase(conn, name: str, settings: Settings, agent_id: str) -> dict:
@@ -87,7 +90,7 @@ def plan_phase(conn, name: str, settings: Settings, agent_id: str) -> dict:
     counts = Counter()
     for request in phase.requests():
         text = request.prompt
-        if answered.get(request.subject) == digest(text):
+        if answered.get(request.subject, (None,))[0] == digest(text):
             counts["unchanged"] += 1
         elif spend.fits(text):
             spend.calls += 1
@@ -113,8 +116,11 @@ def run_phase(conn, name: str, settings: Settings, complete: Complete, agent_id:
     for request in phase.requests():
         text = request.prompt
         key = digest(text)
-        if answered.get(request.subject) == key:
+        kept = answered.get(request.subject)
+        if kept is not None and kept[0] == key:
             counts["unchanged"] += 1
+            if kept[1] is not None:
+                phase.restore(request, kept[1])
             continue
         if not lock.refresh(conn):
             failed = "the cycle lock was lost"
@@ -135,10 +141,12 @@ def run_phase(conn, name: str, settings: Settings, complete: Complete, agent_id:
             continue
         with conn.transaction():
             _write(conn, writes, name, agent_id, cycle_id, counts, ids)
-            conn.execute("INSERT INTO brain.dream_inputs (agent_id, phase, subject, digest, cycle_id) "
-                         "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (agent_id, phase, subject) DO UPDATE "
-                         "SET digest = EXCLUDED.digest, cycle_id = EXCLUDED.cycle_id",
-                         (agent_id, name, request.subject, key, cycle_id))
+            state = phase.remember(request)
+            conn.execute("INSERT INTO brain.dream_inputs (agent_id, phase, subject, digest, cycle_id, state) "
+                         "VALUES (%s, %s, %s, %s, %s, %s::jsonb) ON CONFLICT (agent_id, phase, subject) DO UPDATE "
+                         "SET digest = EXCLUDED.digest, cycle_id = EXCLUDED.cycle_id, state = EXCLUDED.state",
+                         (agent_id, name, request.subject, key, cycle_id,
+                          None if state is None else json.dumps(state)))
         counts["answered"] += 1
     if failed is None:
         with conn.transaction():

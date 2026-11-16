@@ -426,7 +426,9 @@ brain:
 A call is made only while it fits: the first request that would pass `calls` or `input_chars` stops the phase,
 and the line and the report say which budget stopped it. The next phase starts with its own budget. A subject a
 phase already answered with the same input (`brain.dream_inputs`, keyed by the prompt's SHA-256) is not sent
-again, so a night on an unchanged brain costs nothing. A model call that fails ends its phase, is reported, and
+again, so a night on an unchanged brain costs nothing. The concepts phase groups claims batch by batch, so `brain.dream_inputs.state` (migration
+`0022_brain_dream_state.sql`) keeps each answered batch's groups: a night that stops at its budget between batches
+starts the next one from them instead of from nothing. A model call that fails ends its phase, is reported, and
 makes the run exit 1; the other phases still run.
 
 ### Proposals
