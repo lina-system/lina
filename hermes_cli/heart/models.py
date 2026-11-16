@@ -68,6 +68,7 @@ class Candidate(Record):
 
 
 class Settings(Record):
+    # Read only by `lina store owner-backfill` (lina#755): rows now store their speaker kind (lina#324).
     owner_sources: tuple[str, ...] = ("telegram", "desktop", "tui", "webui", "imsg_mac", "cli")
     weekly_out_dir: str | None = None
 
