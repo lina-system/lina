@@ -290,7 +290,7 @@ def pushed_personal(command: str, cwd: str, marked: list[str], folders) -> Optio
             if any(personal_numbers.find(line) for line in sent.added):
                 return "the commits it sends carry an ID or account number"
             lines = _derived_lines(marked, folders) if lines is None else lines
-            if lines and any(line.strip() in lines for line in sent.added):
+            if lines and any(derived in added for added in sent.added for derived in lines):
                 return "the commits it sends carry text from a personal document"
     except personal_push.Undetermined as exc:
         return f"the commits it sends cannot be checked ({exc}); {_PUSH_HOW}"

@@ -75,6 +75,20 @@ def test_a_push_whose_commits_add_an_id_number_is_refused(repo, tmp_path):
                                          "number")
 
 
+def test_a_push_whose_added_line_quotes_text_of_a_personal_document_is_refused(repo, tmp_path):
+    sentence = "The tenant pays a monthly rent of seven hundred synthetic dollars."
+    document = tmp_path / "elsewhere" / "lease.txt"
+    document.parent.mkdir()
+    document.write_text(f"Synthetic lease\n{sentence}\n", encoding="utf-8")
+    _mark(document)
+    _commit(repo, "README.md", f"synthetic project\n\n> {sentence}\n")
+
+    refused = _push(repo)
+
+    assert refused["message"].startswith("Refused (public: git push): the commits it sends carry text from a "
+                                         "personal document")
+
+
 def test_a_push_of_clean_commits_from_a_marked_job_is_allowed(repo, tmp_path):
     _mark(tmp_path / "elsewhere" / "id-card.pdf")
     _commit(repo, "docs/guide.md", "How to build the synthetic project\n")
