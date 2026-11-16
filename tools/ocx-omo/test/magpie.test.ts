@@ -30,18 +30,22 @@ describe("magpie plan from the fixture catalog", () => {
   test("writes the same 14 routes as magpie/<remote_id>/<provider>/<id> names from the catalog", () => {
     assert.equal(Object.keys(magpiePlan.routes).length, 14);
     for (const { model } of references(magpiePlan)) {
-      assert.match(model, /^magpie\/hub\/(claude|codex|antigravity|grok)\/[^/]+$/);
+      assert.match(model, /^magpie\/hub\/(claude|codex|grok)\/[^/]+$/);
       assert.ok(magpieCatalog.has(model.slice("magpie/".length)), model);
     }
     assert.deepEqual(magpiePlan.warnings, []);
   });
 
-  test("writes Gemini once per chain, keeping upstream order and reasoning", () => {
+  test("never routes Gemini or antigravity, though the catalog lists them", () => {
+    assert.ok([...magpieCatalog.keys()].some((id) => id.includes("antigravity/gemini")));
     const visual = magpiePlan.routes["categories.visual-engineering"]?.models ?? [];
     assert.deepEqual(visual.slice(0, 2), [
-      { model: "magpie/hub/antigravity/gemini-4-argon", reasoning: "low" },
       { model: "magpie/hub/claude/claude-fable-5-2", reasoning: "max" },
+      { model: "magpie/hub/claude/claude-fable-5-1", reasoning: "max" },
     ]);
+    assert.ok(visual.length > 0);
+    assert.ok(magpiePlan.routes["categories.visual-engineering"]?.skipped.includes("gemini-4-argon"));
+    assert.ok(!references(magpiePlan).some((entry) => /gemini|antigravity|google/.test(entry.model)));
     for (const route of Object.values(magpiePlan.routes)) {
       const models = route.models.map((entry) => entry.model);
       assert.equal(new Set(models).size, models.length);
@@ -52,7 +56,6 @@ describe("magpie plan from the fixture catalog", () => {
     const quick = magpiePlan.routes["categories.quick"];
     assert.deepEqual(quick?.models.map((entry) => entry.model), [
       "magpie/hub/claude/claude-haiku-5-5",
-      "magpie/hub/antigravity/gemini-3.8-flash",
       "magpie/hub/codex/gpt-6-luna",
     ]);
     assert.ok(quick?.skipped.includes("gpt-6-luna-fast")); // omo's own chain
@@ -93,7 +96,7 @@ describe("magpie plan with an empty remote id (the node's own magpie)", () => {
     const plan = buildPlan(chains, policy, plainCatalog, "");
     assert.deepEqual(plan, unprefixed(magpiePlan));
     assert.ok(references(plan).length > 0);
-    for (const { model } of references(plan)) assert.match(model, /^magpie\/(claude|codex|antigravity|grok)\/[^/]+$/);
+    for (const { model } of references(plan)) assert.match(model, /^magpie\/(claude|codex|grok)\/[^/]+$/);
   });
 
   test("each form reads only its own catalog", () => {
@@ -158,6 +161,31 @@ describe("cli through magpie", () => {
 
     assert.equal(run("check", "--remote-id", "other").status, 10);
     assert.equal(readdirSync(join(home, ".omo")).filter((name) => name.startsWith("omo.jsonc.bak.ocx-omo-")).length, 1);
+  });
+
+  test("rewrites a config that still holds a removed proxy's names: check flags it, apply leaves none", () => {
+    const staleHome = mkdtempSync(join(tmpdir(), "ocx-omo-stale-"));
+    try {
+      mkdirSync(join(staleHome, ".omo"));
+      const stale = join(staleHome, ".omo", "omo.jsonc");
+      writeFileSync(stale, JSON.stringify({
+        categories: {
+          quick: { models: [{ model: "opencodex/gpt-6-luna--fast", reasoning: "low" }, { model: "opencodex/google-antigravity/gemini-3.8-flash" }] },
+          "visual-engineering": { model: "opencodex/google-antigravity/gemini-4-argon", reasoning: "low" },
+        },
+        agents: { explore: { models: ["opencodex/gpt-6-luna--fast"] } },
+      }));
+      assert.equal(run("check", "--home", staleHome).status, 10);
+      assert.equal(run("plan", "--home", staleHome).status, 0);
+      const applied = run("apply", "--home", staleHome);
+      assert.equal(applied.status, 0, applied.stderr);
+      const written = readFileSync(stale, "utf8");
+      assert.ok(!/opencodex|antigravity|gemini|--fast/.test(written), written);
+      assert.match(written, /magpie\/hub\/claude\//);
+      assert.equal(run("check", "--home", staleHome).status, 0);
+    } finally {
+      rmSync(staleHome, { recursive: true, force: true });
+    }
   });
 
   test("reads a user policy at the existing path and honours --config with --only", () => {

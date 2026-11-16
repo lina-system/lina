@@ -32,7 +32,7 @@ node dist/src/cli.js plan --remote-id ""
 ## 라우팅 규칙
 
 - 소유하는 키는 라우트의 `model`, `models`, `reasoning`, `variant`, `reasoningEffort`, `fallback_models`뿐입니다. 주석과 다른 설정은 유지됩니다.
-- 각 모델 후보는 정책의 `providers` 순서(`codex`, `claude`, `antigravity`, `grok`)로 찾습니다.
+- 각 모델 후보는 정책의 `providers` 순서(`codex`, `claude`, `grok`)로 찾습니다. 안티그래비티(Gemini)는 정책에 넣지 않습니다.
 - 카탈로그에 없는 모델은 빠지고 `not routed`에 나옵니다. 모델 id는 그대로 사용합니다.
 - 같은 모델은 처음 나온 것만 남기고, 추론 강도는 모델이 지원하는 값으로 내립니다.
 - `extras`는 라우트별로 업스트림 순서 뒤에 붙입니다.

@@ -8,6 +8,10 @@ Hermes Agent upstream changes are not listed here; see the upstream history on t
 
 ## [Unreleased]
 
+### Fixed
+
+- `lina omo routing plan|apply|check` and the daily routing sync no longer run an ocx-omo build made from older sources: the build under `$LINA_HOME/vendor/ocx-omo` is rebuilt first when its `.source-sha256` differs from the shipped sources, and when it cannot be rebuilt the verb exits 2 naming `lina omo install` (lina#765). A LINA update used to leave the OCX-era build in place, which kept writing `opencodex/...` names into `omo.jsonc` after OCX was gone. The default routing policy no longer lists the `antigravity` provider or Gemini extras (Gemini is not routed through magpie).
+
 ### Removed
 
 - The old model proxy OCX (opencodex) and the per-node proxy kind are gone (lina#590, closes lina#614): LINA reaches models through magpie only. Removed: `worker.proxy.kind` and `worker.proxy.read` with every `ocx` branch behind them, `through_ocx` and the OCX model-name table (`hermes_cli/worker/proxy_names.json`; a model is named in magpie's catalog form `<provider>/<id>`), the OCX health check and `capabilities.ocx` of a node's hello, `lina models install|upgrade|rollback|refresh|takeover`, `lina services ... ocx` and the `ocx` device service, the `ocx` block of the config defaults and `ocx.external`, the `ocx` model provider (now `magpie`, `http://127.0.0.1:3425/v1`, `MAGPIE_API_KEY`), OCX reads in usage, quota and the work settings' model list, the per-kind fields of the device screen (`proxy.kind`, `proxy.version`), the `opencodex` mode of ocx-omo (it searches magpie's providers directly and takes no `--proxy`/`--names`), and the `ocx` pin of `pm/lina-deps.json`. A runner pin's sign-in `ocx` is now `magpie`; a run record's `ocx_check` is now `model_state`; the daily runner check reports a node's magpie (`- proxy: <node> ...`). `worker.proxy.remote_id` stays the one setting that tells the hub (`""`) from a node. A config that still has `worker.proxy.kind`, an `ocx:` block or `providers.opencodex` loads without error; those keys are not read. The shared Node and npm install code moved to `hermes_cli/lina_deps.py`.
