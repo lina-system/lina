@@ -223,3 +223,18 @@ def test_an_index_rerun_after_a_merge_reads_the_names_the_page_gained(agent, wik
     assert report.vectors == 1
     assert _call(agent, "brain_search", query="마스터링", kinds=["brain"])["results"][0]["ref"] == "page:믹싱"
 
+
+
+def test_a_path_two_imported_roots_both_have_is_ambiguous_but_an_exact_slug_still_opens(agent, tmp_path):
+    first = _write(tmp_path / "first", {"people/x.md": "---\ntitle: First X\n---\n\nthe first root"})
+    second = _write(tmp_path / "second", {"people/x.md": "---\ntitle: Second X\n---\n\nthe second root",
+                                          "teams/x.md": "---\ntitle: Team X\n---\n\na team"})
+    _import_and_index(first, None)
+    _import_and_index(second, None)
+
+    ambiguous = _call(agent, "brain_get", ref="people/x.md")
+    assert "several pages" in ambiguous["error"]
+    assert "x" in ambiguous["error"] and "people/x" in ambiguous["error"]
+    assert _call(agent, "brain_get", ref="x")["title"] == "First X"
+    assert _call(agent, "brain_get", ref="people/x")["title"] == "Second X"
+    assert "several pages" in _call(agent, "brain_links", ref="people/x.md")["error"]

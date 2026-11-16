@@ -336,10 +336,14 @@ class BrainReader:
             raise BrainSearchError("brain_get needs a slug, path or page name")
         conn = self._db()
         path = name if name.endswith(".md") else name + ".md"
-        found = conn.execute("SELECT slug FROM brain.pages WHERE slug = %s OR path = %s ORDER BY slug = %s DESC",
-                             (name, path, name)).fetchall()
+        found = [row[0] for row in conn.execute(
+            "SELECT slug FROM brain.pages WHERE slug = %s OR path = %s ORDER BY slug", (name, path)).fetchall()]
+        if name in found:
+            return name
+        if len(found) == 1:
+            return found[0]
         if found:
-            return found[0][0]
+            raise BrainSearchError(f"{name!r} names several pages: {', '.join(found)}")
         named = conn.execute("SELECT DISTINCT slug FROM brain.aliases WHERE alias_key = %s ORDER BY slug",
                              (alias_key(name),)).fetchall()
         if len(named) == 1:
