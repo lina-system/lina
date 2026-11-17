@@ -155,13 +155,15 @@ CHECKS: dict[str, Callable[[str], str | None]] = {"title": check_title, "now": c
 
 # ---------------------------------------------------------------- prompts
 _SYSTEM = ("너는 작업 보드의 한 줄을 쓴다. 한국어로, 짧고 쉬운 업무 말투로 쓴다. 대상과 그 상태만 말하고 멈춘다. "
-           "설명, 따옴표, 머리말 없이 한 줄만 답한다. id, 경로, 파일 이름, 명령, 영어 도구 이름, 번호는 쓰지 않는다.")
+           "설명, 따옴표, 머리말 없이 한 줄만 답한다. id, 경로, 파일 이름, 명령, 영어 도구 이름, 번호는 쓰지 않는다. "
+           "UPS, NAS 같은 영어 약어는 무엇인지 한글로 풀어 쓴다.")
 _PROMPTS = {
     "title": ("작업의 제목을 25자 안으로 쓴다. [대상] [무엇] [동작] 순서로, 동작 명사나 ~기로 끝낸다.\n"
               "예) 원문: 'ulw # Rotate the build machine disks before they fill' -> 빌드 기기 디스크 교체\n"
               "예) 원문: '알림 문구를 앱 화면에 맞추기 lina-system/lina-app#9' -> 앱 알림 문구 정리\n"
               "예) 원문: 'Add weekly backup check for the photo library' -> 사진 보관함 주간 백업 점검"),
     "now": ("지금 하고 있는 일을 40자 안의 한 문장으로 쓴다. '~하는 중' 같은 진행형이나 짧은 명사구로 쓴다. '일꾼', '세션', '회차', '판정', '장부'라는 말은 쓰지 않는다.\n"
+            "멈춘 작업이면 무엇을 기다리는지 쓴다. 이미 끝난 일의 결과는 쓰지 않는다.\n"
             "예) 원문: 'running the test suite on build-a, 120 of 400 passed' -> 시험 묶음을 돌리는 중\n"
             "예) 원문: '질문: 두 기기 중 어느 쪽을 먼저 비울까요?' -> 먼저 비울 기기를 묻는 중\n"
             "예) 원문: 'waiting on background job: image resize batch' -> 사진 크기 일괄 변환 대기"),
@@ -403,12 +405,29 @@ def write(sources: list[Source], root: Path | None = None, now: float | None = N
 
 
 # ---------------------------------------------------------------- sources
+# Tokens a now line may not hold (``_common``), taken out of its source before the model sees it: a model shown
+# "lina#235" or a card id copies it, and asked again with the same source copies it again. Latin words stay: the
+# prompt has the model write them in Korean.
+_SOURCE_DROPS = (re.compile(r"(?:https?://|www\.)\S+", re.IGNORECASE), re.compile(r"(?:[\w.-]+/)?[\w.-]*#\d+"), _ID,
+                 _HASH, re.compile(r"(?<!\d)\d{4,}(?!\d)"))
+_SLASHED = re.compile(r"[^\s()\[\]]*[/\\~][^\s()\[\]]*")  # a path, or a count such as 1/3 (also refused as a path)
+_EMPTY_BRACKETS = re.compile(r"\(\s*\)|\[\s*\]")
+
+
+def bare(text: str) -> str:
+    """*text* without URLs, issue and card ids, hashes, paths, numbers of four digits or more and backticks."""
+    for rule in (*_SOURCE_DROPS, _SLASHED):
+        text = rule.sub(" ", text)
+    text = _EMPTY_BRACKETS.sub(" ", text.replace("`", ""))
+    return "\n".join(" ".join(line.split()) for line in text.splitlines()).strip()
+
+
 def _live_source(live: dict | None) -> str:
-    """A pending question first, a long background job's label next, then the runner's last words."""
+    """A pending question first, a long background job's label next, then the runner's last words (``bare``)."""
     live = live or {}
     if live.get("dash") in ("human", "background") and live.get("why"):
-        return str(live["why"])
-    return str(live.get("last") or "")
+        return bare(str(live["why"]))
+    return bare(str(live.get("last") or ""))
 
 
 def _report_line(path: Path) -> str:
@@ -486,24 +505,44 @@ def card_sources() -> list[Source]:
     return out
 
 
-def now_source(comments: list[tuple[str, str]], status: str) -> str:
-    """A card's ``now`` source from its ``(author, body)`` comments, oldest first: the latest that is not empty and
-    not an automatic notice (``NOW_SKIP_AUTHORS``, ``NOW_SKIP_HEAD``); "" once the card is done or when no comment is
-    left."""
+# Block reasons that say nothing of what a card waits for: a card created blocked (``create_task``).
+NOW_SKIP_REASONS = frozenset({"initial_status"})
+
+
+def block_reason(events: list[tuple[str, dict | None]]) -> str:
+    """The reason of a card's standing block from its ``(kind, payload)`` events, oldest first: the latest
+    ``blocked`` event's, "" when an ``unblocked`` came after it or there is none."""
+    for kind, payload in reversed(events):
+        if kind == "unblocked":
+            return ""
+        if kind == "blocked":
+            return str((payload or {}).get("reason") or "")
+    return ""
+
+
+def now_source(comments: list[tuple[str, str]], status: str, reason: str = "") -> str:
+    """A card's ``now`` source (``bare``): for a blocked card its block *reason*, what it waits for, unless that is
+    empty or says nothing (``NOW_SKIP_REASONS``); else from its ``(author, body)`` comments, oldest first, the latest
+    that is not empty and not an automatic notice (``NOW_SKIP_AUTHORS``, ``NOW_SKIP_HEAD``); "" once the card is done
+    or when no comment is left."""
     if status == "done":
         return ""
-    return next((body for author, body in reversed(comments)
-                 if body.strip() and author not in NOW_SKIP_AUTHORS and not NOW_SKIP_HEAD.match(body.lstrip())), "")
+    if status == "blocked" and reason.strip() and reason.strip() not in NOW_SKIP_REASONS:
+        return bare(reason)
+    return bare(next((body for author, body in reversed(comments)
+                      if body.strip() and author not in NOW_SKIP_AUTHORS and not NOW_SKIP_HEAD.match(body.lstrip())),
+                     ""))
 
 
 def _card_lines(card_id: str, board: str, title: str, body: str | None, status: str,
-                comments: list[tuple[str, str]], result: str) -> list[Source]:
-    """One work card's sources: title from the card title plus the issue it names, now from ``now_source``, result
+                comments: list[tuple[str, str]], result: str, reason: str = "") -> list[Source]:
+    """One work card's sources: title from the card title plus the issue it names, now from ``now_source`` (with the
+    card's ``block_reason``), result
     from *result* once it is done; a card that is not done queues first (``Source.unfinished``)."""
     issue = _ISSUE_REF.search(body or "")
     unfinished = status != "done"
     return [Source("card", card_id, "title", title + (f" {issue.group(0)}" if issue else ""), board, unfinished),
-            Source("card", card_id, "now", now_source(comments, status), board, unfinished),
+            Source("card", card_id, "now", now_source(comments, status, reason), board, unfinished),
             Source("card", card_id, "result", result if status == "done" else "", board, unfinished)]
 
 
@@ -528,7 +567,8 @@ def _board_cards(kanban_db, path: Path, board: str) -> list[Source]:
             if task.status == "done":
                 runs = [r for r in kanban_db.list_runs(conn, task_id) if r.summary]
                 result = task.result or (runs[-1].summary if runs else "")
-            out += _card_lines(task_id, board, task.title, task.body, task.status, comments, result or "")
+            reason = block_reason([(e.kind, e.payload) for e in kanban_db.list_events(conn, task_id)])
+            out += _card_lines(task_id, board, task.title, task.body, task.status, comments, result or "", reason)
         return out
     finally:
         conn.close()
@@ -546,8 +586,11 @@ def hermes_card_sources() -> list[Source]:
                     for c in show.get("comments") or [] if isinstance(c, dict)]
         runs = [r for r in show.get("runs") or [] if isinstance(r, dict) and r.get("summary")]
         result = task.get("result") or (runs[-1]["summary"] if runs else "")
+        events = [(str(e.get("kind") or ""), e.get("payload") if isinstance(e.get("payload"), dict) else None)
+                  for e in show.get("events") or [] if isinstance(e, dict)]
         out += _card_lines(hermes.hermes_id(task["id"]), board_key(None), str(task.get("title") or ""),
-                           task.get("body"), str(task.get("status") or ""), comments, str(result or ""))
+                           task.get("body"), str(task.get("status") or ""), comments, str(result or ""),
+                           block_reason(events))
     return out
 
 
