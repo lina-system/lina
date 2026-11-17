@@ -14,6 +14,7 @@ from hermes_cli.profiles import create_profile, rename_profile
 from hermes_cli.work import env
 from hermes_state import SessionDB
 from hermes_state_store import MessageStore, TEXT_CACHE
+from plugins.memory.lina.search import MemorySearch, Readers
 
 
 @pytest.fixture
@@ -53,15 +54,18 @@ def _seed_journal(name: str, monkeypatch) -> tuple[Path, list[str], str]:
 
 
 def _stored(memory_store_sql) -> list:
-    return memory_store_sql(
-        "SELECT uid, agent_id, source, content, native, speaker_ref FROM memory.messages ORDER BY message_id")
+    return [row[0] for row in memory_store_sql(
+        "SELECT to_jsonb(m) FROM memory.messages m ORDER BY message_id")]
 
 
 def test_renamed_profile_lists_journal_and_daily_review_with_usable_evidence(
         journal_profiles, monkeypatch, memory_store_sql):
     _seed_journal("neighbor", monkeypatch)
-    sibling = [row for row in _stored(memory_store_sql) if row[1] == "neighbor"]
+    sibling = [row for row in _stored(memory_store_sql) if row["agent_id"] == "neighbor"]
     old_home, evidence, day = _seed_journal("harbor", monkeypatch)
+    journal = next(row for row in _stored(memory_store_sql)
+                   if row["agent_id"] == "harbor" and row["source"] == "heart")
+    assert journal["grade"] == "agent"
     expected = [uid.replace("agent:harbor:", "agent:lighthouse:", 1) for uid in evidence]
     monkeypatch.setenv("HERMES_HOME", str(journal_profiles))
 
@@ -80,14 +84,26 @@ def test_renamed_profile_lists_journal_and_daily_review_with_usable_evidence(
             expected[0]: "The synthetic logbook is ready.",
             expected[1]: "I checked the synthetic logbook.",
         }
+        memory = MemorySearch(Readers(store=lambda: store))
+        opened = memory.open("msg:" + journal["uid"].replace("heart:harbor:", "heart:lighthouse:", 1))
+        assert opened["grade"] == journal["grade"]
+        citations = [memory.open(ref) for ref in opened["source_id"].split()]
+        assert [citation["text"] for citation in citations] == [
+            "The synthetic logbook is ready.", "I checked the synthetic logbook."]
+        assert [citation["ref"] for citation in citations] == [f"msg:{uid}" for uid in expected]
+        for uid in expected:
+            conversation = memory.open(f"msg:{uid}")
+            assert memory.open(conversation["source_id"])["text"] == conversation["text"]
+            assert conversation["source_id"] == f"msg:{uid}"
     TEXT_CACHE.clear()
     with closing(SessionDB(new_home / "state.db")) as db:
         assert [message["content"] for message in db.get_messages_as_conversation("journal")] == [
             "The synthetic logbook is ready.", "I checked the synthetic logbook."]
     stored = _stored(memory_store_sql)
-    assert [row for row in stored if row[1] == "neighbor"] == sibling
-    assert not any(row[1] == "harbor" for row in stored)
-    assert next(row[0] for row in stored if row[1] == "lighthouse" and row[2] == "heart").startswith(
+    assert [row for row in stored if row["agent_id"] == "neighbor"] == sibling
+    assert not any(row["agent_id"] == "harbor" for row in stored)
+    assert next(row["uid"] for row in stored
+                if row["agent_id"] == "lighthouse" and row["source"] == "heart").startswith(
         "heart:lighthouse:")
     assert not old_home.exists()
 
@@ -96,6 +112,7 @@ def test_directory_rename_failure_restores_journal_and_evidence(
         journal_profiles, monkeypatch, memory_store_sql):
     old_home, evidence, day = _seed_journal("harbor", monkeypatch)
     before = _stored(memory_store_sql)
+    assert next(row["grade"] for row in before if row["source"] == "heart") == "agent"
     real_rename = Path.rename
     moved_evidence = [uid.replace("agent:harbor:", "agent:lighthouse:", 1) for uid in evidence]
 

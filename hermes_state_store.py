@@ -1450,10 +1450,21 @@ def _remap_heart_evidence(cur, uids: Sequence[str], from_agent: str, to_agent: s
         (from_prefix, to_prefix, len(from_prefix) + 1, list(uids)))
 
 
+def _remap_source_ids(cur, uids: Sequence[str], from_agent: str, to_agent: str) -> None:
+    """Remap whole msg: reference prefixes, preserving list order and unrelated references."""
+    for source in (SOURCE_AGENT, "heart"):
+        from_prefix, to_prefix = _agent_prefixes(from_agent, to_agent, source)
+        # Padding makes the first token follow the same space boundary as every later token.
+        cur.execute(
+            "UPDATE memory.messages SET source_id = substr(replace(' ' || source_id, %s, %s), 2)"
+            " WHERE uid = ANY(%s) AND strpos(' ' || source_id, %s) > 0",
+            (" msg:" + from_prefix, " msg:" + to_prefix, list(uids), " msg:" + from_prefix))
+
+
 def move_agent_rows(old_agent: str, new_agent: str) -> MovedRows:
     """Hand *old_agent*'s text rows to *new_agent* in one transaction (as the owner role: row-level security keeps
     lina_app inside one agent): agent_id and the uid prefixes ``agent:<old>:`` and ``heart:<old>:`` follow the name.
-    Heart evidence follows the conversation uids in the same transaction. A row whose new
+    Heart evidence and source references follow the uids in the same transaction. A row whose new
     uid already holds the same text stays where it is (its copy is there); one held by other text fails the move.
     A moved row the old agent said (``speaker_ref`` ``agent:<old>``) is said by the new one. The gateway's notes, the
     embedded text and the vectors of the moved rows move with them (``_follow_text_owner``), and so do the agent's
@@ -1476,6 +1487,7 @@ def move_agent_rows(old_agent: str, new_agent: str) -> MovedRows:
                      old_prefix, new_prefix, len(old_prefix) + 1))
                 moved.extend(row[0] for row in cur.fetchall())
             _remap_heart_evidence(cur, moved, old_agent, new_agent)
+            _remap_source_ids(cur, moved, old_agent, new_agent)
             _follow_text_owner(cur, old_agent, new_agent)
             if _lcm_records_of(cur, old_agent):
                 held = _lcm_records_of(cur, new_agent)
@@ -1497,14 +1509,18 @@ def return_agent_rows(uids: Sequence[str], old_agent: str, new_agent: str) -> No
     conn = _owner_connection()
     try:
         with conn.transaction(), conn.cursor() as cur:
-            _remap_heart_evidence(cur, uids, new_agent, old_agent)
+            restored = []
             for source in (SOURCE_AGENT, "heart"):
                 old_prefix, new_prefix = _agent_prefixes(old_agent, new_agent, source)
                 cur.execute("UPDATE memory.messages SET agent_id = %s, uid = %s || substr(uid, %s),"
                             " speaker_ref = CASE WHEN speaker_ref = %s THEN %s ELSE speaker_ref END"
-                            " WHERE uid = ANY(%s) AND starts_with(uid, %s)",
+                            " WHERE uid = ANY(%s) AND starts_with(uid, %s) RETURNING uid",
                             (old_agent, old_prefix, len(new_prefix) + 1, _agent_ref(new_agent), _agent_ref(old_agent),
                              list(uids), new_prefix))
+                restored.extend(row[0] for row in cur.fetchall())
+            # Citation updates fire the grade trigger, so their original targets must already exist.
+            _remap_heart_evidence(cur, restored, new_agent, old_agent)
+            _remap_source_ids(cur, restored, new_agent, old_agent)
             _follow_text_owner(cur, new_agent, old_agent)
             if getattr(uids, "lcm_moved", False):
                 _follow_lcm_owner(cur, new_agent, old_agent)
