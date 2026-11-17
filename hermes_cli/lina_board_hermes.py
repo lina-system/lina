@@ -26,7 +26,9 @@ app's done window (``lina_board.DONE_WINDOW_S``); every other done card is its `
 last ``show`` (:class:`Memo`, lina#573) and shows a card again only when its ``list`` row changed or ``kanban watch``
 named it; a pass cut by its limit leaves the replies it got to the next. A pass woken by ``kanban watch`` does not
 read the old record again before :data:`PASS_EVERY_S` (the watch says nothing about it). Nothing is written to disk. Items from this source carry ids prefixed ``hermes:`` and
-``readOnly: true``; LINA's write routes refuse such ids with 409 (:data:`READ_ONLY`).
+``readOnly: true``; LINA's write routes refuse such ids with 409 (:data:`READ_ONLY`). The checked card lines
+(``lina_board_plain``) of the served work cards (:func:`work_shows`) are written by the board lines writer of the
+process that runs the reader, from the same last good pass (:func:`last_cards`).
 """
 
 from __future__ import annotations
@@ -489,6 +491,30 @@ def reader(root: Path | None = None) -> _Reader | None:
         if src is not None and _READER is None:
             _READER = _Reader(root, src)
         return _READER
+
+
+def last_cards() -> list[dict] | None:
+    """The cards of the last good pass of this process's reader, as requests serve them; None when no reader of the
+    cards runs here or none has read the board yet. It never starts a reader, so nothing runs."""
+    with _READER_LOCK:
+        running = _READER
+    if running is None or running.stopped or running.src.command is None:
+        return None
+    return running.part("cards").value
+
+
+def work_shows(shows: list[dict]) -> list[tuple[dict, bool]]:
+    """The work cards of a pass (``lina_board_plain.is_work_card``), each with its goal mode: the CLI carries no
+    ``goal_mode``, so a card without the field is a goal-mode card unless it is a link-child of another card."""
+    from hermes_cli.lina_board_plain import is_work_card
+    children = {str(child) for s in shows for child in s.get("children") or []}
+    out = []
+    for show in shows:
+        task = show["task"]
+        goal_mode = bool(task.get("goal_mode", str(task["id"]) not in children))
+        if is_work_card(goal_mode, task.get("body"), task.get("status", "")):
+            out.append((show, goal_mode))
+    return out
 
 
 def start() -> Callable[[], None]:

@@ -1,6 +1,8 @@
 """Checked model-written card lines (lina#151): a short title, a "doing now" line and a result line for every
 ``lina worker`` run and every work card (``is_work_card``: a goal-mode card, or any card whose body has a
-``## To-dos`` section), served as ``plain`` on run cards and work cards.
+``## To-dos`` section), served as ``plain`` on run cards and work cards. The work cards are LINA's own boards' and
+the connected Hermes board's (``lina_board_hermes``), the latter from the last good pass of the reader in the
+writer's own process (the web server's), so the writer never runs the Hermes CLI.
 
 The writer runs on its own daemon thread, started once by the hub's worker service (``start_writer``), never in the
 service loop or the hub tick and never in a request: a slow model call holds back nothing but the next pass. For each (kind, id, field) it hashes the field's source text
@@ -27,7 +29,7 @@ from typing import Callable, Iterator, NamedTuple
 TASK = "board_lines"
 PROFILE_SETTING = "worker.board_lines_profile"
 FIELDS = ("title", "now", "result")
-LIMITS = {"title": 25, "now": 60, "result": 80}
+LIMITS = {"title": 25, "now": 40, "result": 80}  # the app shows a now line of at most 40 characters
 EMPTY = dict.fromkeys(FIELDS)
 STOP_AFTER_S = 30 * 60
 MAX_CALLS = 20
@@ -36,6 +38,8 @@ EVERY_S = 60.0
 _clock = time.monotonic
 SOURCE_CHARS = 2000
 ALLOWED_LATIN = frozenset({"LINA", "Honcho", "GitHub", "macOS", "iPhone", "Telegram", "Codex"})
+# Words the app never draws (lina-app words.ts BANNED_WORDS): a now line holding one is dropped there, so refuse it here and let the model retry.
+NOW_BANNED = ("세션", "일꾼", "회차", "판정", "장부")
 ACTION_NOUNS = ("정리", "점검", "추가", "수정", "확인", "개선", "작성", "이전", "배포", "설정", "검토", "정비", "구축",
                 "연결", "분리", "통합", "제거", "교체", "갱신", "복구", "조사", "분석", "준비", "도입", "적용", "전환",
                 "등록", "보완", "마련", "구현", "변경", "해결", "대응", "측정", "비교", "보강", "이관", "검증", "표시",
@@ -114,13 +118,16 @@ def check_title(text: str) -> str | None:
 
 
 def check_now(text: str) -> str | None:
-    """At most 60 characters, one sentence, in the present progressive (~하는 중, ~고 있다) or a short noun
+    """At most 40 characters, one sentence, in the present progressive (~하는 중, ~고 있다) or a short noun
     phrase."""
     reason = _common(text, LIMITS["now"])
     if reason:
         return reason
     if not _one_sentence(text):
         return "more than one sentence"
+    banned = next((w for w in NOW_BANNED if w in text), None)
+    if banned:
+        return f"contains the word {banned}, which the app does not show"
     body = text.rstrip(_ENDERS).rstrip()
     if body.endswith(("다", "요")) and not body.endswith(("중이다", "고 있다", "중입니다", "고 있습니다")):
         return "not the present progressive or a noun phrase"
@@ -148,7 +155,7 @@ _PROMPTS = {
               "예) 원문: 'ulw # Rotate the build machine disks before they fill' -> 빌드 기기 디스크 교체\n"
               "예) 원문: '알림 문구를 앱 화면에 맞추기 lina-system/lina-app#9' -> 앱 알림 문구 정리\n"
               "예) 원문: 'Add weekly backup check for the photo library' -> 사진 보관함 주간 백업 점검"),
-    "now": ("지금 하고 있는 일을 60자 안의 한 문장으로 쓴다. '~하는 중' 같은 진행형이나 짧은 명사구로 쓴다.\n"
+    "now": ("지금 하고 있는 일을 40자 안의 한 문장으로 쓴다. '~하는 중' 같은 진행형이나 짧은 명사구로 쓴다. '일꾼', '세션', '회차', '판정', '장부'라는 말은 쓰지 않는다.\n"
             "예) 원문: 'running the test suite on build-a, 120 of 400 passed' -> 시험 묶음을 돌리는 중\n"
             "예) 원문: '질문: 두 기기 중 어느 쪽을 먼저 비울까요?' -> 먼저 비울 기기를 묻는 중\n"
             "예) 원문: 'waiting on background job: image resize batch' -> 사진 크기 일괄 변환 대기"),
@@ -174,9 +181,11 @@ def ask(field: str, source: str) -> str:
 
 
 # ---------------------------------------------------------------- the cache
-# Version 2 keys a line by its board as well. The cache is regenerable, so an older ``line`` table is dropped (the
-# next pass writes it again); the ``writer`` state is kept.
-SCHEMA_VERSION = 2
+# Version 2 keys a line by its board as well. Version 3 holds only lines that passed the 40-character ``now`` limit (G138):
+# a line is keyed by its source's hash, so one stored under the old 60-character limit would otherwise be served for as
+# long as its source stays the same. The cache is regenerable, so an older ``line`` table is dropped (the next pass
+# writes it again); the ``writer`` state is kept.
+SCHEMA_VERSION = 3
 _SCHEMA = ("CREATE TABLE IF NOT EXISTS line (kind TEXT NOT NULL, board TEXT NOT NULL, id TEXT NOT NULL, "
            "field TEXT NOT NULL, source_hash TEXT NOT NULL, text TEXT, error TEXT, at INTEGER NOT NULL, "
            "PRIMARY KEY (kind, board, id, field))",
@@ -443,10 +452,31 @@ def card_sources() -> list[Source]:
     return out
 
 
+def now_source(comments: list[tuple[str, str]], status: str) -> str:
+    """A card's ``now`` source from its ``(author, body)`` comments, oldest first: the latest that is not empty and
+    not an automatic notice, which says nothing of what is being done (the hub's own comments, by
+    ``kanban_link.AUTHOR``, and a receipt starting ``[받음]``); "" once the card is done or when no comment is left."""
+    from hermes_cli.worker.kanban_link import AUTHOR
+    if status == "done":
+        return ""
+    return next((body for author, body in reversed(comments)
+                 if body.strip() and author != AUTHOR and not body.lstrip().startswith("[받음]")), "")
+
+
+def _card_lines(card_id: str, board: str, title: str, body: str | None, status: str,
+                comments: list[tuple[str, str]], result: str) -> list[Source]:
+    """One work card's sources: title from the card title plus the issue it names, now from ``now_source``, result
+    from *result* once it is done."""
+    issue = _ISSUE_REF.search(body or "")
+    return [Source("card", card_id, "title", title + (f" {issue.group(0)}" if issue else ""), board),
+            Source("card", card_id, "now", now_source(comments, status), board),
+            Source("card", card_id, "result", result if status == "done" else "", board)]
+
+
 def _board_cards(kanban_db, path: Path, board: str) -> list[Source]:
     """One board's work cards (``is_work_card``, the set the work API lists) over a read-only connection (a pass
-    never initializes or migrates a board): title from the card title plus the issue it names, now from its latest
-    comment, result from its result (or its latest run's summary) once it is done."""
+    never initializes or migrates a board), as ``_card_lines``; the result is the card's result, or its latest run's
+    summary."""
     conn = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=5)
     conn.row_factory = sqlite3.Row
     conn.text_factory = kanban_db._lossy_text
@@ -459,26 +489,39 @@ def _board_cards(kanban_db, path: Path, board: str) -> list[Source]:
                 continue
             task_id = row["id"]
             task = kanban_db.get_task(conn, task_id)
-            issue = _ISSUE_REF.search(task.body or "")
-            comments = [c for c in kanban_db.list_comments(conn, task_id) if (c.body or "").strip()]
+            comments = [(c.author or "", c.body or "") for c in kanban_db.list_comments(conn, task_id)]
             result = ""
             if task.status == "done":
                 runs = [r for r in kanban_db.list_runs(conn, task_id) if r.summary]
                 result = task.result or (runs[-1].summary if runs else "")
-            out += [Source("card", task_id, "title", task.title + (f" {issue.group(0)}" if issue else ""), board),
-                    Source("card", task_id, "now", comments[-1].body if comments and task.status != "done" else "",
-                           board),
-                    Source("card", task_id, "result", result or "", board)]
+            out += _card_lines(task_id, board, task.title, task.body, task.status, comments, result or "")
         return out
     finally:
         conn.close()
+
+
+def hermes_card_sources() -> list[Source]:
+    """The connected Hermes board's work cards (``lina_board_hermes.work_shows``, the set ``work_api_hermes`` serves)
+    from the last good pass of this process's reader (``last_cards``; none without one), under the ids and the board
+    the work API looks them up by: ``hermes:<id>`` on the default board (``board_key(None)``)."""
+    from hermes_cli import lina_board_hermes as hermes
+    out = []
+    for show, _goal_mode in hermes.work_shows(hermes.last_cards() or []):
+        task = show["task"]
+        comments = [(str(c.get("author") or ""), str(c.get("body") or ""))
+                    for c in show.get("comments") or [] if isinstance(c, dict)]
+        runs = [r for r in show.get("runs") or [] if isinstance(r, dict) and r.get("summary")]
+        result = task.get("result") or (runs[-1]["summary"] if runs else "")
+        out += _card_lines(hermes.hermes_id(task["id"]), board_key(None), str(task.get("title") or ""),
+                           task.get("body"), str(task.get("status") or ""), comments, str(result or ""))
+    return out
 
 
 def write_board(root: Path | None = None, now: float | None = None, lives: dict[str, dict] | None = None,
                 usable: bool = True) -> dict:
     """The background step: every run's and work card's sources, then ``write``."""
     root, now = _root(root), time.time() if now is None else now
-    return write(run_sources(root, now, lives) + card_sources(), root, now, usable)
+    return write(run_sources(root, now, lives) + card_sources() + hermes_card_sources(), root, now, usable)
 
 
 @contextmanager

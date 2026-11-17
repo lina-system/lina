@@ -78,19 +78,13 @@ class _Board:
     alone."""
 
     def __init__(self, shows: list[dict]):
-        from hermes_cli.lina_board_plain import is_work_card
         self.facts = {hermes.hermes_id(s["task"]["id"]): facts(s) for s in shows}
         self.listed = {hermes.hermes_id(s["task"]["id"]) for s in shows if s.get("detail") is False}
-        children = {str(child) for s in shows for child in s.get("children") or []}
-
-        def goal_mode(task: dict) -> bool:
-            return bool(task.get("goal_mode", str(task["id"]) not in children))
-        work = [(hermes.hermes_id(s["task"]["id"]), s) for s in shows
-                if is_work_card(goal_mode(s["task"]), s["task"].get("body"), s["task"].get("status", ""))]
-        self.work = [i for i, _ in work]
+        work = [(hermes.hermes_id(s["task"]["id"]), s, goal_mode) for s, goal_mode in hermes.work_shows(shows)]
+        self.work = [i for i, _, _ in work]
         self.goals: dict[str, list[str]] = {}
-        for i, show in work:
-            if goal_mode(show["task"]):
+        for i, show, goal_mode in work:
+            if goal_mode:
                 for child in show.get("children") or []:
                     if hermes.hermes_id(child) in self.facts:
                         self.goals.setdefault(hermes.hermes_id(child), []).append(i)
