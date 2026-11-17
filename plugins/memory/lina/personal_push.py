@@ -225,6 +225,26 @@ def _tag_messages(push: _Push, sources: list[str]) -> list[str]:
     return lines
 
 
+# git commands that leave the commits, refs and settings a later push reads as they were (``fetch`` only moves
+# remote-tracking refs, which can shrink what a push sends, never grow it).
+_READS = {"status", "log", "diff", "show", "fetch", "rev-parse", "rev-list", "ls-files", "ls-remote", "ls-tree",
+          "describe", "blame", "grep", "cat-file", "for-each-ref", "show-ref", "shortlog", "diff-tree", "version"}
+
+
+def _subcommand(words: list[str]) -> str:
+    """The git command of a simple command, past git's own options (``-C <dir>``, ``-c <k=v>``, ``--git-dir <d>``)."""
+    index = 1
+    while index < len(words):
+        word = words[index]
+        if word in {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"}:
+            index += 2
+        elif word.startswith("-"):
+            index += 1
+        else:
+            return word
+    return "(none)"
+
+
 def in_directory(commands: list[list[str]], cwd: str) -> Iterator[tuple[list[str], str]]:
     """Each simple command of a shell line with the directory it runs in, following ``cd`` and ``pushd`` (options
     skipped) from *cwd*. A ``cd`` with no usable target (``cd``, ``cd -``, a folder that does not exist) leaves the directory as it was."""
@@ -239,7 +259,15 @@ def in_directory(commands: list[list[str]], cwd: str) -> Iterator[tuple[list[str
 
 def outgoing(commands: list[list[str]], cwd: str) -> Iterator[Outgoing]:
     """What each ``git push`` of a shell line's simple *commands* would send, following ``cd`` from *cwd*. Raises
-    ``Undetermined`` for the first push it cannot tell."""
+    ``Undetermined`` for the first push it cannot tell, and for a push that follows a git command of the same line that
+    can change what it sends (``git commit -am x && git push``): the commits are not there to read yet."""
+    changed = ""
     for words, where in in_directory(commands, cwd):
         if Path(words[0]).name == "git" and "push" in words[1:]:
+            if changed:
+                raise Undetermined(f"git {changed} runs before the push in the same command, so what the push sends "
+                                   "is not in the repository yet")
             yield _outgoing(_parse(words, where))
+        elif Path(words[0]).name == "git" and not changed:
+            sub = _subcommand(words)
+            changed = "" if sub in _READS else sub

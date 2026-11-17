@@ -298,6 +298,33 @@ def test_a_push_default_that_cannot_be_resolved_is_refused(repo, tmp_path):
         refused["message"]
 
 
+def test_a_push_chained_after_a_commit_in_one_command_is_refused(repo, tmp_path):
+    _mark(tmp_path / "elsewhere" / "id-card.pdf")
+    (repo / "README.md").write_text(f"synthetic project {NUMBER}\n", encoding="utf-8")
+
+    refused = _push(repo, "git commit -qam docs && git push origin main")
+
+    assert refused["action"] == "block"
+    assert "git commit runs before the push in the same command" in refused["message"]
+    assert _git(repo, "log", "--oneline").count("\n") == 1  # nothing ran: the hook only inspects
+
+
+def test_a_push_chained_after_a_read_only_git_command_is_checked_as_usual(repo, tmp_path):
+    _mark(tmp_path / "elsewhere" / "id-card.pdf")
+
+    assert _push(repo, "git status && git -C . log -1 && git push origin main") is None
+    _commit(repo, "notes/extract.md", f"주민등록번호 {NUMBER}\n")
+    assert _push(repo, "git status && git push origin main")["action"] == "block"
+
+
+def test_a_push_after_a_setting_change_in_one_command_is_refused(repo, tmp_path):
+    _mark(tmp_path / "elsewhere" / "id-card.pdf")
+
+    refused = _push(repo, "git config push.default matching; git push origin")
+
+    assert "git config runs before the push in the same command" in refused["message"]
+
+
 def test_a_push_from_a_job_without_a_mark_is_not_checked(repo):
     _commit(repo, "private/contract.txt", f"주민등록번호 {NUMBER}\n")
 
