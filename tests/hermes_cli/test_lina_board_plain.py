@@ -154,7 +154,7 @@ def test_each_field_check_says_why_it_refuses(field, text, reason):
     assert CHECKS[field](text) == reason
 
 
-WORK = ("봇", "[작업 진행 1/3] 백업 사진을 크기별로 나누는 중")
+WORK = ("봇", "[작업 진행] 백업 사진을 크기별로 나누는 중")
 LEDGER_LINK = ("봇", "[작업 · t_0000000c] 장부 목표 G117(사진 백업 정리)에 붙였다. 목표 없이 열려 있던 카드라서 연결했다.")
 
 
@@ -170,7 +170,7 @@ LEDGER_LINK = ("봇", "[작업 · t_0000000c] 장부 목표 G117(사진 백업 �
     ([WORK, ("봇", "[받음] 읽었다")], "running", WORK[1]),
     ([LEDGER_LINK, WORK], "running", WORK[1]),
     ([WORK, ("봇", "[현황] 장부 목표 G117 기준으로 남은 사진을 세는 중")], "running",
-     "[현황] 장부 목표 G117 기준으로 남은 사진을 세는 중"),
+     "[현황] 장부 목표 기준으로 남은 사진을 세는 중"),
     ([WORK, ("봇", "  ")], "running", WORK[1]),
     ([WORK], "done", ""),
 ])
