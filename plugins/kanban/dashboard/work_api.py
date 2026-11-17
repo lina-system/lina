@@ -225,7 +225,8 @@ def _block_stop(task: kanban_db.Task, events: list[kanban_db.Event]) -> tuple[Op
     """``(reason, waitingOn, retry)`` of a blocked card, from its latest block event (its kind, else the card's
     ``block_kind``), never from the title. A recorded wait is woken by the dispatcher; a typed kind reads by
     :data:`_KIND_STOPS`; an untyped block's text is the goal loop's ``gate`` / ``budget``, an owner-inbox line, or a
-    plain sentence for the owner. A card with no block event and no kind is all None."""
+    question for the owner. Any other untyped text (a status word, a note of what it waits for, lina#795) asks the
+    owner nothing: ``feedback`` with no ``waitingOn``. A card with no block event and no kind is all None."""
     event = _park_event(events)
     if event is not None and event.kind == "gave_up":
         return "failed", "owner", "none"
@@ -245,8 +246,10 @@ def _block_stop(task: kanban_db.Task, events: list[kanban_db.Event]) -> tuple[Op
     inbox = _INBOX_LINE.match(text)
     if inbox and inbox["kind"] in _INBOX_REASONS:
         return _INBOX_REASONS[inbox["kind"]], "owner", "none"
+    if text.endswith(("?", "？")):
+        return "decision", "owner", "none"
     if text:
-        return ("decision" if text.endswith(("?", "？")) else "feedback"), "owner", "none"
+        return "feedback", None, "none"
     return None, None, None
 
 

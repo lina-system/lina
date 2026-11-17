@@ -313,8 +313,8 @@ components:
         another card or its review, else hold. An untyped block by its text: gate or budget for the
         goal loop's stops; an owner-inbox line `<agent> · <kind> · <summary>` by its kind
         (갈림길 and 질문 decision, 검토 review, 돈·바깥 and 끝 조건 feedback); any other sentence decision
-        when it ends with a question mark, else feedback. Null when the card has no block event
-        and no block kind.
+        when it ends with a question mark, else feedback (one that asks the owner nothing, lina#795:
+        waitingOn null). Null when the card has no block event and no block kind.
     Ask:
       type: string
       nullable: true
@@ -330,8 +330,9 @@ components:
       description: >
         Who has to act next on a stopped card (lina#629): owner when a person has to answer or act
         (decision, feedback, review, hold, gate, budget above); null when nobody has to (a block that
-        waits on another card, a recorded wait the dispatcher wakes, or a card with no block event),
-        and on every card that is not blocked. `agent:<name>` is the run shape of the same field
+        waits on another card, a recorded wait the dispatcher wakes, an untyped block whose text is
+        neither an owner-inbox line, a question nor the goal loop's gate or budget, or a card with no
+        block event), and on every card that is not blocked. `agent:<name>` is the run shape of the same field
         (board-client.yaml, RunCard).
       example: owner
     Retry:
