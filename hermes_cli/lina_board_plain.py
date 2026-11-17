@@ -38,6 +38,8 @@ EVERY_S = 60.0
 _clock = time.monotonic
 SOURCE_CHARS = 2000
 ALLOWED_LATIN = frozenset({"LINA", "Honcho", "GitHub", "macOS", "iPhone", "Telegram", "Codex"})
+# Words the app never draws (lina-app words.ts BANNED_WORDS): a now line holding one is dropped there, so refuse it here and let the model retry.
+NOW_BANNED = ("세션", "일꾼", "회차", "판정", "장부")
 ACTION_NOUNS = ("정리", "점검", "추가", "수정", "확인", "개선", "작성", "이전", "배포", "설정", "검토", "정비", "구축",
                 "연결", "분리", "통합", "제거", "교체", "갱신", "복구", "조사", "분석", "준비", "도입", "적용", "전환",
                 "등록", "보완", "마련", "구현", "변경", "해결", "대응", "측정", "비교", "보강", "이관", "검증", "표시",
@@ -123,6 +125,9 @@ def check_now(text: str) -> str | None:
         return reason
     if not _one_sentence(text):
         return "more than one sentence"
+    banned = next((w for w in NOW_BANNED if w in text), None)
+    if banned:
+        return f"contains the word {banned}, which the app does not show"
     body = text.rstrip(_ENDERS).rstrip()
     if body.endswith(("다", "요")) and not body.endswith(("중이다", "고 있다", "중입니다", "고 있습니다")):
         return "not the present progressive or a noun phrase"
@@ -150,7 +155,7 @@ _PROMPTS = {
               "예) 원문: 'ulw # Rotate the build machine disks before they fill' -> 빌드 기기 디스크 교체\n"
               "예) 원문: '알림 문구를 앱 화면에 맞추기 lina-system/lina-app#9' -> 앱 알림 문구 정리\n"
               "예) 원문: 'Add weekly backup check for the photo library' -> 사진 보관함 주간 백업 점검"),
-    "now": ("지금 하고 있는 일을 40자 안의 한 문장으로 쓴다. '~하는 중' 같은 진행형이나 짧은 명사구로 쓴다.\n"
+    "now": ("지금 하고 있는 일을 40자 안의 한 문장으로 쓴다. '~하는 중' 같은 진행형이나 짧은 명사구로 쓴다. '일꾼', '세션', '회차', '판정', '장부'라는 말은 쓰지 않는다.\n"
             "예) 원문: 'running the test suite on build-a, 120 of 400 passed' -> 시험 묶음을 돌리는 중\n"
             "예) 원문: '질문: 두 기기 중 어느 쪽을 먼저 비울까요?' -> 먼저 비울 기기를 묻는 중\n"
             "예) 원문: 'waiting on background job: image resize batch' -> 사진 크기 일괄 변환 대기"),
