@@ -199,6 +199,11 @@ _SCHEMA = ("CREATE TABLE IF NOT EXISTS line (kind TEXT NOT NULL, board TEXT NOT 
            # When each field's model call was last made, answered or not: the order of the next pass's queue.
            "CREATE TABLE IF NOT EXISTS attempt (kind TEXT NOT NULL, board TEXT NOT NULL, id TEXT NOT NULL, "
            "field TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (kind, board, id, field))")
+# How fields are asked, kept as the ``writer`` key ``ask_revision``. A refused line stays refused while its source
+# hash is unchanged, so a cache from an older revision has its refused ``now`` lines (and their attempts) dropped once
+# to be asked again. 1: a refused answer is asked again with its reason (lina#789); ``now`` lines refused before that
+# left cards with an empty top line. Refused titles and results are kept: there are many and they were not the fault.
+ASK_REVISION = 1
 
 
 def _root(root: Path | None) -> Path:
@@ -221,6 +226,12 @@ def _open(root: Path | None, write: bool) -> sqlite3.Connection | None:
         db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
     for statement in _SCHEMA:
         db.execute(statement)
+    revision = db.execute("SELECT value FROM writer WHERE key = 'ask_revision'").fetchone()
+    if (revision[0] if revision else 0) < ASK_REVISION:
+        db.execute("DELETE FROM attempt WHERE field = 'now' AND (kind, board, id) IN "
+                   "(SELECT kind, board, id FROM line WHERE field = 'now' AND error IS NOT NULL)")
+        db.execute("DELETE FROM line WHERE field = 'now' AND error IS NOT NULL")
+        db.execute("INSERT OR REPLACE INTO writer (key, value) VALUES ('ask_revision', ?)", (ASK_REVISION,))
     db.commit()
     return db
 

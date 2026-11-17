@@ -562,3 +562,35 @@ def test_a_refused_answer_is_not_asked_again_after_the_pass_s_deadline(work, mon
 
     assert len(sent) == 1
     assert _rows(work)[("card", "t_00c0ffee", "now")] == (None, "longer than 40 characters")
+
+
+def test_a_now_line_refused_before_refused_answers_were_asked_again_is_asked_once_more(work, monkeypatch):
+    from hermes_cli.lina_board_plain import Source, lookup, write
+    sources = [Source("card", "t_0000000a", "now", "checking last week's backup", "default", True),
+               Source("card", "t_0000000a", "title", "Weekly photo backup check", "default", True),
+               Source("card", "t_0000000a", "result", "The backup ran.", "default", True),
+               Source("card", "t_0000000b", "now", "rotating the build machine disks", "default", True),
+               Source("card", "t_0000000b", "title", "Rotate the build machine disks", "default", True)]
+    sent = _answering(monkeypatch, [GOOD[s.field] for s in sources] + [GOOD["now"]])
+    write(sources, work.root, NOW)
+    with sqlite3.connect(work.root / "board" / "plain.db") as db:  # what a cache from before lina#789 holds
+        db.execute("UPDATE line SET text = NULL, error = 'longer than 40 characters' "
+                   "WHERE id = 't_0000000a' AND field = 'now'")
+        db.execute("UPDATE line SET text = NULL, error = 'contains an id' "
+                   "WHERE id = 't_0000000a' AND field IN ('title', 'result')")
+        db.execute("DELETE FROM writer WHERE key = 'ask_revision'")
+    sent.clear()
+
+    assert write(sources, work.root, NOW + 60) == {"called": 1, "failed": 0, "pending": 0}
+
+    assert len(sent) == 1 and "checking last week's backup" in sent[0][1]["content"]
+    assert lookup("card", ["t_0000000a"], work.root, board="default")["t_0000000a"]["now"] == GOOD["now"]
+    rows = _rows(work)
+    assert rows[("card", "t_0000000a", "title")] == rows[("card", "t_0000000a", "result")] == (None, "contains an id")
+    assert rows[("card", "t_0000000b", "now")] == (GOOD["now"], None)
+    assert rows[("card", "t_0000000b", "title")] == (GOOD["title"], None)
+
+    with sqlite3.connect(work.root / "board" / "plain.db") as db:  # refused under this revision: it stays refused
+        db.execute("UPDATE line SET text = NULL, error = 'contains a path' WHERE id = 't_0000000a' AND field = 'now'")
+    assert write(sources, work.root, NOW + 120) == {"called": 0, "failed": 0, "pending": 0}
+    assert _rows(work)[("card", "t_0000000a", "now")] == (None, "contains a path")
