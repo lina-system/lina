@@ -6,6 +6,8 @@ sees the source, since a model shown them copies them into a line its check refu
 
 from __future__ import annotations
 
+import sqlite3
+
 import pytest
 
 from tests.hermes_cli._work_env import NOW, WorkEnv
@@ -101,6 +103,95 @@ def test_an_answer_refused_for_an_id_is_sent_back_and_the_korean_rewrite_is_stor
 def test_the_block_reason_is_that_of_the_standing_block(events, reason):
     from hermes_cli.lina_board_plain import block_reason
     assert block_reason(events) == reason
+
+
+# Lines the app's now gate (lina-app src/model/fold.ts nowMayShow, at lina-app 4737d8258c) shows, and lines it hides with
+# a word of the reason the core gives the model; each verdict was read off nowMayShow itself.
+APP_SHOWS = ("워치독 시험 복구 대기", "허브 기기에서 매매일지 설치 명령 실행 결과를 기다리는 중", "시험 묶음을 돌리는 중",
+             "사진 크기 일괄 변환 대기", "먼저 비울 기기를 묻는 중", "12:50에 시작할 배포를 기다리는 중", "백업 사진 1234567건을 옮기는 중",
+             "카드 3장을 정리하는 중", "빌드 기기(두 대) 디스크를 비우는 중", "1) 순서를 정하는 중", "토스 앱 승인을 기다리는 중",
+             "가" * 40)
+APP_HIDES = (
+    ("토스 QR 로그인을 폰에서 승인하기를 기다리는 중", "QR"),
+    ("현장 실사에서 LINA 웹 서버 기동 단계 알림 대기 중", "LINA"),
+    ("준비됨 → 승인·거절 알림과 거래 중지 알림을 기다리는 중", "→"),
+    ("S2 단계를 기다리는 중", "S2"),
+    ("12:50 배포 시작을 기다리는 중", "time of day"),
+    ("9:05:33부터 기다리는 중", "time of day"),
+    ("사진을 옮기는 중…", "…"),
+    ("사진을 옮기는 중...", "..."),
+    ("커밋 1234567을 보는 중", "seven digits"),
+    ("카드 3 정리를 기다리는 중", "numbers a card"),
+    ("기기 두 대의 디스크를", "cut off"),
+    ("설정을 화면에서", "cut off"),
+    (", 기다리는 중", "starts inside"),
+    ("기다리는 중:", "ends open"),
+    ("괄호 () 안을 비우는 중", "empty bracket"),
+    ("파일 를 고치는 중", "particle apart"),
+    ("설정은 노출된", "missing noun"),
+    ("빌드 기기(두 대 디스크를 비우는 중", "open"),
+    ("순서는 1.", "list's mark"),
+    ("알림 두 개를 && 묶는 중", "command"),
+)
+
+
+@pytest.mark.parametrize("line", APP_SHOWS)
+def test_a_now_line_the_app_shows_passes_its_check(line):
+    from hermes_cli.lina_board_plain import check_now
+    assert check_now(line) is None
+
+
+@pytest.mark.parametrize(("line", "word"), APP_HIDES)
+def test_a_now_line_the_app_hides_is_refused_with_a_reason_the_model_can_act_on(line, word):
+    from hermes_cli.lina_board_plain import check_now
+    reason = check_now(line)
+    assert reason is not None and word in reason
+
+
+def _stored(work, field: str, text: str) -> None:
+    """What a cache written under an older ``check_now`` holds: *text* stored as the passing line of *field*."""
+    with sqlite3.connect(work.root / "board" / "plain.db") as db:
+        db.execute("UPDATE line SET text = ?, error = NULL WHERE field = ?", (text, field))
+
+
+def _sources():
+    from hermes_cli.lina_board_plain import Source
+    return [Source("card", "t_0000000a", field, text, "default", True)
+            for field, text in (("title", "Toss login"), ("now", WAITING), ("result", "The login was approved."))]
+
+
+def test_a_stored_now_line_the_check_now_refuses_is_asked_again_once_and_the_rewrite_is_stored(work, monkeypatch):
+    from hermes_cli.lina_board_plain import write
+    hidden, fixed = "토스 QR 로그인을 승인하기를 기다리는 중", "토스 로그인 승인을 기다리는 중"
+    sent = _answering(monkeypatch, [GOOD["title"], GOOD["now"], GOOD["result"], fixed])
+    write(_sources(), work.root, NOW)
+    _stored(work, "now", hidden)
+    _stored(work, "title", "LINA 알림 정리")
+    _stored(work, "result", "GitHub 알림을 맞췄다.")
+
+    assert write(_sources(), work.root, NOW + 60) == {"called": 1, "failed": 0, "pending": 0}
+
+    assert len(sent) == 4 and WAITING in sent[3][1]["content"]
+    rows = _rows(work)
+    assert rows[("card", "t_0000000a", "now")] == (fixed, None)
+    assert rows[("card", "t_0000000a", "title")] == ("LINA 알림 정리", None)
+    assert rows[("card", "t_0000000a", "result")] == ("GitHub 알림을 맞췄다.", None)
+    assert write(_sources(), work.root, NOW + 120) == {"called": 0, "failed": 0, "pending": 0}
+
+
+def test_a_stored_now_line_whose_rewrites_are_refused_too_is_stored_refused_and_not_asked_again(work, monkeypatch):
+    from hermes_cli.lina_board_plain import RETRIES, write
+    hidden = "현장 실사에서 LINA 웹 서버 기동 알림 대기 중"
+    sent = _answering(monkeypatch, [GOOD["title"], GOOD["now"], GOOD["result"]] + [hidden] * (RETRIES + 1))
+    write(_sources(), work.root, NOW)
+    _stored(work, "now", hidden)
+
+    assert write(_sources(), work.root, NOW + 60) == {"called": 1, "failed": 0, "pending": 0}
+
+    assert len(sent) == 3 + RETRIES + 1
+    assert _rows(work)[("card", "t_0000000a", "now")] == (None, "contains the Latin letters LINA: write it in Korean")
+    assert write(_sources(), work.root, NOW + 120) == {"called": 0, "failed": 0, "pending": 0}
+    assert len(sent) == 3 + RETRIES + 1
 
 
 def test_a_running_card_s_now_source_is_still_its_latest_comment():

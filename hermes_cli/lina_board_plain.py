@@ -123,9 +123,87 @@ def check_title(text: str) -> str | None:
     return None
 
 
+# The app's own gate for a now line (lina-app src/model/fold.ts ``nowMayShow``), which hides a line it fails: a line
+# stored that it hides leaves a card's top line empty, so ``check_now`` refuses it too and the model writes it again.
+# Rules the shared checks (``_common``) already hold are not repeated; its ``\p{Script=Hangul}`` is spelled out.
+_H = "[\u1100-\u11ff\u3130-\u318f\ua960-\ua97f\uac00-\ud7a3\ud7b0-\ud7ff\uffa0-\uffdc]"
+_PARTICLES = "으로|에서|까지|부터|로|를|을|이|가|은|는|와|과|의|에|도|만"
+_LONE_PARTICLE = r"(?:으로|에서|까지|부터|이라|라고|가|은|는|을|를|라|로|와|과|도|의|만|에)(?=[\s.,!?。]|$)"
+_MODIFIER = (r"(?:^|[\s(])(?:새|헌|옛|각|모든|온갖|여러|이|그|저|이런|그런|저런|어떤|무슨|다른|몇|"
+             rf"{_H}*(?:된|될|던|하는|되는|있는|없는|같은))")
+_LATIN_LETTERS = re.compile(r"[A-Za-z][A-Za-z0-9]*")
+_NEVER_DRAWN = re.compile(r"[/\\`=|→←↔⇒⇄…]|->|\.\.\.")
+_CLOCK = re.compile(r"(?<![0-9:.])[0-9]{1,2}:[0-9]{2}(?::[0-9]{2})?(?![0-9])")
+_LIST_MARK = re.compile(r"^\(?[0-9]{1,2}[.)]\s+")
+_LIST_PAREN = re.compile(r"((?<!\S)[0-9]{1,2}\)(?=\s))|[()]")
+# Read on the line less a list's mark before it (``sentenceMayShow``).
+_SENTENCE_RULES = tuple((re.compile(rule), reason) for rule, reason in (
+    (r"^\(?[0-9]+(?:[.,][0-9]+)*\)?\s*" + _H + r"{0,2}[.!?。…]*$", "is a number alone: say what is being done"),
+    (r"^(?:[.,:;·…|)\]}~\-\u2013\u2014→]|['\"\u2019\u201d](?:\s|$)|(?!만\s)" + _LONE_PARTICLE + ")",
+     "starts inside another sentence: start on what is being done"),
+    (r"(?:[|·,:;/+\-\u2013\u2014(\[{]|\s" + _LONE_PARTICLE + r")\s*(?:…|\.\.\.)?$",
+     "ends open on a mark or a lone particle: finish the sentence"),
+    (r"[(\[{][\W_]*[)\]}]", "contains an empty bracket: leave it out"),
+    (r"[,:;][.,:;]|\.[,:;]|(?:^|\s)[.,:;|]+(?=\s|$)", "contains stray punctuation: leave it out"),
+    (r"\s(?:(?:으로|에서|을|를|은|는|의|로|와|과)(?=[\s.,!?。:;)…]|$)|(?:이|가|도|만|에)(?=[.,!?。:;)…]|$))",
+     "has a particle apart from its noun: write it glued to the noun"),
+    (_MODIFIER + r"\s*(?:[.,!?。:;)…]|$)", "ends on a word that modifies a missing noun: finish the sentence"),
+))
+# Read on the whole line (``nowMayShow``, ``unitMayShow``).
+_LINE_RULES = tuple((re.compile(rule), reason) for rule, reason in (
+    (rf"(?<![0-9.,])[0-9]{{7,}}(?![0-9]|\.[0-9]|,[0-9]{{3}}(?![0-9])|(?!(?:{_PARTICLES})(?!{_H})){_H})",
+     "contains a number of seven digits or more: leave it out"),
+    (rf"(?:표지\s*)?카드\s*[0-9]+(?![0-9]|{_H})", "numbers a card: say what the card is about instead"),
+    (r"\s&&\s", "contains a command"),
+    (r"^\(?[0-9]{1,2}[.)]$|\s\(?1[.)]$", "ends on a list's mark: write the item itself"),
+    (_H + r"(?:을|를|에서|으로|은|는|이)[.!?。]?[\"'\u2019\u201d)\]]*$",
+     "ends on a particle, cut off before its verb: finish the sentence"),
+))
+
+
+def _log_time(text: str) -> bool:
+    """Two times of day or more, one with seconds, or one with no Korean glued after it (``holdsNeverDrawn``): one time
+    with a particle or a word glued after it (``12:50에``) is a plain fact."""
+    times = list(_CLOCK.finditer(text))
+    return bool(times) and (len(times) > 1 or times[0].group(0).count(":") > 1
+                            or not re.match(_H, text[times[0].end():]))
+
+
+def _closes(text: str) -> bool:
+    """Every bracket and quote opened is closed; a list's mark (``1)``) closes no bracket it did not open."""
+    opened = closed = 0
+    for match in _LIST_PAREN.finditer(text):
+        if match.group(0) == "(":
+            opened += 1
+        elif not match.group(1) or opened > closed:
+            closed += 1
+    return (opened == closed and text.count("[") == text.count("]") and text.count("\u201c") == text.count("\u201d")
+            and text.count("\u2018") == text.count("\u2019") and text.count('"') % 2 == 0 and text.count("'") % 2 == 0)
+
+
+def _app_hides(text: str) -> str | None:
+    """Why the app's now gate would hide *text*, a line the shared checks passed; None when it shows it."""
+    latin = _LATIN_LETTERS.search(text)
+    if latin:
+        return f"contains the Latin letters {latin.group(0)}: write it in Korean"
+    mark = _NEVER_DRAWN.search(text)
+    if mark:
+        return f"contains {mark.group(0)}, a mark the app does not show: write it in words"
+    if _log_time(text):
+        return "contains a time of day the app reads as a log's: leave it out, or glue a word to one time (12:50에)"
+    sentence = _LIST_MARK.sub("", text, count=1)
+    if not re.search(_H, sentence):
+        return "holds no Korean"
+    for rules, read in ((_SENTENCE_RULES, sentence), (_LINE_RULES, text)):
+        reason = next((reason for rule, reason in rules if rule.search(read)), None)
+        if reason:
+            return reason
+    return None if _closes(sentence) else "leaves a bracket or a quote open: close it"
+
+
 def check_now(text: str) -> str | None:
     """At most 40 characters, one sentence, in the present progressive (~하는 중, ~고 있다) or a short noun
-    phrase."""
+    phrase, and a line the app shows (``_app_hides``)."""
     reason = _common(text, LIMITS["now"])
     if reason:
         return reason
@@ -137,7 +215,7 @@ def check_now(text: str) -> str | None:
     body = text.rstrip(_ENDERS).rstrip()
     if body.endswith(("다", "요")) and not body.endswith(("중이다", "고 있다", "중입니다", "고 있습니다")):
         return "not the present progressive or a noun phrase"
-    return None
+    return _app_hides(text)
 
 
 def check_result(text: str) -> str | None:
@@ -163,6 +241,7 @@ _PROMPTS = {
               "예) 원문: '알림 문구를 앱 화면에 맞추기 lina-system/lina-app#9' -> 앱 알림 문구 정리\n"
               "예) 원문: 'Add weekly backup check for the photo library' -> 사진 보관함 주간 백업 점검"),
     "now": ("지금 하고 있는 일을 40자 안의 한 문장으로 쓴다. '~하는 중' 같은 진행형이나 짧은 명사구로 쓴다. '일꾼', '세션', '회차', '판정', '장부'라는 말은 쓰지 않는다.\n"
+            "영문 글자는 하나도 쓰지 않고 한글로 쓴다(LINA는 '리나'). 화살표(→), 빗금(/), 말줄임(…)도 쓰지 않는다.\n"
             "멈춘 작업이면 무엇을 기다리는지 쓴다. 이미 끝난 일의 결과는 쓰지 않는다.\n"
             "예) 원문: 'running the test suite on build-a, 120 of 400 passed' -> 시험 묶음을 돌리는 중\n"
             "예) 원문: '질문: 두 기기 중 어느 쪽을 먼저 비울까요?' -> 먼저 비울 기기를 묻는 중\n"
@@ -339,8 +418,17 @@ def _answer(s: Source, deadline: float) -> tuple[str, str | None]:
         refused.append((answer, reason))
 
 
+def _due(s: Source, cached: tuple[str, str | None] | None) -> bool:
+    """Whether a field is asked again: its source hash moved, or its stored ``now`` line fails the current
+    ``check_now`` (a check grown since it was stored). A refused answer is stored with no text, so it is asked once."""
+    if cached is None or cached[0] != _hash(s):
+        return True
+    return s.field == "now" and cached[1] is not None and check_now(cached[1]) is not None
+
+
 def write(sources: list[Source], root: Path | None = None, now: float | None = None, usable: bool = True) -> dict:
-    """Write what changed: one call per field whose source hash moved (at most MAX_CALLS and PASS_S a run), the check's verdict
+    """Write what changed: one call per field whose source hash moved or whose stored now line its check refuses now
+    (``_due``; at most MAX_CALLS and PASS_S a run), the check's verdict
     stored either way; a field whose source is gone is cleared. A call that fails stores nothing and is tried again
     next run; with no usable model setting (``usable`` False) nothing is called, the due fields stay pending and the
     writer counts as stopped. The due fields of unfinished cards queue first, then the rest; within each, by how long
@@ -353,14 +441,14 @@ def write(sources: list[Source], root: Path | None = None, now: float | None = N
         with db:
             meta = _meta(db)
             db.execute("INSERT OR IGNORE INTO writer (key, value) VALUES ('first_run_at', ?)", (now,))
-            cached = {key[:4]: key[4] for key in db.execute("SELECT kind, board, id, field, source_hash FROM line")}
+            cached = {key[:4]: key[4:] for key in db.execute("SELECT kind, board, id, field, source_hash, text FROM line")}
             tried = {key[:4]: key[4] for key in db.execute("SELECT kind, board, id, field, at FROM attempt")}
             for s in sources:
                 if not s.text.strip():
                     for table in ("line", "attempt"):
                         db.execute(f"DELETE FROM {table} WHERE kind = ? AND board = ? AND id = ? AND field = ?",
                                    (s.kind, s.board, s.id, s.field))
-        due = sorted((s for s in sources if s.text.strip() and cached.get(_key(s)) != _hash(s)),
+        due = sorted((s for s in sources if s.text.strip() and _due(s, cached.get(_key(s)))),
                      key=lambda s: (not s.unfinished, tried.get(_key(s), -1)))  # stable: source order among equals
         calls, failed, deadline = [], 0, _clock() + PASS_S
         for s in due[:MAX_CALLS] if usable else ():
