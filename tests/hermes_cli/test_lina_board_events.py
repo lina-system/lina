@@ -522,20 +522,21 @@ def test_a_talk_turn_arrives_for_its_agent_once_the_history_shows_it(work, gatew
     from hermes_cli import lina_board_events as events
     stored_then, announce = [], events.announce
 
-    def announced(root, source, kind, item):
+    def announced(root, source, kind, item, **extra):
         if source == "talk":
             stored_then.append([turn["message"] for turn in gateways[item].turns])
-        announce(root, source, kind, item)
+        announce(root, source, kind, item, **extra)
     monkeypatch.setattr(events, "announce", announced)
     with client.websocket_connect(_url()) as ws:
         _next(ws, pool)
         assert client.post("/api/lina/agents/beta/talk", json={"message": "하나"}).status_code == 200
         message = _next(ws, pool)
-    assert _events(message) == [("talk", "message", "beta")] and set(message["events"][0]) == {"source", "kind", "id",
-                                                                                                 "at"}
+    assert _events(message) == [("talk", "message", "beta")] and set(message["events"][0]) == {
+        "source", "kind", "id", "message_id", "at"}
     assert stored_then == [["[LINA app]\n\n하나"]]  # written after the gateway stored the turn, not before
     history = client.get("/api/lina/agents/beta/talk").json()["messages"]
     assert [m["content"] for m in history] == ["[LINA app]\n\n하나", fake_model("하나")]
+    assert message["events"][0]["message_id"] == history[-1]["id"]  # the reply: the last message the turn added
 
 
 def test_a_read_mark_arrives_as_a_notices_event_and_one_that_changes_nothing_does_not(work, client, pool):

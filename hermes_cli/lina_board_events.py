@@ -9,8 +9,9 @@ Seven append-only stores are tailed, each by its own position, and the seven pos
 - ``kanban``: the board's ``task_events`` table, by row id, read-only (the plugin's ``/events`` source).
 - ``settings``: the work settings' ``work-settings/audit.jsonl`` (lina#256, one line per revision), by line count;
   ``kind`` is ``revised``, ``rolled_back`` or ``outside`` and ``id`` the revision (``r42``).
-- ``talk``: ``board/talk.jsonl`` (lina#742), by byte offset: ``kind`` ``message`` and ``id`` the agent, one line per
-  turn of that agent's app conversation, written once the turn reads back through ``GET
+- ``talk``: ``board/talk.jsonl`` (lina#742), by byte offset: ``kind`` ``message``, ``id`` the agent and
+  ``message_id`` the conversation's last message (lina#753, ``lina_talk.message_id``), one line per turn of that
+  agent's app conversation, written once the turn reads back through ``GET
   /api/lina/agents/<agent>/talk`` (``lina_talk._relay``, after the gateway's last frame). Only turns the app sends
   through this web server are announced; a turn the gateway writes on its own (a kanban wake posted into the app
   conversation, another API client) shows on the next history read.
@@ -166,11 +167,13 @@ def journal(root: Path, source: str) -> Path:
     return root / "board" / f"{source}.jsonl"
 
 
-def announce(root: Path, source: str, kind: str, item: str) -> None:
-    """One line on *source*'s journal (one of ``JOURNALS``): what changed, by id only, once the change reads back.
-    A failed append is logged and the write it announces stands: other devices see it on their next refetch."""
+def announce(root: Path, source: str, kind: str, item: str, *, message_id: str | None = None) -> None:
+    """One line on *source*'s journal (one of ``JOURNALS``): what changed, by id only, once the change reads back;
+    *message_id* for talk. A failed append is logged and the write it announces stands: other devices see it on
+    their next refetch."""
     path = journal(root, source)
-    line = json.dumps({"kind": kind, "id": item, "at": int(time.time())}, ensure_ascii=False) + "\n"
+    rec = {"kind": kind, "id": item, **({"message_id": message_id} if message_id else {}), "at": int(time.time())}
+    line = json.dumps(rec, ensure_ascii=False) + "\n"
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as fh:  # one short line: one append, never interleaved
@@ -235,7 +238,8 @@ class _Lines:
 def _journal_event(source: str):
     def event(rec: dict) -> dict | None:
         if rec.get("kind") and rec.get("id"):
-            return {"source": source, "kind": rec["kind"], "id": rec["id"], "at": _epoch(rec.get("at"))}
+            extra = {"message_id": rec["message_id"]} if rec.get("message_id") else {}
+            return {"source": source, "kind": rec["kind"], "id": rec["id"], **extra, "at": _epoch(rec.get("at"))}
         return None
     return event
 

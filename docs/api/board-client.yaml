@@ -2138,6 +2138,12 @@ components:
           description: >
             The item, run or card the event is about; the agent for talk, the owner for notices, the report for
             reports.
+        message_id:
+          type: string
+          description: >
+            talk only: the `id` of the last message of the agent's app conversation once the turn was stored
+            (`AgentTalkHistory.messages[].id`, docs/api/talk-client.yaml); absent when the history could not be read
+            back.
         at:
           type: integer
           nullable: true

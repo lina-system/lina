@@ -208,7 +208,7 @@ components:
           enum: [talk.started]
         data:
           type: object
-          required: [item, agent, session_id]
+          required: [item, agent, session_id, message_id]
           properties:
             item:
               type: object
@@ -224,6 +224,14 @@ components:
             session_id:
               type: string
               description: The agent's app conversation on its gateway.
+            message_id:
+              $ref: "#/components/schemas/SentMessageId"
+    SentMessageId:
+      type: string
+      description: >
+        The `id` the owner's message of this turn has in `AgentTalkHistory.messages` once the gateway stores it (the
+        same id for a to-do's turn, which runs in the same app conversation). Sent once the gateway took the turn; a
+        turn whose message never shows with this id in the history was not stored (it failed before the agent ran).
     AgentTalkEvent:
       description: One frame of the owner's window on an agent, as {event, data}.
       oneOf:
@@ -245,7 +253,7 @@ components:
           enum: [talk.started]
         data:
           type: object
-          required: [agent, session_id]
+          required: [agent, session_id, message_id]
           additionalProperties: false
           properties:
             agent:
@@ -253,6 +261,8 @@ components:
             session_id:
               type: string
               description: The agent's app conversation on its gateway.
+            message_id:
+              $ref: "#/components/schemas/SentMessageId"
     AgentTalkHistory:
       type: object
       required: [agent, session_id, messages]
@@ -267,8 +277,15 @@ components:
           type: array
           items:
             type: object
-            required: [role, content, timestamp]
+            required: [id, role, content, timestamp]
             properties:
+              id:
+                type: string
+                description: >
+                  The message's id, the same on every read: worked out from its role, its content and how many
+                  earlier messages of the conversation have the same role and content, so the same words twice
+                  have two ids and a turn a compaction archived keeps its id. The `talk` change event
+                  (`docs/api/board-client.yaml` ChangeEvent) names the last one as `message_id`.
               role:
                 type: string
                 enum: [user, assistant]
