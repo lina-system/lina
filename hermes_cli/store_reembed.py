@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from agent.embedding_client import DEFAULT_MAX_REQUEST_CHARS, EmbeddingRetriesExhausted
-from hermes_state_store import SHARED_VECTOR_OWNER
+from hermes_state_store import SHARED_VECTOR_OWNER, _INJECTED_TURN_RE, _memory_search_projection
 
 SOURCES = ("agent", "messages", "memory")
 DEFAULT_MAX_CHARS = 8000
@@ -110,7 +110,8 @@ def _progress(conn, source: str, model: str) -> int:
 
 
 def _message_filter(source: str) -> str:
-    return "AND role IN ('user', 'assistant') AND forgotten_at IS NULL" if source == "agent" \
+    return ("AND role IN ('user', 'assistant') AND forgotten_at IS NULL"
+            f" AND content !~ '{_INJECTED_TURN_RE}'") if source == "agent" \
         else "AND forgotten_at IS NULL"
 
 
@@ -118,6 +119,13 @@ def rows_left(conn, source: str, model: str) -> int:
     """Rows of *source* after its saved progress: what a rerun still goes through (Honcho conclusions and LCM summaries
     for ``memory``)."""
     after = _progress(conn, source, model)
+    if source == "agent":
+        with conn.cursor() as cur:
+            projection, parameters = _memory_search_projection(cur)
+            cur.execute(projection + "SELECT count(*) FROM searchable_messages"
+                        f" WHERE source = 'agent' AND message_id > %s {_message_filter(source)}",
+                        [*parameters, after])
+            return int(cur.fetchone()[0])
     if source != "memory":
         return int(conn.execute(f"SELECT count(*) FROM memory.messages WHERE source = %s AND message_id > %s "
                                 f"{_message_filter(source)}", (source, after)).fetchone()[0])
@@ -130,7 +138,14 @@ def rows_left(conn, source: str, model: str) -> int:
 
 
 def _items(conn, source: str, model: str, after: int, limit: int, max_chars: int) -> list[_Item]:
-    if source == "memory":
+    if source == "agent":
+        with conn.cursor() as cur:
+            projection, parameters = _memory_search_projection(cur)
+            cur.execute(projection + "SELECT message_id, agent_id, content, false FROM searchable_messages"
+                        f" WHERE source = 'agent' AND message_id > %s {_message_filter(source)}"
+                        " ORDER BY message_id LIMIT %s", [*parameters, after, limit])
+            rows = cur.fetchall()
+    elif source == "memory":
         if conn.execute("SELECT to_regclass('ltm.documents') IS NULL").fetchone()[0]:
             return []
         rows = conn.execute(_DOCUMENT_ROWS, {"after": after, "limit": limit}).fetchall()

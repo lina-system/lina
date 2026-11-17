@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 from pathlib import Path
 from typing import Sequence
 
@@ -40,6 +41,7 @@ def _own_lina() -> str | None:
 
 
 def overlay_text(lina: str, hosts: Sequence[str]) -> str:
+    lina = shlex.quote(lina)
     listed = ", ".join(f"`{host}`" for host in hosts)
     machine = f"the previous machine ({listed})" if hosts else "the previous machine"
     others = f"the hosts {listed}" if hosts else "its hosts"
