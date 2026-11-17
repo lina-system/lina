@@ -539,6 +539,25 @@ def test_a_talk_turn_arrives_for_its_agent_once_the_history_shows_it(work, gatew
     assert message["events"][0]["message_id"] == history[-1]["id"]  # the reply: the last message the turn added
 
 
+def test_a_talk_turn_is_announced_without_a_message_id_when_its_history_does_not_read_back(
+        work, gateways, client, pool, monkeypatch):
+    from hermes_cli import lina_talk
+    read = lina_talk._messages
+    calls = []
+
+    async def unreadable_after_the_send(*args, **kwargs):
+        calls.append(1)
+        if len(calls) > 1:  # the read before the send answers; the read-back after the stream does not
+            raise ValueError("not json")
+        return await read(*args, **kwargs)
+    monkeypatch.setattr(lina_talk, "_messages", unreadable_after_the_send)
+    with client.websocket_connect(_url()) as ws:
+        _next(ws, pool)
+        assert client.post("/api/lina/agents/beta/talk", json={"message": "하나"}).status_code == 200
+        message = _next(ws, pool)
+    assert _events(message) == [("talk", "message", "beta")] and "message_id" not in message["events"][0]
+
+
 def test_a_read_mark_arrives_as_a_notices_event_and_one_that_changes_nothing_does_not(work, client, pool):
     key = _ask(work)
     with client.websocket_connect(_url()) as ws:

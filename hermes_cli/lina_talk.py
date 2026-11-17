@@ -291,7 +291,7 @@ async def _last_message_id(client, sent: Sent) -> Optional[str]:
     import httpx
     try:
         shown = _shown(await _messages(client, sent.base, sent.headers, sent.session_id))
-    except httpx.HTTPError as exc:
+    except (httpx.HTTPError, ValueError) as exc:
         log.warning("lina talk: the history of %s did not read back: %s", sent.session_id, exc)
         return None
     return shown[-1]["id"] if shown else None
