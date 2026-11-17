@@ -13,6 +13,7 @@ from agent.system_prompt import build_system_prompt, invalidate_system_prompt
 from hermes_cli import plugins
 from hermes_cli.plugins import (
     MAX_SYSTEM_PROMPT_SECTION_CHARS, PLUGIN_SECTIONS_END, PluginContext, PluginManager, PluginManifest,
+    RenderedPluginSystemPromptSection, format_system_prompt_sections,
 )
 from hermes_constants import reset_hermes_home_override, set_hermes_home_override
 from hermes_state import SessionDB
@@ -91,23 +92,61 @@ def test_a_mid_session_edit_reaches_the_prompt_only_at_the_compaction_rebuild(ho
     assert rebuilt[:start] == first[:start]
 
 
-def test_a_resumed_session_keeps_the_stored_section_bytes_not_the_file(home):
+@pytest.fixture(params=[False, True], ids=["one-section", "ordered-sections"])
+def stored_sections(home, monkeypatch, request):
+    """Persist a real builder's output, including a future core section before the note."""
     _write_note(home, NOTE_A)
-    db = SessionDB(db_path=home / "state.db")
+    if request.param:
+        leading = RenderedPluginSystemPromptSection(
+            id="owner-standing-rules", content="Synthetic standing rule.",
+            position="after_memory", plugin="core",
+        )
+        monkeypatch.setattr("agent.korean_rule_section.render_korean_rule_section", lambda: (leading,))
+        ctx = PluginContext(PluginManifest(name="example-plugin", key="example-plugin", source="user"),
+                            plugins._plugin_manager)
+        for section_id in ("z-last", "a-last"):
+            ctx.register_system_prompt_section(section_id, f"Stored {section_id}", position="after_memory")
+
     session_id = "20261115_090000_aaaaaa"
-    db.ensure_session(session_id, source="cli", model="test/model")
-    try:
+    with SessionDB(db_path=home / "state.db") as db:
+        db.ensure_session(session_id, source="cli", model="test/model")
         first = _agent(session_id, session_db=db)
         _restore_or_build_system_prompt(first, None, [])
+        expected_ids = (
+            ["owner-standing-rules", "agent-self-note", "a-last", "z-last"]
+            if request.param else ["agent-self-note"]
+        )
+        assert [section.id for section in first._plugin_system_prompt_sections_snapshot] == expected_ids
         _write_note(home, NOTE_B)
+        yield first, db
 
-        resumed = _agent(session_id, session_db=db)
-        _restore_or_build_system_prompt(resumed, None, [{"role": "user", "content": "already persisted"}])
-    finally:
-        db.close()
+
+def test_a_resumed_session_keeps_the_stored_section_bytes_not_the_file(stored_sections):
+    first, db = stored_sections
+    stored = format_system_prompt_sections(first._plugin_system_prompt_sections_snapshot)
+    resumed = _agent(first.session_id, session_db=db)
+    _restore_or_build_system_prompt(resumed, None, [{"role": "user", "content": "already persisted"}])
 
     assert resumed._cached_system_prompt == first._cached_system_prompt
-    assert NOTE_A in resumed._cached_system_prompt and NOTE_B not in resumed._cached_system_prompt
+    assert format_system_prompt_sections(resumed._plugin_system_prompt_sections_snapshot) == stored
+    # Rebuilding an agent's prompt without invalidation must retain the restored snapshot.
+    rebuilt = build_system_prompt(resumed)
+    assert stored in rebuilt and NOTE_B not in rebuilt
+    assert format_system_prompt_sections(resumed._plugin_system_prompt_sections_snapshot) == stored
+
+
+def test_a_resumed_sessions_failed_compaction_render_keeps_its_stored_sections(stored_sections):
+    first, db = stored_sections
+    stored = format_system_prompt_sections(first._plugin_system_prompt_sections_snapshot)
+    resumed = _agent(first.session_id, session_db=db)
+    _restore_or_build_system_prompt(resumed, None, [{"role": "user", "content": "already persisted"}])
+
+    invalidate_system_prompt(resumed)
+    with patch("hermes_cli.plugins.render_system_prompt_sections", side_effect=RuntimeError("render failed")):
+        rebuilt = build_system_prompt(resumed)
+
+    assert stored in rebuilt and NOTE_B not in rebuilt
+    assert format_system_prompt_sections(resumed._plugin_system_prompt_sections_snapshot) == stored
 
 
 def test_each_profile_reads_its_own_home_note(home, tmp_path, monkeypatch):

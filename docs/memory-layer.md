@@ -55,6 +55,15 @@ changes less often than the one after it, and only a compaction may rewrite byte
 | Lower summary nodes (depth 0) and the recent turns | LCM-X, then the transcript | appended every turn; replaced at a compaction |
 | Found memory: the turn's recall as a `memory_recall` tool call and its result, after the user message. `memory_recall` is a real read-only tool (`agent/memory_recall_tool.py`) listed with the provider's tools, so strict providers accept the call | `agent/turn_context.py` `recall_tool_rows` | per turn |
 
+Within the frozen plugin-section slot, the planned `owner-standing-rules` core section goes before the
+self-note section (`agent-self-note`), as specified in [standing-rules, section 5](design/standing-rules.md#5-context-placement).
+The slot stays after the skills index and before the profile line, session start and model lines, runtime
+environment, and notes and person card. Sections restore from the stored prompt in their stored order,
+with their original IDs and content bytes; restoration does not special-case the self note or sort IDs.
+A same-session rebuild without invalidation keeps that snapshot. At compaction, a failed plugin render
+keeps the previous frozen sections. This reserves the placement only: the rules renderer and mid-session
+rule-change notes remain follow-up work; it does not move the existing Korean writing-rule section.
+
 What changes mid-session reaches the model as a note on the turn's user message, behind the cached prefix:
 today's date (`agent/date_note.py`, once it differs from the start date), the skill set (`agent/skills_index_delta.py`)
 and a surface switch (`agent/surface_switch.py`). `memory.auto_recall_append: true` puts the recall back
