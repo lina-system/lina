@@ -1320,8 +1320,8 @@ def stage_text_restore(incoming_db: Path, destination_db: Path, sidecar: Optiona
         store.close()
     return staged
 
-def _agent_prefixes(old_agent: str, new_agent: str) -> tuple[str, str]:
-    return f"{SOURCE_AGENT}:{old_agent}:", f"{SOURCE_AGENT}:{new_agent}:"
+def _agent_prefixes(old_agent: str, new_agent: str, source: str = SOURCE_AGENT) -> tuple[str, str]:
+    return f"{source}:{old_agent}:", f"{source}:{new_agent}:"
 
 
 def _agent_ref(agent: str) -> str:
@@ -1333,24 +1333,25 @@ def check_agent_move(old_agent: str, new_agent: str) -> None:
     """Validate a move of *old_agent*'s text to *new_agent*, changing nothing: the owner role connects
     (StoreUnavailableError otherwise) and no new uid is held by different text (MessageTextRestoreError)."""
     import psycopg
-    old_prefix, new_prefix = _agent_prefixes(old_agent, new_agent)
     conn = _owner_connection()
     try:
-        clash = conn.execute(
-            "SELECT count(*), min(n.uid) FROM memory.messages o JOIN memory.messages n ON n.uid = %s || substr(o.uid, %s)"
-            " WHERE o.agent_id = %s AND starts_with(o.uid, %s)"
-            " AND n.native->>'payload_sha256' IS DISTINCT FROM o.native->>'payload_sha256'",
-            (new_prefix, len(old_prefix) + 1, old_agent, old_prefix)).fetchone()
+        for source in (SOURCE_AGENT, "heart"):
+            old_prefix, new_prefix = _agent_prefixes(old_agent, new_agent, source)
+            clash = conn.execute(
+                "SELECT count(*), min(n.uid) FROM memory.messages o JOIN memory.messages n ON n.uid = %s || substr(o.uid, %s)"
+                " WHERE o.agent_id = %s AND starts_with(o.uid, %s)"
+                " AND n.native->>'payload_sha256' IS DISTINCT FROM o.native->>'payload_sha256'",
+                (new_prefix, len(old_prefix) + 1, old_agent, old_prefix)).fetchone()
+            if clash[0]:
+                raise MessageTextRestoreError(
+                    f"{clash[0]} message text(s) of {old_agent!r} would take uids that other text of {new_agent!r} already "
+                    f"holds (first: {clash[1]}); nothing was moved")
         with conn.cursor() as cur:
             held = _lcm_records_of(cur, old_agent) and _lcm_records_of(cur, new_agent)
     except psycopg.Error as exc:
         raise StoreUnavailableError(f"cannot check the memory store: {exc}".strip()) from exc
     finally:
         conn.close()
-    if clash[0]:
-        raise MessageTextRestoreError(
-            f"{clash[0]} message text(s) of {old_agent!r} would take uids that other text of {new_agent!r} already "
-            f"holds (first: {clash[1]}); nothing was moved")
     if held:
         raise MessageTextRestoreError(f"agent {new_agent!r} already has LCM records ({held}); nothing was moved")
 
@@ -1437,30 +1438,45 @@ def _follow_lcm_owner(cur, from_agent: str, to_agent: str) -> None:
     cur.execute("SET LOCAL session_replication_role = origin")
 
 
+def _remap_heart_evidence(cur, uids: Sequence[str], from_agent: str, to_agent: str) -> None:
+    """Move structured citations with their conversation rows; the originally written text stays immutable."""
+    from_prefix, to_prefix = _agent_prefixes(from_agent, to_agent)
+    cur.execute(
+        "UPDATE memory.messages SET native = jsonb_set(native, '{evidence}',"
+        " (SELECT coalesce(jsonb_agg(CASE WHEN starts_with(ref.uid, %s)"
+        " THEN %s || substr(ref.uid, %s) ELSE ref.uid END ORDER BY ref.ordinal), '[]'::jsonb)"
+        " FROM jsonb_array_elements_text(native->'evidence') WITH ORDINALITY AS ref(uid, ordinal)))"
+        " WHERE source = 'heart' AND uid = ANY(%s)",
+        (from_prefix, to_prefix, len(from_prefix) + 1, list(uids)))
+
+
 def move_agent_rows(old_agent: str, new_agent: str) -> MovedRows:
     """Hand *old_agent*'s text rows to *new_agent* in one transaction (as the owner role: row-level security keeps
-    lina_app inside one agent): agent_id and the uid prefix ``agent:<old>:`` -> ``agent:<new>:``. A row whose new
+    lina_app inside one agent): agent_id and the uid prefixes ``agent:<old>:`` and ``heart:<old>:`` follow the name.
+    Heart evidence follows the conversation uids in the same transaction. A row whose new
     uid already holds the same text stays where it is (its copy is there); one held by other text fails the move.
     A moved row the old agent said (``speaker_ref`` ``agent:<old>``) is said by the new one. The gateway's notes, the
     embedded text and the vectors of the moved rows move with them (``_follow_text_owner``), and so do the agent's
     LCM-X records (``_follow_lcm_owner``) unless *new_agent* has its own. Returns the new uids, so
     ``return_agent_rows`` can undo exactly this move."""
     import psycopg
-    old_prefix, new_prefix = _agent_prefixes(old_agent, new_agent)
     conn = _owner_connection()
     try:
         with conn.transaction(), conn.cursor() as cur:
-            cur.execute(
-                "UPDATE memory.messages o SET agent_id = %s, uid = %s || substr(o.uid, %s),"
-                " speaker_ref = CASE WHEN o.speaker_ref = %s THEN %s ELSE o.speaker_ref END"
-                " WHERE o.agent_id = %s AND starts_with(o.uid, %s) AND NOT EXISTS (SELECT 1 FROM memory.messages n"
-                " WHERE n.uid = %s || substr(o.uid, %s) AND n.native->>'payload_sha256' = o.native->>'payload_sha256')"
-                " RETURNING o.uid",
-                (new_agent, new_prefix, len(old_prefix) + 1, _agent_ref(old_agent), _agent_ref(new_agent), old_agent,
-                 old_prefix, new_prefix, len(old_prefix) + 1))
-            moved = [row[0] for row in cur.fetchall()]
+            moved = MovedRows()
+            for source in (SOURCE_AGENT, "heart"):
+                old_prefix, new_prefix = _agent_prefixes(old_agent, new_agent, source)
+                cur.execute(
+                    "UPDATE memory.messages o SET agent_id = %s, uid = %s || substr(o.uid, %s),"
+                    " speaker_ref = CASE WHEN o.speaker_ref = %s THEN %s ELSE o.speaker_ref END"
+                    " WHERE o.agent_id = %s AND starts_with(o.uid, %s) AND NOT EXISTS (SELECT 1 FROM memory.messages n"
+                    " WHERE n.uid = %s || substr(o.uid, %s) AND n.native->>'payload_sha256' = o.native->>'payload_sha256')"
+                    " RETURNING o.uid",
+                    (new_agent, new_prefix, len(old_prefix) + 1, _agent_ref(old_agent), _agent_ref(new_agent), old_agent,
+                     old_prefix, new_prefix, len(old_prefix) + 1))
+                moved.extend(row[0] for row in cur.fetchall())
+            _remap_heart_evidence(cur, moved, old_agent, new_agent)
             _follow_text_owner(cur, old_agent, new_agent)
-            moved = MovedRows(moved)
             if _lcm_records_of(cur, old_agent):
                 held = _lcm_records_of(cur, new_agent)
                 if held:
@@ -1478,14 +1494,17 @@ def move_agent_rows(old_agent: str, new_agent: str) -> MovedRows:
 
 def return_agent_rows(uids: Sequence[str], old_agent: str, new_agent: str) -> None:
     """Undo ``move_agent_rows``: the rows it moved (*uids*) go back to *old_agent*."""
-    old_prefix, new_prefix = _agent_prefixes(old_agent, new_agent)
     conn = _owner_connection()
     try:
         with conn.transaction(), conn.cursor() as cur:
-            cur.execute("UPDATE memory.messages SET agent_id = %s, uid = %s || substr(uid, %s),"
-                        " speaker_ref = CASE WHEN speaker_ref = %s THEN %s ELSE speaker_ref END WHERE uid = ANY(%s)",
-                        (old_agent, old_prefix, len(new_prefix) + 1, _agent_ref(new_agent), _agent_ref(old_agent),
-                         list(uids)))
+            _remap_heart_evidence(cur, uids, new_agent, old_agent)
+            for source in (SOURCE_AGENT, "heart"):
+                old_prefix, new_prefix = _agent_prefixes(old_agent, new_agent, source)
+                cur.execute("UPDATE memory.messages SET agent_id = %s, uid = %s || substr(uid, %s),"
+                            " speaker_ref = CASE WHEN speaker_ref = %s THEN %s ELSE speaker_ref END"
+                            " WHERE uid = ANY(%s) AND starts_with(uid, %s)",
+                            (old_agent, old_prefix, len(new_prefix) + 1, _agent_ref(new_agent), _agent_ref(old_agent),
+                             list(uids), new_prefix))
             _follow_text_owner(cur, new_agent, old_agent)
             if getattr(uids, "lcm_moved", False):
                 _follow_lcm_owner(cur, new_agent, old_agent)
