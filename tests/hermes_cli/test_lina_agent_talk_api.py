@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 from hermes_cli import lina_deps, lina_talk, web_server_cron
 from tests.hermes_cli._work_env import WorkEnv
 from tests.hermes_cli.test_lina_talk_api import FakeGateway, _valid, fake_model
+from tests.hermes_cli.test_lina_talk_api import _frames as _to_do_frames
 
 pytestmark = pytest.mark.platforms("posix")
 
@@ -23,46 +24,11 @@ SHARED = "fake-key-shared"
 
 
 class AgentGateway(FakeGateway):
-    """One agent's api_server behind the multiplexed listener, with its own key and the session messages route in
-    the shape of ``_handle_session_messages``: at most 500 rows a page from ``offset``, tool rows counted, and the
-    turns before ``compacted`` replaced by a hidden summary row unless ``include_compacted`` is true."""
-
-    PAGE = 500
+    """One agent's api_server behind the multiplexed listener, with its own key."""
 
     def __init__(self, key: str):
         super().__init__()
         self.KEY = key
-        self.compacted = 0
-
-    def _rows(self, sid: str, include_compacted: bool) -> list[dict]:
-        turns = [t for t in self.turns if t["session_id"] == sid]
-        rows = [] if include_compacted or not self.compacted else [
-            {"role": "user", "content": "", "display_kind": "hidden"}]
-        for n, turn in enumerate(turns):
-            if n < self.compacted and not include_compacted:
-                continue
-            rows += [{"role": "user", "content": turn["message"]}, {"role": "tool", "content": "{}"},
-                     {"role": "assistant", "content": fake_model(turn["message"])}]
-        return [{"id": i + 1, "session_id": sid, "timestamp": 1800000000.0 + i, **row} for i, row in enumerate(rows)]
-
-    def handle(self, request: httpx.Request) -> httpx.Response:
-        path = request.url.path
-        if request.method == "GET" and path.endswith("/messages"):
-            self.calls.append(f"GET {path}")
-            if request.headers.get("authorization") != f"Bearer {self.KEY}":
-                return httpx.Response(401, json={"error": {"message": "Invalid API key"}})
-            sid = path.split("/")[-2]
-            params = request.url.params
-            rows = self._rows(sid, params.get("include_compacted", "").lower() in ("1", "true"))
-            limit = min(int(params.get("limit", self.PAGE)), self.PAGE)
-            offset = int(params.get("offset", "0"))
-            if params.get("order") != "oldest":
-                rows = rows[::-1]
-            page = rows[offset:offset + limit]
-            return httpx.Response(200, json={"object": "list", "session_id": sid, "data": page,
-                                             "pagination": {"limit": limit, "offset": offset,
-                                                            "order": params.get("order"), "returned": len(page)}})
-        return super().handle(request)
 
 
 class Multiplexed:
@@ -195,6 +161,36 @@ def test_the_history_keeps_the_turns_before_a_compaction(work, mux, client):
     after = _valid("AgentTalkHistory", client.get("/api/lina/agents/alpha/talk").json())
     assert [(m["role"], m["content"]) for m in after["messages"]] == before
     assert [c for _r, c in before][::2] == [f"[LINA app]\n\n차례 {n}" for n in (1, 2, 3)]
+
+
+def _history(client, agent: str = "alpha") -> list[dict]:
+    return _valid("AgentTalkHistory", client.get(f"/api/lina/agents/{agent}/talk").json())["messages"]
+
+
+def test_every_message_keeps_its_id_across_reads_and_a_compaction_and_the_same_words_twice_differ(work, mux, client):
+    gw = mux.agents["alpha"]
+    for message in ("같은 말", "다른 말", "같은 말"):
+        _talk(client, "alpha", message)
+    first = _history(client)
+    ids = [m["id"] for m in first]
+    assert len(set(ids)) == len(ids) == 6  # the two "같은 말" turns and their two equal replies differ too
+    assert _history(client) == first
+    gw.compacted = 2
+    assert [m["id"] for m in _history(client)] == ids
+
+
+def test_the_send_names_the_id_its_message_has_in_the_history(work, mux, client):
+    sent = []
+    for agent, message in (("alpha", "한 번"), ("alpha", "한 번"), ("alpha", "두 번"), ("beta", "한 번")):
+        started = _frames(_talk(client, agent, message).text)[0]
+        assert started["event"] == "talk.started"
+        sent.append((agent, started["data"]["message_id"]))
+    for agent in ("alpha", "beta"):
+        users = [m["id"] for m in _history(client, agent) if m["role"] == "user"]
+        assert users == [sid for a, sid in sent if a == agent]
+    to_do = client.post("/api/lina/work/items/T1/talk", json={"message": "한 번"})
+    message_id = _to_do_frames(to_do.text)[0]["data"]["message_id"]
+    assert [m["id"] for m in _history(client) if m["role"] == "user"][-1] == message_id
 
 
 def test_a_refused_key_answers_without_the_key(work, mux, client, monkeypatch, caplog):

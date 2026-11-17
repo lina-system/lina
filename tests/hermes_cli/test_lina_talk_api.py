@@ -50,10 +50,14 @@ def fake_model(text: str) -> str:
 
 
 class FakeGateway:
-    """One agent's gateway api_server: ``/p/<agent>/api/sessions`` (list by title, create) and the session chat
-    stream, answering the turn with :func:`fake_model`. ``busy`` answers the stream with the gateway's 429."""
+    """One agent's gateway api_server: ``/p/<agent>/api/sessions`` (list by title, create), the session chat
+    stream, answering the turn with :func:`fake_model`, and the session messages route in the shape of
+    ``_handle_session_messages``: at most 500 rows a page from ``offset``, tool rows counted, and the turns before
+    ``compacted`` replaced by a hidden summary row unless ``include_compacted`` is true. ``busy`` answers the stream
+    with the gateway's 429."""
 
     KEY = "gw-key"
+    PAGE = 500
 
     def __init__(self):
         self.sessions: dict[str, dict] = {}
@@ -61,12 +65,39 @@ class FakeGateway:
         self.calls: list[str] = []
         self.busy = False
         self.cancelled = False
+        self.compacted = 0
+
+    def _rows(self, sid: str, include_compacted: bool) -> list[dict]:
+        turns = [t for t in self.turns if t["session_id"] == sid]
+        rows = [] if include_compacted or not self.compacted else [
+            {"role": "user", "content": "", "display_kind": "hidden"}]
+        for n, turn in enumerate(turns):
+            if n < self.compacted and not include_compacted:
+                continue
+            rows += [{"role": "user", "content": turn["message"]}, {"role": "tool", "content": "{}"},
+                     {"role": "assistant", "content": fake_model(turn["message"])}]
+        return [{"id": i + 1, "session_id": sid, "timestamp": 1800000000.0 + i, **row} for i, row in enumerate(rows)]
+
+    def _messages(self, request: httpx.Request) -> httpx.Response:
+        sid = request.url.path.split("/")[-2]
+        params = request.url.params
+        rows = self._rows(sid, params.get("include_compacted", "").lower() in ("1", "true"))
+        limit = min(int(params.get("limit", self.PAGE)), self.PAGE)
+        offset = int(params.get("offset", "0"))
+        if params.get("order") != "oldest":
+            rows = rows[::-1]
+        page = rows[offset:offset + limit]
+        return httpx.Response(200, json={"object": "list", "session_id": sid, "data": page,
+                                         "pagination": {"limit": limit, "offset": offset,
+                                                        "order": params.get("order"), "returned": len(page)}})
 
     def handle(self, request: httpx.Request) -> httpx.Response:
         self.calls.append(f"{request.method} {request.url.path}")
         if request.headers.get("authorization") != f"Bearer {self.KEY}":
             return httpx.Response(401, json={"error": {"message": "Invalid API key"}})
         path = request.url.path
+        if request.method == "GET" and path.endswith("/messages"):
+            return self._messages(request)
         if request.method == "GET" and path.endswith("/api/sessions"):
             title = request.url.params.get("title")
             return httpx.Response(200, json={"data": [s for s in self.sessions.values() if s["title"] == title]})

@@ -15,11 +15,20 @@ names the agent, :func:`history` reads the conversation's earlier turns, and no 
 chat. The gateway key is the web server's ``LINA_GATEWAY_KEY_<AGENT>`` (``hermes_cli/lina_gateway_key.py``: from its
 environment, else its own ``.env``, where creating the agent writes the profile's key), else its ``API_SERVER_KEY``;
 a refused key answers :data:`REFUSED_KEY`, which names the mismatch and never the key itself.
+
+Message ids (lina#753): each message the history shows gets :func:`message_id`, worked out from what the gateway
+stores (its role, its content and how many earlier shown messages have the same two), not the gateway's row id: a
+compaction copies the turns it keeps into new rows (``hermes_state_messages._dedupe_display_generations``), so a row
+id changes under a message the owner already saw, while role and content stay. The store keeps no id of ours, so
+older conversations get theirs the same way. A turn's own id is known before the gateway stores it: the owner's
+message is stored as :meth:`Target.turn_text` reads, so :func:`open_talk` counts the earlier ones it reads first.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
+import logging
 import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
@@ -31,6 +40,7 @@ _CRON_FIRE_PATH = "/api/cron/fire"
 _MESSAGES_PAGE = 500  # the gateway's cap per messages page (api_server._handle_session_messages)
 REFUSED_KEY = ("the gateway refused the key for {agent}: the web server's {env} does not match the API_SERVER_KEY "
                "in {agent}'s profile .env (lina doctor names the mismatch)")
+log = logging.getLogger(__name__)
 
 
 class TalkError(Exception):
@@ -193,9 +203,32 @@ async def _messages(client, base: str, headers: dict, session_id: str) -> list:
             return rows
 
 
+def message_id(role: str, content, earlier: int) -> str:
+    """The id of a message with *role* and *content* that *earlier* shown messages before it share."""
+    key = json.dumps([role, content, earlier], ensure_ascii=False, sort_keys=True)
+    return "m_" + hashlib.sha256(key.encode("utf-8", "surrogatepass")).hexdigest()[:20]
+
+
+def _shown(rows: list) -> list[dict]:
+    """The owner's and the agent's messages of *rows*, oldest first, each with its :func:`message_id`."""
+    seen: dict[str, int] = {}
+    shown = []
+    for row in rows:
+        if not isinstance(row, dict) or row.get("role") not in ("user", "assistant") or (
+                row.get("display_kind") == "hidden"):
+            continue
+        role, content = row["role"], row.get("content") or ""
+        same = json.dumps([role, content], ensure_ascii=False, sort_keys=True)
+        earlier = seen.get(same, 0)
+        seen[same] = earlier + 1
+        shown.append({"id": message_id(role, content, earlier), "role": role, "content": content,
+                      "timestamp": row.get("timestamp")})
+    return shown
+
+
 async def history(target: Target) -> Opened:
     """The earlier turns of the agent's app conversation, oldest first: ``{agent, session_id, messages}`` with the
-    owner's and the agent's messages (``role``, ``content``, ``timestamp``); none before the first turn."""
+    owner's and the agent's messages (``id``, ``role``, ``content``, ``timestamp``); none before the first turn."""
     import httpx
     base, headers = _headers(target.agent)
     async with http_client() as client:
@@ -207,24 +240,25 @@ async def history(target: Target) -> Opened:
                              exc.response.headers.get("content-type", "application/json"))
         except httpx.HTTPError as exc:
             return Opened(503, _error_body("gateway_unreachable", f"{target.agent}'s gateway: {type(exc).__name__}"))
-    messages = [{"role": row["role"], "content": row.get("content") or "", "timestamp": row.get("timestamp")}
-                for row in rows if isinstance(row, dict) and row.get("role") in ("user", "assistant")
-                and row.get("display_kind") != "hidden"]
-    body = {"agent": target.agent, "session_id": session_id, "messages": messages}
+    body = {"agent": target.agent, "session_id": session_id, "messages": _shown(rows)}
     return Opened(200, json.dumps(body, ensure_ascii=False).encode())
 
 
 async def open_talk(target: Target, message: str) -> Opened:
     """Start the turn; the gateway's own status and body when it does not stream (busy, unreachable), and
-    :data:`REFUSED_KEY` when it refuses the key."""
+    :data:`REFUSED_KEY` when it refuses the key. The conversation is read first: the id the owner's message will
+    have is the one after its earlier copies."""
     import httpx
     base, headers = _headers(target.agent)
     client = http_client()
+    text = target.turn_text(message)
     try:
         session_id = await _session(client, base, headers, target.agent)
+        earlier = sum(1 for m in _shown(await _messages(client, base, headers, session_id))
+                      if m["role"] == "user" and m["content"] == text)
         request = client.build_request(
             "POST", f"{base}/api/sessions/{urllib.parse.quote(session_id, safe='')}/chat/stream", headers=headers,
-            json={"message": target.turn_text(message), "author": target.author})
+            json={"message": text, "author": target.author})
         upstream = await client.send(request, stream=True)
     except httpx.HTTPStatusError as exc:
         await client.aclose()
@@ -239,7 +273,28 @@ async def open_talk(target: Target, message: str) -> Opened:
         await client.aclose()
         return _upstream(target.agent, upstream.status_code, body,
                          upstream.headers.get("content-type", "application/json"))
-    return Opened(200, stream=_relay(client, upstream, target, message, session_id))
+    sent = Sent(session_id, message_id("user", text, earlier), base, headers)
+    return Opened(200, stream=_relay(client, upstream, target, message, sent))
+
+
+@dataclass(frozen=True)
+class Sent:
+    """The turn the gateway took: its conversation, the id the owner's message gets, and the gateway to read back."""
+    session_id: str
+    message_id: str
+    base: str
+    headers: dict
+
+
+async def _last_message_id(client, sent: Sent) -> Optional[str]:
+    """The id of the conversation's last shown message, ``None`` when it does not read back."""
+    import httpx
+    try:
+        shown = _shown(await _messages(client, sent.base, sent.headers, sent.session_id))
+    except (httpx.HTTPError, ValueError) as exc:
+        log.warning("lina talk: the history of %s did not read back: %s", sent.session_id, exc)
+        return None
+    return shown[-1]["id"] if shown else None
 
 
 async def _events(upstream) -> AsyncIterator[tuple[Optional[str], str]]:
@@ -269,20 +324,22 @@ def _settled_reply(data: str) -> str:
     return payload.get("content") or ""
 
 
-async def _relay(client, upstream, target: Target, message: str, session_id: str) -> AsyncIterator[bytes]:
-    """``talk.started``, then the gateway's frames as they are, with ``talk.carried`` after the reply's
-    ``assistant.completed``. The note for the agent's next messaging turn is written before that frame is yielded:
-    a client that goes away at any yield (the generator is closed there) can no longer skip it.
+async def _relay(client, upstream, target: Target, message: str, sent: Sent) -> AsyncIterator[bytes]:
+    """``talk.started`` (with the owner's message id), then the gateway's frames as they are, with ``talk.carried``
+    after the reply's ``assistant.completed``. The note for the agent's next messaging turn is written before that
+    frame is yielded: a client that goes away at any yield (the generator is closed there) can no longer skip it.
 
-    When the stream is over the change stream's ``talk`` source gets one line for the agent (lina#742): the gateway
-    stores the turn inside the run and sends its last frame after it, so :func:`history` shows the turn by then. A
-    client that went away earlier interrupts the run, and what the gateway keeps of it may land after that line."""
+    When the stream is over the change stream's ``talk`` source gets one line for the agent (lina#742) with the id of
+    the conversation's last message, read back then: the gateway stores the turn inside the run and sends its last
+    frame after it, so :func:`history` shows the turn by then. A client that went away earlier interrupts the run,
+    and what the gateway keeps of it may land after that line."""
     import asyncio
     from gateway.app_talk_carry import write_carry
     from hermes_cli.lina_board import _root
     from hermes_cli.lina_board_events import announce
+    session_id, last = sent.session_id, None
     try:
-        started = {"agent": target.agent, "session_id": session_id}
+        started = {"agent": target.agent, "session_id": session_id, "message_id": sent.message_id}
         if target.item:
             started = {"item": {"id": target.item, "title": target.title}, **started}
         yield _frame("talk.started", started)
@@ -301,6 +358,7 @@ async def _relay(client, upstream, target: Target, message: str, session_id: str
     finally:
         try:
             await upstream.aclose()
+            last = await _last_message_id(client, sent)
             await client.aclose()
         finally:
-            announce(_root(), "talk", "message", target.agent)
+            announce(_root(), "talk", "message", target.agent, message_id=last)
