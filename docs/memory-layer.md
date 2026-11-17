@@ -251,18 +251,18 @@ own devices and the model services in use (lina#308). What holds for a document 
   copies go there, and both are deleted when the session ends, with the count in the job's run record. Every file in
   them counts as personal for the job, so a scan made there is not sent to hosted OCR either.
 - **No public post, no third-party upload.** lina-memory's `pre_tool_call` hook refuses a call that would carry the
-  document, a derived file, a line of its text or an ID number to a public place (`git push`; `gh` issue, pull
-  request, gist and release writes and `gh api` writes; GitHub, GitLab and posting connectors' write tools) or to a
-  third-party service (`curl`/`wget` uploads such as web OCR or converters; `read_file` skips hosted OCR for it).
-  A `git push` from a marked job is also checked on the commits it would send (those on no remote-tracking ref of
-  the remote, from the refspecs the command names, else the remote's `remote.<name>.push` refspecs, else what
-  `push.default` sends: the current branch, or every local branch for `matching`): a path they add or change that is a marked document, under a marker folder or in the job's folders,
-  or an added line with an ID or account number or a line of the document's text, refuses it, and so does a push
-  whose commits git cannot tell (no remote-tracking ref, a remote given as a URL, a git error); the message says to
-  push from a job without a personal document or to remove the document from the commits.
-  The check reads the call's own words and the repository's configuration; it does not follow shell indirection
-  (variables, `eval`, scripts, command substitution) or git and shell aliases, so a push or upload spelled that way
-  is judged on its words only.
+  document, a derived file, a line of its text or an ID number to a public place (`gh` issue, pull request, gist
+  and release writes; GitHub, GitLab and posting connectors' write tools) or to a third-party service (`read_file`
+  skips hosted OCR for it).
+  A job with a mark (a file or a folder mark) cannot push or upload at all: every `git push` (`git -C dir push`,
+  `git -c k=v push`, a push after `cd` or after another command of the same line), `gh api` write (`-f`, `-F`,
+  `--raw-field`, `--field`, `--input`) and `curl`/`wget`/`http` upload (`-F`, `-T`, `-d`, `--upload-file`,
+  `--post-file` and their other spellings) is refused without reading what it would send; the message says to do
+  the push or upload from a new job in which no personal document was read or marked. What a push sends is not
+  inspected. Read-only git commands (`status`, `log`, `diff`, `fetch`) and `gh api` reads are not refused, and a job
+  without a mark pushes and uploads as before.
+  Not covered: any recognised push or upload command is refused in a marked job, and a command the recognizer does
+  not recognise as one (a git or shell alias, a script, a variable or `eval` that spells it) is not covered.
   The message says why, and the refusal is in the run record. `delegate_task`, model calls and the owner's own
   devices and chats are not refused. With the store unreachable, such a post is refused because the marks cannot be
   checked.

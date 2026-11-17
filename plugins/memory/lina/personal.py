@@ -3,10 +3,13 @@
 ``mark_personal`` records the owner's word that a document is personal, for the job of the session. The
 ``pre_tool_call`` hook does two things before any tool runs: a document a call names that sits under a folder with
 the marker file ``.lina-personal`` is marked for the job (``how = folder``), and a call that would post a marked
-document or text derived from it to a public place (a repository push, an issue, pull request, gist or release, a
-public posting connector) or upload it to a third-party service (``curl``/``wget`` uploads such as web OCR or
-converters) is refused with a message saying why, and the refusal is in the job's run record. Model calls,
-workers (``delegate_task``), the owner's own devices and chats are never refused here.
+document or text derived from it to a public place (an issue, pull request, gist or release, a public posting
+connector) is refused with a message saying why, and the refusal is in the job's run record. A job with a mark
+cannot push or upload at all: a ``git push``, a ``gh api`` write and a ``curl``/``wget``/``http`` upload (web OCR,
+converters) are refused without reading what they would send, and the message says to do it from a new job in which
+no personal document was read or marked. What the commands send is not inspected, so a push or upload the
+recognizer does not recognise as one is not covered. Model calls, workers (``delegate_task``), the owner's own
+devices and chats are never refused here.
 """
 
 from __future__ import annotations
@@ -20,8 +23,6 @@ from typing import Any, Optional
 
 import hermes_state_personal_numbers as personal_numbers
 from agent import personal_work
-
-from . import personal_push
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +67,11 @@ _PUBLIC_CONNECTORS = {"github", "gitlab", "x", "twitter", "reddit", "medium", "w
 _PUBLISHING_WORDS = ("create", "comment", "post", "publish", "upload", "update", "edit", "reply")
 _READ_LIMIT = 1 << 20
 _DERIVED_LINE_CHARS = 24
+# The destinations a job with a mark never reaches, whatever the call would send: a push, a gh api write, an upload.
+_SENDS_UNREAD = ("public: git push", "public: gh api", "third party: ")
+_SENDS_UNREAD_WHY = "this job read or marked a personal document"
+_NEW_JOB = ("A job that read or marked a personal document cannot push or upload; do the push or upload from a new "
+            "job in which no personal document was read or marked.")
 
 
 def handle_mark(args: dict[str, Any], session_id: str, task_id: str = "") -> str:
@@ -170,11 +176,9 @@ def _command_destination(words: list[str]) -> Optional[str]:
 def destination(tool_name: str, args: dict[str, Any]) -> Optional[str]:
     """What kind of outside place the call sends to (``public: ...`` or ``third party: ...``), or None."""
     if tool_name == "terminal":
-        for words in _words(str(args.get("command") or "")):
-            found = _command_destination(words)
-            if found:
-                return found
-        return None
+        found = [where for where in map(_command_destination, _words(str(args.get("command") or ""))) if where]
+        # A push or upload anywhere in the line decides it: a marked job refuses those whatever else the line posts.
+        return next((where for where in found if where.startswith(_SENDS_UNREAD)), found[0] if found else None)
     if tool_name.startswith("connectors__"):
         parts = tool_name.split("__")
         if len(parts) >= 3 and parts[1].lower() in _PUBLIC_CONNECTORS and any(
@@ -192,6 +196,21 @@ def _working_dir(tool_name: str, args: dict[str, Any], task_id: str) -> str:
     return os.path.join(base, os.path.expanduser(workdir)) if workdir else base
 
 
+def _in_directory(commands: list[list[str]], cwd: str) -> list[tuple[list[str], str]]:
+    """Each simple command of a shell line with the directory it runs in, following ``cd`` and ``pushd`` (options
+    skipped) from *cwd*. A ``cd`` with no usable target (``cd``, ``cd -``, a folder that does not exist) leaves the
+    directory as it was."""
+    placed = []
+    for words in commands:
+        placed.append((words, cwd))
+        if Path(words[0]).name in {"cd", "pushd"}:
+            targets = [word for word in words[1:] if word == "-" or not word.startswith("-")]
+            if targets and targets[0] != "-":
+                target = os.path.join(cwd, os.path.expanduser(targets[0]))
+                cwd = target if os.path.isdir(target) else cwd
+    return placed
+
+
 def _commands(tool_name: str, args: dict[str, Any]) -> list[str]:
     """The call's shell commands: a terminal command, whatever its lines."""
     return [str(args.get("command") or "")] if tool_name == "terminal" else []
@@ -207,8 +226,7 @@ def _named_paths(texts: list[str], cwd: str, commands: list[str]) -> list[str]:
     for text in texts:
         candidates = [(text, cwd)]
         if text in commands:
-            candidates += [(word, where) for words, where in personal_push.in_directory(_words(text), cwd)
-                           for word in words]
+            candidates += [(word, where) for words, where in _in_directory(_words(text), cwd) for word in words]
         elif "\n" not in text:
             candidates += [(word, cwd) for words in _words(text) for word in words]
         for candidate, where in candidates:
@@ -275,28 +293,6 @@ def carries_personal(texts: list[str], named: list[str], marked: list[str], fold
     return None
 
 
-_PUSH_HOW = "push from a job without a personal document, or remove the document from the commits"
-
-
-def pushed_personal(command: str, cwd: str, marked: list[str], folders) -> Optional[str]:
-    """Why the commits a line's ``git push`` would send carry a personal document or text from one, or cannot be
-    shown not to; None when every push sends nothing personal."""
-    lines = None
-    try:
-        for sent in personal_push.outgoing(_words(command), cwd):
-            for path in sent.paths:
-                if personal_work.is_marked(marked, path) or folders.holds(path) or personal_work.marker_folder(path):
-                    return f"the commits it sends carry the personal document {path}"
-            if any(personal_numbers.find(line) for line in sent.added):
-                return "the commits it sends carry an ID or account number"
-            lines = _derived_lines(marked, folders) if lines is None else lines
-            if lines and any(derived in added for added in sent.added for derived in lines):
-                return "the commits it sends carry text from a personal document"
-    except personal_push.Undetermined as exc:
-        return f"the commits it sends cannot be checked ({exc}); {_PUSH_HOW}"
-    return None
-
-
 def _mark_from_folders(named: list[str], session_id: str) -> None:
     folder_marked = [path for path in named if personal_work.marker_folder(path)]
     if not folder_marked:
@@ -311,7 +307,7 @@ def _mark_from_folders(named: list[str], session_id: str) -> None:
 def pre_tool_call(tool_name: str = "", args: Optional[dict[str, Any]] = None, session_id: str = "",
                   task_id: str = "", **_kwargs) -> Optional[dict[str, str]]:
     """The ``pre_tool_call`` hook: mark documents from marked folders, refuse public posts and third-party uploads
-    of personal material, and a marked job's ``git push`` whose commits carry it. A store that cannot be reached
+    of personal material, and every push, ``gh api`` write and upload of a marked job. A store that cannot be reached
     refuses such a post rather than let it through."""
     from hermes_state_store import StoreUnavailableError
     args = args if isinstance(args, dict) else {}
@@ -332,8 +328,9 @@ def pre_tool_call(tool_name: str = "", args: Optional[dict[str, Any]] = None, se
         folders = personal_work.folders_for(job)
         why = carries_personal(texts, named, marked, folders) if marked or any(
             personal_work.marker_folder(p) for p in named) else None
-        if why is None and marked and tool_name == "terminal":
-            why = pushed_personal(str(args.get("command") or ""), cwd, marked, folders)
+        unread = where.startswith(_SENDS_UNREAD)
+        if why is None and marked and unread:
+            why = _SENDS_UNREAD_WHY
         if why is None:
             return None
         marks.record(job, "refused", {"tool": tool_name, "destination": where, "why": why})
@@ -344,6 +341,8 @@ def pre_tool_call(tool_name: str = "", args: Optional[dict[str, Any]] = None, se
         return {"action": "block", "message": (
             f"Refused ({where}): personal-document marks cannot be checked because the memory store is "
             f"unreachable ({exc}).")}
+    if unread:
+        return {"action": "block", "message": f"Refused ({where}): {why}. {_NEW_JOB}"}
     return {"action": "block", "message": (
         f"Refused ({where}): {why}. A personal document, and text derived from it, is never posted to a public "
         "place or uploaded to a third-party service; workers, model calls and the owner's own devices are fine.")}
