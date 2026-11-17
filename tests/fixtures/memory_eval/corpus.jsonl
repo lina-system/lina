@@ -10,6 +10,8 @@
 {"ref": "agent:default:eval-a10", "source": "agent", "agent": "default", "role": "assistant", "text": "I set the rate limiter on the public search endpoint to sixty requests per minute per token."}
 {"ref": "agent:default:eval-a11", "source": "agent", "agent": "default", "role": "user", "text": "Archive the old analytics dashboard but keep its saved queries exported as CSV files."}
 {"ref": "agent:default:eval-a12", "source": "agent", "agent": "default", "role": "assistant", "text": "The mobile build broke because the signing certificate expired; I renewed it and re-ran the pipeline."}
+{"ref": "agent:default:eval-evidence-owner", "source": "agent", "agent": "default", "role": "user", "text": "The hub is the server that routes messages between services."}
+{"ref": "agent:default:eval-evidence-answer", "source": "agent", "agent": "default", "role": "assistant", "text": "The hub is a collection of herb plants in the owner's garden."}
 {"ref": "agent:default:eval-an01", "source": "agent", "agent": "default", "role": "user", "text": "Let's look at the backlog tomorrow afternoon."}
 {"ref": "agent:default:eval-an02", "source": "agent", "agent": "default", "role": "assistant", "text": "Done, the branch is merged and the pipeline is green."}
 {"ref": "agent:default:eval-an03", "source": "agent", "agent": "default", "role": "user", "text": "Can you check the logs for anything unusual this week?"}

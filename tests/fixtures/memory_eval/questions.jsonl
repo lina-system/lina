@@ -10,6 +10,7 @@
 {"id": "a10", "source": "agent", "agent": "default", "question": "What rate limit applies to the public search endpoint?", "expected": ["agent:default:eval-a10"]}
 {"id": "a11", "source": "agent", "agent": "default", "question": "What should happen to the saved queries of the old analytics dashboard?", "expected": ["agent:default:eval-a11"]}
 {"id": "a12", "source": "agent", "agent": "default", "question": "Why did the mobile build stop working?", "expected": ["agent:default:eval-a12"]}
+{"id": "a13", "source": "agent", "agent": "default", "question": "Which original record supports what the hub is, without using your earlier answer as evidence?", "expected": ["agent:default:eval-evidence-owner"]}
 {"id": "m01", "source": "messages", "agent": "default", "question": "When is the plumber coming to repair the sink?", "expected": ["messages:eval-m01"]}
 {"id": "m02", "source": "messages", "agent": "default", "question": "What kind of book did the book club choose?", "expected": ["messages:eval-m02"]}
 {"id": "m03", "source": "messages", "agent": "default", "question": "Where and by when must the parking permit be renewed?", "expected": ["messages:eval-m03"]}

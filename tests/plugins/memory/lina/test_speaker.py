@@ -125,8 +125,8 @@ def test_a_quoted_agent_message_is_recalled_as_the_agent_and_notes_never_as_the_
     assert owner_words_screen == []
     assert [(hit["speaker"], hit["author"]) for hit in owner_words] == [("owner", "telegram:1001")]
     labels = {hit["ref"].split(":")[0]: recall_line(hit) for hit in quoted}
-    assert " (agent agent:default, grade agent) " in labels["msg"]
-    assert " (gateway note (reply_quote, quoting agent), grade agent) " in labels["note"]
+    assert " (agent agent:default, grade agent, you said before; not evidence) " in labels["msg"]
+    assert " (gateway note (reply_quote, quoting agent), grade agent, derived; check original record) " in labels["note"]
 
 
 def test_the_next_turn_replays_the_bytes_the_model_read(home):

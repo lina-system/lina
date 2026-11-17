@@ -80,16 +80,43 @@ def _who(hit: Mapping[str, Any]) -> str:
     return who
 
 
+def provenance(hit: Mapping[str, Any]) -> dict[str, Any]:
+    """Describe an item's origin alongside its existing trust grade, without regrading it."""
+    if hit.get("speaker") == "conclusion" or hit.get("kind") == "conclusion" or hit.get("note"):
+        origin = "derived"
+    elif hit.get("speaker") in ("agent", "gateway"):
+        origin = "agent_answer"
+    else:
+        origin = "original_record"
+    return {"origin": origin, "evidence": origin == "original_record" and hit.get("speaker") != "unknown"}
+
+
+def _origin_label(hit: Mapping[str, Any]) -> str:
+    origin = provenance(hit)["origin"]
+    if origin == "agent_answer":
+        return "you said before; not evidence"
+    if origin == "derived":
+        if "agent" in (hit.get("source_speakers") or ()):
+            return "derived from agent turn; not owner evidence"
+        return "derived; check original record"
+    return "original record; unknown speaker; not evidence" if hit.get("speaker") == "unknown" else "original record"
+
+
 def recall_line(hit: Mapping[str, Any]) -> str:
     """One recall line of an owner or agent hit, labelled by who said it and its grade, so a quote is never presented
     as another speaker's."""
-    return f"[{hit['ref']}] ({_who(hit)}, grade {hit.get('grade') or 'external'}) {hit['excerpt']}"
+    return (f"[{hit['ref']}] ({_who(hit)}, grade {hit.get('grade') or 'external'}, "
+            f"{_origin_label(hit)}) {hit['excerpt']}")
 
 
 def recall_text(hits: Sequence[Mapping[str, Any]]) -> str:
-    """Recall as it enters a prompt: owner and agent hits as recall lines, in their order, then every external hit
-    in one data block."""
-    trusted = [recall_line(hit) for hit in hits if hit.get("grade") in ("owner", "agent")]
-    quoted = [Quoted(hit["ref"], hit.get("time"), _who(hit), hit.get("excerpt") or "")
-              for hit in hits if hit.get("grade") not in ("owner", "agent")]
-    return "\n".join(part for part in ("\n".join(trusted), data_block(quoted)) if part)
+    """Original records before prior answers, with external items kept in one quoted data block."""
+    originals = [recall_line(hit) for hit in hits
+                 if hit.get("grade") in ("owner", "agent") and provenance(hit)["evidence"]]
+    answers = [recall_line(hit) for hit in hits
+               if hit.get("grade") in ("owner", "agent") and not provenance(hit)["evidence"]]
+    quoted = [Quoted(hit["ref"], hit.get("time"), f"{_who(hit)}, grade external, {_origin_label(hit)}",
+                     hit.get("excerpt") or "")
+              for hit in sorted(hits, key=lambda item: provenance(item)["evidence"], reverse=True)
+              if hit.get("grade") not in ("owner", "agent")]
+    return "\n".join(part for part in ("\n".join(originals), data_block(quoted), "\n".join(answers)) if part)

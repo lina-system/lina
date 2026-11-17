@@ -326,10 +326,11 @@ def fuse(lists: Sequence[Sequence[Hit]], limit: int, now: datetime) -> list[dict
     for ref, hit in hits.items():
         scores[ref] *= 1.0 if hit.current else recency(hit.time, now)
     newest_first = sorted(hits, key=lambda ref: hits[ref].time or "", reverse=True)
-    ordered = sorted(newest_first, key=lambda ref: scores[ref], reverse=True)[:limit]
+    origins = {ref: grade.provenance({"speaker": hit.speaker, "note": hit.note}) for ref, hit in hits.items()}
+    ordered = sorted(newest_first, key=lambda ref: (origins[ref]["evidence"], scores[ref]), reverse=True)[:limit]
     return [{"source": hits[ref].source, "ref": ref, **(hits[ref].fields or {}), "excerpt": hits[ref].excerpt,
              "time": hits[ref].time, "author": hits[ref].author, "speaker": hits[ref].speaker,
-             "grade": hits[ref].grade, "quote_as_external": quote_as_external(hits[ref].grade),
+             "grade": hits[ref].grade, **origins[ref], "quote_as_external": quote_as_external(hits[ref].grade),
              "score": round(scores[ref], 6),
              **({"note": hits[ref].note} if hits[ref].note else {})}
             for ref in ordered]
@@ -494,9 +495,11 @@ class MemorySearch:
         # One query per source, narrowed in the store before its limit: a better-ranked row of another source or
         # speaker never takes a place of the rows asked for.
         store = self._readers.store()
+        groups = [[kind for kind in group if not kinds or kind in kinds]
+                  for group in (("owner", "outside"), ("agent", "gateway", "unknown"))]
         lists = [[_row_hit(row, terms) for row in store.search_memory(query, sources=[source], limit=limit,
-                                                                      authors=authors, speakers=kinds)]
-                 for source in sources]
+                                                                      authors=authors, speakers=group)]
+                 for source in sources for group in groups if group]
         if "agent" in sources and authors is None and (not kinds or "gateway" in kinds):
             lists.append([_part_hit(part, terms) for part in store.search_parts(query, limit=limit)])
         return lists
@@ -509,9 +512,11 @@ class MemorySearch:
         if embedder is None or not store.has_memory_vectors(model=embedder.model, sources=sources):
             return []
         embedding = self._embedding(embedder, query)
+        groups = [[kind for kind in group if not kinds or kind in kinds]
+                  for group in (("owner", "outside"), ("agent", "gateway", "unknown"))]
         return [[_row_hit(row, terms) for row in store.search_memory_vectors(
-                    embedding, model=embedder.model, sources=[source], limit=limit, speakers=kinds)]
-                for source in sources]
+                    embedding, model=embedder.model, sources=[source], limit=limit, speakers=group)]
+                for source in sources for group in groups if group]
 
     def _honcho_lists(self, query: str, terms: Sequence[str], limit: int) -> list[list[Hit]]:
         manager, session_key = self._readers.honcho()
@@ -574,7 +579,8 @@ class MemorySearch:
         if offset < 0:
             raise ValueError("offset must be 0 or more")
         opened = opener(ref, rest)
-        return _page({"ref": ref, **opened, "quote_as_external": quote_as_external(opened.get("grade"))}, offset)
+        return _page({"ref": ref, **opened, **grade.provenance(opened),
+                      "quote_as_external": quote_as_external(opened.get("grade"))}, offset)
 
     def _open_brain_page(self, name: str, timeline: Optional[int]) -> dict[str, Any]:
         from hermes_cli.brain.search import TIMELINE_ENTRIES, BrainSearchError

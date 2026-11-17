@@ -159,7 +159,7 @@ def test_an_owner_item_keeps_its_line_and_its_grade(home, memory_store_sql):
     assert {(hit["speaker"], hit["grade"]) for hit in hits} == {("owner", "owner"), ("agent", "agent")}
     text = grade.recall_text(hits)
     assert grade.DATA_OPEN not in text
-    assert " (owner telegram:1001, grade owner) remember the cedar invoice" in text
+    assert " (owner telegram:1001, grade owner, original record) remember the cedar invoice" in text
 
 
 def test_honcho_messages_carry_their_grade(home, lina_env):
