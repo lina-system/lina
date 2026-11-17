@@ -219,6 +219,21 @@ def test_an_unchanged_source_makes_no_new_call_and_a_changed_one_makes_one(work,
     assert model.calls[-1][0] == "now" and "fixing the failing disk check" in model.calls[-1][1]
 
 
+def test_a_line_cached_under_the_old_limit_is_neither_served_nor_kept(work, fakes, model):
+    from hermes_cli.lina_board_plain import lookup, write_board
+    _runs(work, fakes)
+    write_board(work.root, NOW)
+    long_now = "가" * 41  # passed the 60-character limit of before G138; its source is unchanged
+    with sqlite3.connect(work.root / "board" / "plain.db") as db:
+        db.execute("UPDATE line SET text = ?, error = NULL WHERE kind = 'run' AND field = 'now'", (long_now,))
+        db.execute("PRAGMA user_version = 2")  # what the hub's plain.db holds from before the 40-character limit
+    assert lookup("run", ["OT-ALP0001"], work.root)["OT-ALP0001"] == {"title": None, "now": None, "result": None}
+
+    model.calls.clear()
+    assert write_board(work.root, NOW + 60)["called"] > 0  # the unchanged source is written again, under the new limit
+    assert lookup("run", ["OT-ALP0001"], work.root)["OT-ALP0001"]["now"] == GOOD["now"]
+
+
 def test_the_writer_goes_stopped_when_calls_fail_and_ok_after_a_success(work, fakes, model, monkeypatch):
     from hermes_cli import lina_board_plain as plain
     _runs(work, fakes)

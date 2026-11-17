@@ -181,9 +181,11 @@ def ask(field: str, source: str) -> str:
 
 
 # ---------------------------------------------------------------- the cache
-# Version 2 keys a line by its board as well. The cache is regenerable, so an older ``line`` table is dropped (the
-# next pass writes it again); the ``writer`` state is kept.
-SCHEMA_VERSION = 2
+# Version 2 keys a line by its board as well. Version 3 holds only lines that passed the 40-character ``now`` limit (G138):
+# a line is keyed by its source's hash, so one stored under the old 60-character limit would otherwise be served for as
+# long as its source stays the same. The cache is regenerable, so an older ``line`` table is dropped (the next pass
+# writes it again); the ``writer`` state is kept.
+SCHEMA_VERSION = 3
 _SCHEMA = ("CREATE TABLE IF NOT EXISTS line (kind TEXT NOT NULL, board TEXT NOT NULL, id TEXT NOT NULL, "
            "field TEXT NOT NULL, source_hash TEXT NOT NULL, text TEXT, error TEXT, at INTEGER NOT NULL, "
            "PRIMARY KEY (kind, board, id, field))",
