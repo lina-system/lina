@@ -374,11 +374,13 @@ class LinaMemoryProvider(MemoryProvider):
         return self._with_external_messages(honcho, query)
 
     def _with_external_messages(self, honcho: str, query: str) -> str:
-        """Per-turn and explicit recall both carry external-message hits; the source switch empties them (lina#23).
-        They enter the prompt through ``grade.recall_text``: an external hit only inside its data block (lina#440)."""
-        found = self._memory_search().search(query, sources=["messages"])
-        messages = grade.recall_text(found["results"])
-        return "\n\n".join(part for part in (honcho, messages) if part)
+        """Original records precede derived recall; generated Honcho text stays inside the shared data block."""
+        found = self._memory_search().search(query, sources=["agent", "messages", "honcho", "lcm"])
+        hits = list(found["results"])
+        if honcho:
+            hits.append({"ref": "Honcho generated recall (no original record reference)",
+                         "speaker": "conclusion", "grade": "external", "excerpt": honcho})
+        return grade.recall_text(hits)
 
     def queue_prefetch(self, query: str, *, session_id: str = "") -> None:
         if self._honcho_on:

@@ -462,7 +462,7 @@ class TestPromptRepresentationConversion:
         assert representation.explicit[0].source_message_ids == ["msg_public_id_123___"]
         assert representation.explicit[0].session_name == "test_session"
         assert representation.explicit[1].content == "User works remotely"
-        assert representation.explicit[1].source_message_ids == []
+        assert representation.explicit[1].source_message_ids == ["msg_public_id_123___"]
         assert representation.explicit[0].created_at == timestamp
 
     async def test_empty_prompt_representation_conversion(self):

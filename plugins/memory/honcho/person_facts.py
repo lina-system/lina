@@ -19,8 +19,11 @@ def _record(conclusion: Any) -> dict[str, Any]:
             "created_at": created.isoformat() if hasattr(created, "isoformat") else created}
 
 
-def conclusions_about(observers: Iterable[Any], peer_id: str) -> list[dict[str, Any]]:
-    """Every conclusion each observer peer (SDK peer objects) holds about *peer_id*, page by page, each id once."""
+def conclusions_about(
+    observers: Iterable[Any], peer_id: str, *,
+    read_record: Callable[[Any, Any], dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Read each id once; person-page imports supply a citation reader and accept only owner-grounded conclusions."""
     found: dict[str, dict[str, Any]] = {}
     for observer in observers:
         view = observer.conclusions_of(peer_id)
@@ -28,7 +31,10 @@ def conclusions_about(observers: Iterable[Any], peer_id: str) -> list[dict[str, 
         while True:
             items = list(view.list(page=page, size=PAGE_SIZE).items)
             for item in items:
-                found.setdefault(str(item.id), _record(item))
+                record = read_record(item, view) if read_record else _record(item)
+                if read_record and (record["source_speakers"] != ["owner"] or record["source_grades"] != ["owner"]):
+                    continue
+                found.setdefault(str(item.id), record)
             if len(items) < PAGE_SIZE:
                 break
             page += 1
@@ -44,6 +50,7 @@ def home_lister() -> tuple[str, Callable[[str], list[dict[str, Any]]]]:
     itself and this agent's own peer (``aiPeer``) concluded about the peer."""
     from . import _cfg_usable
     from .client import HonchoClientConfig, get_honcho_client
+    from .conclusion_sources import conclusion_record
     from .session_peers import assistant_peer_id_for, sanitize_peer_id
     config = HonchoClientConfig.from_global_config()
     if not _cfg_usable(config):
@@ -51,6 +58,11 @@ def home_lister() -> tuple[str, Callable[[str], list[dict[str, Any]]]]:
     client = get_honcho_client(config)
 
     def list_conclusions(peer_id: str) -> list[dict[str, Any]]:
-        observers = dict.fromkeys((sanitize_peer_id(peer_id), assistant_peer_id_for(config)))
-        return conclusions_about([client.peer(observer) for observer in observers], peer_id)
+        assistant = assistant_peer_id_for(config)
+        observers = dict.fromkeys((sanitize_peer_id(peer_id), assistant))
+        return conclusions_about(
+            [client.peer(observer) for observer in observers], peer_id,
+            read_record=lambda item, scope: conclusion_record(
+                item, scope, lambda session_id, message_id: client.session(session_id).get_message(message_id),
+                assistant_peer_id=assistant))
     return config.workspace_id, list_conclusions

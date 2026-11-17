@@ -741,6 +741,8 @@ class Representation(BaseModel):
 
         ``prompt_message_ids`` holds the public id of every batch message in
         prompt order, so each cited ``idx`` resolves to a message id here.
+        Without a usable citation, retain the batch as conservative provenance:
+        dropping its agent turns could turn a derived claim into an owner fact.
         """
         explicit_observations: list[ExplicitObservation] = []
         for explicit in prompt_representation.explicit:
@@ -764,7 +766,9 @@ class Representation(BaseModel):
                     content=explicit.content,
                     created_at=created_at,
                     message_ids=message_ids,
-                    source_message_ids=list(dict.fromkeys(source_message_ids)),
+                    source_message_ids=list(
+                        dict.fromkeys(source_message_ids or prompt_message_ids)
+                    ),
                     session_name=session_name,
                 )
             )

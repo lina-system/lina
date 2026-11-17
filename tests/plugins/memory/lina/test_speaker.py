@@ -62,14 +62,19 @@ def test_turn_rows_store_the_speaker_their_route_gives(home, memory_store_sql):
     try:
         rows = memory_store_sql("SELECT role, speaker, speaker_ref, content FROM memory.messages"
                                 " WHERE source = 'agent' ORDER BY message_id")
+        assert all(hit["author"] != "tool:memory_recall"
+                   for hit in _search(agent, query="invoice", sources=["agent"], limit=20))
     finally:
         agent.shutdown_memory_provider()
         db.close()
 
-    assert rows == [("user", "owner", "telegram:1001", "How much is my invoice?"),
-                    ("assistant", "agent", "agent:default", QUOTED),
-                    ("user", "owner", "telegram:1001", OWNER),
-                    ("assistant", "agent", "agent:default", "Checked: it matches.")]
+    assert rows[:3] == [("user", "owner", "telegram:1001", "How much is my invoice?"),
+                        ("assistant", "agent", "agent:default", QUOTED),
+                        ("user", "owner", "telegram:1001", OWNER)]
+    assert rows[3] == ("assistant", "agent", "agent:default", "")
+    assert rows[4][:3] == ("tool", "outside", "tool:memory_recall")
+    assert f"grade agent, you said before; not evidence) {QUOTED}" in rows[4][3]
+    assert rows[5:] == [("assistant", "agent", "agent:default", "Checked: it matches.")]
 
 
 def test_gateway_notes_are_parts_of_the_owner_message_never_its_text(home, memory_store_sql):

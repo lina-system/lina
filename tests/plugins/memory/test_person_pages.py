@@ -123,7 +123,8 @@ class FakeConclusions:
 
 
 def _conclusion(cid: str, text: str, day: int):
-    return SimpleNamespace(id=cid, content=text, created_at=datetime(2026, 3, day, 9, tzinfo=UTC))
+    return SimpleNamespace(id=cid, content=text, created_at=datetime(2026, 3, day, 9, tzinfo=UTC),
+                           session_id="conversation", source_message_ids=[f"msg:{cid}"], source_ids=[])
 
 
 def test_honcho_conclusions_land_on_the_page_once_with_grade_and_source(capsys, monkeypatch, tmp_path, wiki,
@@ -135,7 +136,14 @@ def test_honcho_conclusions_land_on_the_page_once_with_grade_and_source(capsys, 
     monkeypatch.setenv("HERMES_HOME", str(home))
     fake = FakeConclusions({"alice": [_conclusion("c-1", "Likes early\nmeetings.", 1)],
                             "lina-bot": [_conclusion("c-2", "Works from the studio on Fridays.", 2),
-                                         _conclusion("c-1", "Likes early\nmeetings.", 1)]})
+                                         _conclusion("c-1", "Likes early\nmeetings.", 1),
+                                         _conclusion("c-3", "The owner grows herbs.", 3)]})
+    sources = {
+        "msg:c-1": SimpleNamespace(metadata={"lina_speaker": "owner", "lina_grade": "owner"}),
+        "msg:c-2": SimpleNamespace(metadata={"lina_speaker": "owner", "lina_grade": "owner"}),
+        "msg:c-3": SimpleNamespace(metadata={"lina_speaker": "agent", "lina_grade": "agent"}),
+    }
+    fake.session = lambda ident: SimpleNamespace(get_message=sources.__getitem__)
     import plugins.memory.honcho.client as honcho_client
     monkeypatch.setattr(honcho_client, "get_honcho_client", lambda *a, **k: fake)
     person = _person(OWNER_HANDLE)
@@ -149,6 +157,7 @@ def test_honcho_conclusions_land_on_the_page_once_with_grade_and_source(capsys, 
     assert code == 0, out
     assert "3 conclusions seen" not in out and "2 conclusions seen, 2 added" in out
     text = page.read_text(encoding="utf-8")
+    assert "The owner grows herbs." not in text
     assert text.startswith(written)
     assert text[len(written):] == ("\n---\n\n## Timeline\n\n"
                                    "- 2026-03-01 | agent | honcho:c-1 | Likes early meetings.\n"

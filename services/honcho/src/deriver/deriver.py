@@ -1,6 +1,5 @@
 import logging
 import time
-from typing import Any
 
 from nanoid import generate as generate_nanoid
 
@@ -8,9 +7,9 @@ from src import crud
 from src.config import ConfiguredModelSettings, settings
 from src.crud.representation import RepresentationManager
 from src.dependencies import tracked_db
-from src.exceptions import EmptyRepresentationError, RepresentationSaveError
-from src.llm import HonchoLLMCallResponse, honcho_llm_call
-from src.llm.types import LLMTelemetryContext, degraded_response_parse_class
+from src.exceptions import RepresentationSaveError
+from src.llm import honcho_llm_call as honcho_llm_call
+from src.llm.types import LLMTelemetryContext
 from src.models import Message
 from src.schemas import ResolvedConfiguration
 from src.telemetry import prometheus_metrics
@@ -24,10 +23,11 @@ from src.telemetry.prometheus.metrics import (
 )
 from src.telemetry.sentry import with_sentry_transaction
 from src.utils.config_helpers import get_configuration
-from src.utils.representation import PromptRepresentation, Representation
+from src.utils.representation import Representation
 from src.utils.retryable_errors import is_retryable_error
 from src.utils.tokens import estimate_tokens, track_deriver_input_tokens
 
+from .conclusions import extract_verified_conclusions
 from .prompts import (
     estimate_deriver_prompt_tokens,
     format_deriver_message,
@@ -56,7 +56,7 @@ async def process_representation_tasks_batch(
     batch_max_tokens: int = 0,
 ) -> None:
     """
-    Process messages with minimal overhead - single LLM call, save to multiple collections.
+    Extract and verify conclusions, then save to multiple collections.
 
     Args:
         messages: List of messages to process (includes interleaving context).
@@ -160,59 +160,33 @@ async def process_representation_tasks_batch(
 
     message_ids = [m.id for m in messages if m.peer_name == observed]
 
-    def refuse_degraded_empty(response: HonchoLLMCallResponse[Any]) -> None:
-        """Raise inside the retried call so a truncated or filtered empty
-        consumes an attempt and reaches the fallback model."""
-        if not message_ids:
-            return
-        content = response.content
-        if not isinstance(content, PromptRepresentation):
-            # A provider refusal comes back as its text, not the model.
-            parse_class = "content_filtered"
-        elif content.explicit:
-            return
-        else:
-            parse_class = degraded_response_parse_class(response)
-            if parse_class is None:
-                return
-        raise EmptyRepresentationError.for_prompt(
-            prompt,
-            parse_class=parse_class,
-            finish_reasons=response.finish_reasons,
-            output_tokens=response.output_tokens,
-        )
-
-    # Single LLM call
     trace_id = generate_nanoid()
+    telemetry = LLMTelemetryContext(
+        workspace_name=latest_message.workspace_name,
+        session_id=session_id,
+        call_purpose=CallPurpose.DERIVER_REPRESENTATION.value,
+        parent_category="representation",
+        agent_type="deriver",
+        observers=observers,
+        observed=observed,
+        source_message_ids=[
+            m.public_id for m in messages if m.id in queue_item_message_ids_set
+        ],
+        queue_item_ids=queue_item_ids or [],
+        track_name="Minimal Deriver",
+        trace_id=trace_id,
+        span_id=trace_id,
+        custom_instructions=custom_instructions,
+    )
     llm_start = time.perf_counter()
-    response = await honcho_llm_call(
+    response = await extract_verified_conclusions(
         model_config=model_config,
         prompt=prompt,
+        formatted_messages=formatted_messages,
+        observed=observed,
+        has_target_messages=bool(message_ids),
         max_tokens=max_tokens,
-        response_model=PromptRepresentation,
-        json_mode=True,
-        max_input_tokens=settings.DERIVER.MAX_INPUT_TOKENS,
-        enable_retry=True,
-        retry_attempts=3,
-        validate_response=refuse_degraded_empty,
-        trace_name="minimal_deriver",
-        telemetry=LLMTelemetryContext(
-            workspace_name=latest_message.workspace_name,
-            session_id=session_id,
-            call_purpose=CallPurpose.DERIVER_REPRESENTATION.value,
-            parent_category="representation",
-            agent_type="deriver",
-            observers=observers,
-            observed=observed,
-            source_message_ids=[
-                m.public_id for m in messages if m.id in queue_item_message_ids_set
-            ],
-            queue_item_ids=queue_item_ids or [],
-            track_name="Minimal Deriver",
-            trace_id=trace_id,
-            span_id=trace_id,
-            custom_instructions=custom_instructions,
-        ),
+        telemetry=telemetry,
     )
     llm_duration = (time.perf_counter() - llm_start) * 1000
 

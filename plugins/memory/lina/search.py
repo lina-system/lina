@@ -525,7 +525,11 @@ class MemorySearch:
                         grade=grade.lowest([m.get("lina_grade")]))
                     for m in manager.search_messages(session_key, query, limit=limit)]
         conclusions = [Hit("honcho", f"ltm:c:{c['id']}", excerpt(c["content"], terms), utc_iso(c.get("created_at")),
-                           c.get("observer_id") or None, "conclusion")
+                           c.get("observer_id") or None, "conclusion",
+                           grade=grade.lowest(["agent", *(c.get("source_grades") or [None])]),
+                           fields={"source_speakers": c.get("source_speakers") or [],
+                                   "source_ids": c.get("source_ids") or [],
+                                   "source_message_ids": c.get("source_message_ids") or []})
                        for c in manager.search_conclusions(session_key, query, limit=limit)]
         return [messages, conclusions]
 
@@ -657,7 +661,11 @@ class MemorySearch:
                     "session_id": item["session_id"]}
         if sub == "c" and ident:
             item = manager.get_conclusion(session_key, ident)
-            return {"source": "honcho", "kind": "conclusion", "text": item["content"], "grade": "external",
+            return {"source": "honcho", "kind": "conclusion", "text": item["content"],
+                    "grade": grade.lowest(["agent", *(item.get("source_grades") or [None])]),
+                    "source_speakers": item.get("source_speakers") or [],
+                    "source_ids": item.get("source_ids") or [],
+                    "source_message_ids": item.get("source_message_ids") or [],
                     "time": utc_iso(item["created_at"]), "observer": item["observer_id"],
                     "observed": item["observed_id"], "session_id": item["session_id"]}
         raise RefError(f"malformed ref {ref!r}: a Honcho ref is ltm:m:<id>:<session> or ltm:c:<id>")
