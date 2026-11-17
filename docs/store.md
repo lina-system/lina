@@ -374,6 +374,39 @@ is already there and differs is skipped and listed), and each `heart/journal.jso
 cites LCM `store_id`s; each maps to `ctx.lcm_messages.text_uid` of the moved row, and one with no moved row is
 listed while its entry is kept. Every line is a row or listed as unreadable.
 
+### Personal documents
+
+A document is personal for a job when the owner says so (`mark_personal`, [memory-layer.md](memory-layer.md#personal-documents))
+or when its folder, or a folder above it, holds the marker file `.lina-personal`. A job is the session that started it
+and every compaction child that continued it. Migration `0023_personal_documents.sql` keeps:
+
+| Table | Holds |
+| --- | --- |
+| `memory.personal_job_sessions` | `session_id` -> `job_id` (a compaction child joins its parent's job in the transaction that publishes it, before its rows) |
+| `memory.personal_marks` | `job_id`, `path`, `how` (`owner` or `folder`), `marked_at` |
+| `memory.personal_job_events` | the job's run record: `work_folder` (folders made, per `device`), `cleaned` (`deleted` file count, `outcome`), `refused` (`tool`, `destination`, `why`); never document text |
+
+All three carry `agent_id`, so row-level security keeps each agent to its own rows. `lina_app` cannot update a mark
+and can only append to the run record.
+
+`MessageStore.put_text`, the one write path of message text (transcripts, LCM-X's copies), and `put_parts` (gateway
+notes) mask ID and account numbers in every text field of a row whose session's job carries a mark: Korean resident
+and foreign registration numbers, driver's licence and passport numbers, card numbers (Luhn-checked) and bank account
+numbers keep their last four characters (`900101-1234567` -> `******-***4567`). The rules are fixed code in
+`hermes_state_personal_numbers.py`; dates, amounts, phone numbers and millisecond timestamps are not matched. The job is
+looked up only for a text that has such a number, so other rows cost no query. JSON-backed fields (structured
+content, tool call arguments and results, reasoning items) are masked by their decoded strings, so a label that
+`json.dumps` escapes (`계좌번호`) is still read, and are serialized again with their shape kept. The unmasked value is
+written neither to `memory.messages` nor to `transcript_rows` (whose `content_digest` is taken from the stored text);
+the model still reads the live turn as it was.
+
+Derived files of a marked document go under the job's folders on the device that made them, both made through
+`agent/personal_work.py` only: `<home>/personal-work/<job>/` and `<temp dir>/lina-personal-<job>/`. When the job
+ends (lina-memory's session end, or the end of a `job_folders` block by success, failure or cancel) exactly those two
+folders are deleted, never a pattern over their parent, and the count deleted goes to the run record. `read_file`'s
+extractor makes its temp copies of a personal document in the job's temp folder and never sends it, or any file in
+the job's two folders, to hosted OCR.
+
 ### What stays in each profile's `state.db`
 
 `state.db` keeps operational state only: sessions, locks, gateway routing, workers, usage, and

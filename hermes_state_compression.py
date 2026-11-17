@@ -369,6 +369,12 @@ class SessionCompressionMixin:
                 (parent["archived"] or 0) if continuation else 0,
                 (parent["auto_archived"] or 0) if continuation else 0),
         )
+        if continuation:
+            # Before the handoff rows: the store masks a personal job's text as it writes it, and rows are
+            # immutable, so the child joins the parent's job in this same transaction (lina#308).
+            from hermes_state_personal import continue_job
+            with self.message_store._writer_cursor() as cur:
+                continue_job(cur, parent_session_id, child_session_id)
 
     def publish_compression_child(
         self, *, parent_session_id: str, child_session_id: str, source: str,

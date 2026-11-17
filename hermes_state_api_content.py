@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from hermes_state_store import content_digest, rewrite_rows
+from hermes_state_store import rewrite_rows
 
 
 class SessionApiContentMixin:
@@ -40,7 +40,7 @@ class SessionApiContentMixin:
                 "ORDER BY id DESC LIMIT 1", (session_id,)).fetchone()
             return rewrite_rows(conn, self.message_store, [row[0]] if row else [],
                 {"api_content": _scrub_surrogates(api_content)}, where_sql=" AND content_digest IS ?",
-                where_params=(content_digest(self._encode_content(content)),))
+                where_params=(self.message_store.row_content_digest(session_id, self._encode_content(content)),))
         return self._execute_write(_do)
 
     def set_message_api_content(
@@ -69,4 +69,5 @@ class SessionApiContentMixin:
         return self._execute_write(lambda conn: rewrite_rows(
             conn, self.message_store, [row_id], {"api_content": _scrub_surrogates(api_content)},
             where_sql=" AND session_id = ? AND role = 'user' AND active = 1 AND content_digest IS ?",
-            where_params=(session_id, content_digest(self._encode_content(content)))))
+            where_params=(session_id, self.message_store.row_content_digest(
+                session_id, self._encode_content(content)))))

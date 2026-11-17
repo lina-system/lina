@@ -1,0 +1,348 @@
+"""Personal documents at the tool layer (lina#308, ``agent/personal_work.py``, docs/memory-layer.md).
+
+``mark_personal`` records the owner's word that a document is personal, for the job of the session. The
+``pre_tool_call`` hook does two things before any tool runs: a document a call names that sits under a folder with
+the marker file ``.lina-personal`` is marked for the job (``how = folder``), and a call that would post a marked
+document or text derived from it to a public place (an issue, pull request, gist or release, a public posting
+connector) is refused with a message saying why, and the refusal is in the job's run record. A job with a mark
+cannot push or upload at all: a ``git push``, a ``gh api`` write and a ``curl``/``wget``/``http`` upload (web OCR,
+converters) are refused without reading what they would send, and the message says to do it from a new job in which
+no personal document was read or marked. What the commands send is not inspected, so a push or upload the
+recognizer does not recognise as one is not covered. Model calls, workers (``delegate_task``), the owner's own
+devices and chats are never refused here.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import shlex
+from pathlib import Path
+from typing import Any, Optional
+
+import hermes_state_personal_numbers as personal_numbers
+from agent import personal_work
+
+logger = logging.getLogger(__name__)
+
+MARK_TOOL = "mark_personal"
+
+MARK_SCHEMA = {
+    "name": MARK_TOOL,
+    "description": (
+        "Mark a document as the owner's personal document (contract, tax return, ID card, form scan) for this job, "
+        "when the owner says so. From then on ID and account numbers in this job's stored messages keep only their "
+        "last four characters, and the document or text from it cannot be posted publicly or uploaded to a "
+        "third-party service (workers and model calls are fine). Put every extract, page image or copy of it in "
+        "the returned work_dir or temp_dir: both are deleted when the job ends. A folder marked with a "
+        f"'{personal_work.MARKER_FILE}' file marks its documents by itself."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "path": {"type": "string", "description": "The document (or a folder of documents) the owner named."},
+        },
+        "required": ["path"],
+    },
+}
+
+# gh <group> <action> that publishes: issues, pull requests, gists and releases, and comments on them.
+_GH_PUBLIC = {
+    "issue": {"create", "comment", "edit"},
+    "pr": {"create", "comment", "edit", "review"},
+    "gist": {"create", "edit"},
+    "release": {"create", "edit", "upload"},
+}
+# gh api's flags that add request parameters or a body (the request is then a write).
+_GH_API_LONG = {"--field", "--raw-field", "--input"}
+_GH_API_SHORT = "fF"
+# The upload and request-body options of curl and wget (long, and the short letters of curl's -F -T -d); curl takes a
+# short option's value attached (``-Ffile=@x``) and a long option abbreviated (``--upload``).
+_UPLOAD_LONG = {"--form", "--form-string", "--upload-file", "--data", "--data-binary", "--data-raw",
+                "--data-urlencode", "--json", "--post-file", "--post-data", "--body-file", "--body-data"}
+_UPLOAD_SHORT = "FTd"
+# Connectors that publish to public places, and the words of their tools that write there.
+_PUBLIC_CONNECTORS = {"github", "gitlab", "x", "twitter", "reddit", "medium", "wordpress"}
+_PUBLISHING_WORDS = ("create", "comment", "post", "publish", "upload", "update", "edit", "reply")
+_READ_LIMIT = 1 << 20
+_DERIVED_LINE_CHARS = 24
+# The destinations a job with a mark never reaches, whatever the call would send: a push, a gh api write, an upload.
+_SENDS_UNREAD = ("public: git push", "public: gh api", "third party: ")
+_SENDS_UNREAD_WHY = "this job read or marked a personal document"
+_NEW_JOB = ("A job that read or marked a personal document cannot push or upload; do the push or upload from a new "
+            "job in which no personal document was read or marked.")
+
+
+def handle_mark(args: dict[str, Any], session_id: str, task_id: str = "") -> str:
+    """Mark the document *args* names for the session's job. A relative path starts where the task's file reads start
+    (``_working_dir``), so the mark is the document a later ``read_file`` of the same path opens."""
+    from hermes_state_store import StoreUnavailableError
+    from tools.registry import tool_error
+    raw = str(args.get("path") or "").strip()
+    if not raw:
+        return tool_error("path is required: the document the owner said is personal")
+    if not session_id:
+        return tool_error("no session to mark the document for")
+    path = str(Path(_working_dir(MARK_TOOL, args, task_id), Path(raw).expanduser()).resolve())
+    if not Path(path).exists():
+        return tool_error(f"nothing to mark: {path} does not exist (a relative path starts in the task's "
+                          "working directory)")
+    try:
+        marks = personal_work.marks_for_home()
+        job = marks.mark(session_id, path, "owner")
+        folders = personal_work.open_job_folders(marks, job)
+    except StoreUnavailableError as exc:
+        return tool_error(f"the mark could not be stored: {exc}")
+    return json.dumps({"marked": path, "job": job, "work_dir": str(folders.work), "temp_dir": str(folders.temp)},
+                      ensure_ascii=False)
+
+
+def _strings(value: Any) -> list[str]:
+    """The texts a call's arguments carry: strings, dict keys, and whole numbers as their digits (a number given as
+    a JSON number is still an ID or account number)."""
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [text for pair in value.items() for item in pair for text in _strings(item)]
+    if isinstance(value, (list, tuple)):
+        return [text for item in value for text in _strings(item)]
+    digits = personal_numbers.number_text(value)
+    return [digits] if digits is not None else []
+
+
+def _tokens(line: str, quotes: str = "'\"", escape: str = "\\") -> list[str]:
+    lexer = shlex.shlex(line, posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
+    lexer.quotes, lexer.escape = quotes, escape
+    return list(lexer)
+
+
+def _words(command: str) -> list[list[str]]:
+    """The simple commands of a shell text, split on newlines, ``&&``, ``||``, ``;`` and ``|``. A backslash at a line's
+    end continues it and a quoted string may span lines; a line whose quote never closes (a heredoc's prose) is read
+    with quotes and backslashes taken as letters."""
+    tokens, pending = [], []
+    for line in command.replace("\\\n", "").split("\n"):
+        pending.append(line)
+        try:
+            tokens += [*_tokens("\n".join(pending)), ";"]
+        except ValueError:
+            continue
+        pending = []
+    for line in pending:
+        tokens += [*_tokens(line, quotes="", escape=""), ";"]
+    commands, current = [], []
+    for token in tokens:
+        if token and set(token) <= set("&|;()"):
+            commands.append(current)
+            current = []
+        else:
+            current.append(token)
+    commands.append(current)
+    return [words for words in commands if words]
+
+
+def _has_option(words: list[str], long_flags: set[str], short_letters: str, abbreviated: bool = False) -> bool:
+    """Whether a command's words carry one of the options, in any spelling the tool reads: ``--flag value``,
+    ``--flag=value``, a short letter alone, in a cluster or with its value attached (``-Ffile=@x``), and with
+    *abbreviated* a long name cut short. A short letter anywhere in a ``-x...`` word counts, so a value that
+    happens to hold the letter is read as the option: the call is then checked for personal material, which is
+    the safe side of a guess."""
+    for word in words:
+        if word.startswith("--"):
+            name = word.split("=", 1)[0]
+            if name in long_flags or (abbreviated and len(name) >= 4 and any(flag.startswith(name) for flag in long_flags)):
+                return True
+        elif len(word) > 1 and word.startswith("-") and any(letter in word[1:] for letter in short_letters):
+            return True
+    return False
+
+
+def _command_destination(words: list[str]) -> Optional[str]:
+    program = Path(words[0]).name
+    rest = words[1:]
+    if program == "git" and "push" in rest:
+        return "public: git push"
+    if program == "gh" and len(rest) >= 2 and rest[1] in _GH_PUBLIC.get(rest[0], set()):
+        return f"public: gh {rest[0]} {rest[1]}"
+    if program == "gh" and rest[:1] == ["api"] and _has_option(rest, _GH_API_LONG, _GH_API_SHORT):
+        return "public: gh api"
+    if program in {"curl", "wget", "http", "https"} and _has_option(rest, _UPLOAD_LONG, _UPLOAD_SHORT, True):
+        return f"third party: {program} upload"
+    return None
+
+
+def destination(tool_name: str, args: dict[str, Any]) -> Optional[str]:
+    """What kind of outside place the call sends to (``public: ...`` or ``third party: ...``), or None."""
+    if tool_name == "terminal":
+        found = [where for where in map(_command_destination, _words(str(args.get("command") or ""))) if where]
+        # A push or upload anywhere in the line decides it: a marked job refuses those whatever else the line posts.
+        return next((where for where in found if where.startswith(_SENDS_UNREAD)), found[0] if found else None)
+    if tool_name.startswith("connectors__"):
+        parts = tool_name.split("__")
+        if len(parts) >= 3 and parts[1].lower() in _PUBLIC_CONNECTORS and any(
+                word in parts[2].lower() for word in _PUBLISHING_WORDS):
+            return f"public: {parts[1]} {parts[2]}"
+    return None
+
+
+def _working_dir(tool_name: str, args: dict[str, Any], task_id: str) -> str:
+    """Where the call's relative paths start: a terminal command's ``workdir``, else the task's directory, the one
+    ``tools/file_tools_paths.py`` resolves relative file paths against (the terminal's recorded cwd)."""
+    from tools.file_tools_paths import _resolve_base_dir
+    base = str(_resolve_base_dir(task_id or "default"))
+    workdir = str(args.get("workdir") or "") if tool_name == "terminal" else ""
+    return os.path.join(base, os.path.expanduser(workdir)) if workdir else base
+
+
+def _in_directory(commands: list[list[str]], cwd: str) -> list[tuple[list[str], str]]:
+    """Each simple command of a shell line with the directory it runs in, following ``cd`` and ``pushd`` (options
+    skipped) from *cwd*. A ``cd`` with no usable target (``cd``, ``cd -``, a folder that does not exist) leaves the
+    directory as it was."""
+    placed = []
+    for words in commands:
+        placed.append((words, cwd))
+        if Path(words[0]).name in {"cd", "pushd"}:
+            targets = [word for word in words[1:] if word == "-" or not word.startswith("-")]
+            if targets and targets[0] != "-":
+                target = os.path.join(cwd, os.path.expanduser(targets[0]))
+                cwd = target if os.path.isdir(target) else cwd
+    return placed
+
+
+def _commands(tool_name: str, args: dict[str, Any]) -> list[str]:
+    """The call's shell commands: a terminal command, whatever its lines."""
+    return [str(args.get("command") or "")] if tool_name == "terminal" else []
+
+
+def _named_paths(texts: list[str], cwd: str, commands: list[str]) -> list[str]:
+    """Existing paths the call names, relative ones under *cwd*: whole arguments, shell words, and ``@file`` /
+    ``name=@file`` values. Shell words come from each of *commands*, each resolved in the directory the command runs
+    in after the ``cd`` before it, and from every other one-line text; another text of several lines (a file's
+    content) counts only whole. A bare word (no slash, no period) counts only as a file
+    that exists in *cwd*."""
+    found = []
+    for text in texts:
+        candidates = [(text, cwd)]
+        if text in commands:
+            candidates += [(word, where) for words, where in _in_directory(_words(text), cwd) for word in words]
+        elif "\n" not in text:
+            candidates += [(word, cwd) for words in _words(text) for word in words]
+        for candidate, where in candidates:
+            candidate = candidate.split("=@", 1)[-1].lstrip("@") if "@" in candidate else candidate
+            if not candidate or len(candidate) > 4096:
+                continue
+            bare = "/" not in candidate and "." not in candidate
+            try:
+                path = Path(where, candidate if bare else Path(candidate).expanduser())
+                if path.is_file() if bare else path.exists():
+                    found.append(str(path.resolve()))
+            except (OSError, ValueError):
+                continue
+    return list(dict.fromkeys(found))
+
+
+def _read_text(path: Path) -> str:
+    try:
+        if path.is_file() and path.stat().st_size <= _READ_LIMIT:
+            return path.read_text(encoding="utf-8-sig", errors="ignore")
+    except OSError:
+        pass
+    return ""
+
+
+def _files_beneath(root: Path) -> list[Path]:
+    return [p for p in root.rglob("*") if p.is_file() and not p.is_symlink()] if root.is_dir() else []
+
+
+def _marked_documents(marked: list[str]) -> list[Path]:
+    """The documents the marks cover: each marked file, and every file beneath a marked folder."""
+    documents = []
+    for path in map(Path, marked):
+        documents += [path] if path.is_file() else _files_beneath(path)
+    return [p for p in dict.fromkeys(documents) if p.name != personal_work.MARKER_FILE]
+
+
+def _derived_lines(marked: list[str], folders) -> set[str]:
+    """Lines long enough to be the document's own, from marked text documents (those beneath a marked folder too)
+    and the job's derived files."""
+    sources = _marked_documents(marked) + _files_beneath(folders.work) + _files_beneath(folders.temp)
+    lines: set[str] = set()
+    for source in sources:
+        lines.update(line.strip() for line in _read_text(source).splitlines()
+                     if len(line.strip()) >= _DERIVED_LINE_CHARS)
+    return lines
+
+
+def carries_personal(texts: list[str], named: list[str], marked: list[str], folders) -> Optional[str]:
+    """Why the call (its *texts*, and the existing paths they name) carries a marked document or text derived from
+    it, or None."""
+    for path in named:
+        if personal_work.is_marked(marked, path) or folders.holds(path) or personal_work.marker_folder(path):
+            return f"it names the personal document {path}"
+    sent = texts + [_read_text(Path(path)) for path in named]
+    if any(personal_numbers.find(text) for text in sent):
+        return "it carries an ID or account number"
+    names = {p.name for p in [*map(Path, marked), *_marked_documents(marked)] if len(p.name) >= 5}
+    if any(name in text for text in texts for name in names):
+        return "it names a personal document"
+    lines = _derived_lines(marked, folders)
+    if lines and any(line in text for text in sent for line in lines):
+        return "it carries text from a personal document"
+    return None
+
+
+def _mark_from_folders(named: list[str], session_id: str) -> None:
+    folder_marked = [path for path in named if personal_work.marker_folder(path)]
+    if not folder_marked:
+        return
+    marks = personal_work.marks_for_home()
+    already = marks.marked_paths(session_id)
+    for path in folder_marked:
+        if not personal_work.is_marked(already, path) and Path(path).name != personal_work.MARKER_FILE:
+            marks.mark(session_id, path, "folder")
+
+
+def pre_tool_call(tool_name: str = "", args: Optional[dict[str, Any]] = None, session_id: str = "",
+                  task_id: str = "", **_kwargs) -> Optional[dict[str, str]]:
+    """The ``pre_tool_call`` hook: mark documents from marked folders, refuse public posts and third-party uploads
+    of personal material, and every push, ``gh api`` write and upload of a marked job. A store that cannot be reached
+    refuses such a post rather than let it through."""
+    from hermes_state_store import StoreUnavailableError
+    args = args if isinstance(args, dict) else {}
+    session = session_id or personal_work.current_session_id()
+    texts = _strings(args)
+    where = destination(tool_name, args)
+    if not session:
+        return None
+    cwd = _working_dir(tool_name, args, task_id)
+    named = _named_paths(texts, cwd, _commands(tool_name, args))
+    try:
+        _mark_from_folders(named, session)
+        if where is None:
+            return None
+        marks = personal_work.marks_for_home()
+        marked = marks.marked_paths(session)
+        job = marks.job_of(session)
+        folders = personal_work.folders_for(job)
+        why = carries_personal(texts, named, marked, folders) if marked or any(
+            personal_work.marker_folder(p) for p in named) else None
+        unread = where.startswith(_SENDS_UNREAD)
+        if why is None and marked and unread:
+            why = _SENDS_UNREAD_WHY
+        if why is None:
+            return None
+        marks.record(job, "refused", {"tool": tool_name, "destination": where, "why": why})
+    except StoreUnavailableError as exc:
+        if where is None:
+            logger.warning("could not record a personal-folder mark: %s", exc)
+            return None
+        return {"action": "block", "message": (
+            f"Refused ({where}): personal-document marks cannot be checked because the memory store is "
+            f"unreachable ({exc}).")}
+    if unread:
+        return {"action": "block", "message": f"Refused ({where}): {why}. {_NEW_JOB}"}
+    return {"action": "block", "message": (
+        f"Refused ({where}): {why}. A personal document, and text derived from it, is never posted to a public "
+        "place or uploaded to a third-party service; workers, model calls and the owner's own devices are fine.")}

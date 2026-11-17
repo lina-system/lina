@@ -14,7 +14,7 @@ from agent.message_metadata import DB_ROW_SNAPSHOT, MESSAGE_UID, message_uid_or_
 from hermes_cli.timefmt import coerce_epoch
 from hermes_state_common import _id_chunks, _placeholders
 from hermes_state_messages import _parse_tool_calls
-from hermes_state_store import content_digest, text_columns_sql, text_sql
+from hermes_state_store import text_columns_sql, text_sql
 
 
 def _text_of(content: Any) -> str:
@@ -307,7 +307,7 @@ class SessionCoverageMixin:
         stored = self._encode_content(self._loaded_view_content(message.get("role", "unknown"), content))
         return [int(row["id"]) for row in conn.execute(
             "SELECT id FROM transcript_rows WHERE session_id = ? AND active = 1 AND role = ? AND content_digest = ?",
-            (session_id, message.get("role"), content_digest(stored))).fetchall()]
+            (session_id, message.get("role"), self.message_store.row_content_digest(session_id, stored))).fetchall()]
 
     def _matching_retired_ids(
         self, conn, session_id: str, retired: dict[str, Any], watermark: Optional[int] = None,
