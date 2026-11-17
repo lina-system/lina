@@ -12,6 +12,7 @@ The approach uses delta-based verification by directly accessing Prometheus coun
 
 import asyncio
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -23,6 +24,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from src import crud, models, schemas
+from src.deriver.conclusions import ConclusionVerification
 from src.llm import HonchoLLMCallResponse
 from src.models import Peer, Workspace
 from src.schemas import (
@@ -215,6 +217,18 @@ def create_mock_dialectic_response(
     )
 
 
+def create_mock_verification_response(
+    output_tokens: int = 0,
+) -> HonchoLLMCallResponse[ConclusionVerification]:
+    """Approve the fixture's one candidate without adding generation token usage."""
+    return HonchoLLMCallResponse(
+        content=ConclusionVerification(supported_indices=[0]),
+        input_tokens=0,
+        output_tokens=output_tokens,
+        finish_reasons=["end_turn"],
+    )
+
+
 # =============================================================================
 # Deriver Ingestion Metrics Tests
 # =============================================================================
@@ -224,21 +238,33 @@ def create_mock_dialectic_response(
 class TestDeriverIngestionMetrics:
     """Test token metrics for deriver INGESTION task type."""
 
+    @pytest.fixture
+    def ingestion_message(self) -> models.Message:
+        """Metrics use a real message model; database writes are not under test."""
+        return models.Message(
+            id=1,
+            public_id="source_message_000001",
+            workspace_name="synthetic-workspace",
+            session_name="synthetic-session",
+            peer_name="synthetic-peer",
+            content="A synthetic message about a server.",
+            token_count=8,
+            seq_in_session=1,
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+
+    @pytest.mark.parametrize("verification_output_tokens", [0, 7])
     async def test_ingestion_tracks_output_tokens(
         self,
-        db_session: AsyncSession,
-        sample_data: tuple[Workspace, Peer],
+        ingestion_message: models.Message,
         prometheus_test_setup: PrometheusMetricChecker,
+        verification_output_tokens: int,
     ):
-        """Verify OUTPUT_TOTAL tokens match response.output_tokens from LLM."""
+        """OUTPUT_TOTAL includes extraction and contextual verification usage."""
         from src.deriver.deriver import process_representation_tasks_batch
 
         metric_checker = prometheus_test_setup
-        workspace, peer = sample_data
-        session = await create_test_session_with_peer(db_session, workspace, peer)
-        messages = await create_test_messages(
-            db_session, workspace.name, session.name, peer.name, count=1
-        )
+        messages = [ingestion_message]
 
         expected_output_tokens = 42
         mock_response = create_mock_deriver_response(
@@ -258,7 +284,12 @@ class TestDeriverIngestionMetrics:
         with (
             patch(
                 "src.deriver.deriver.honcho_llm_call",
-                new=AsyncMock(return_value=mock_response),
+                new=AsyncMock(
+                    side_effect=[
+                        mock_response,
+                        create_mock_verification_response(verification_output_tokens),
+                    ]
+                ),
             ),
             patch(
                 "src.crud.representation.RepresentationManager.save_representation",
@@ -268,9 +299,10 @@ class TestDeriverIngestionMetrics:
             await process_representation_tasks_batch(
                 messages=messages,
                 message_level_configuration=create_test_configuration(),
-                observers=[peer.name],
-                observed=peer.name,
+                observers=[ingestion_message.peer_name],
+                observed=ingestion_message.peer_name,
                 queue_item_message_ids=[m.id for m in messages],
+                session_id="synthetic-session-id",
             )
 
         # Verify output tokens metric
@@ -278,14 +310,13 @@ class TestDeriverIngestionMetrics:
             deriver_tokens_processed_counter,
             labels,
             before,
-            expected_output_tokens,
+            expected_output_tokens + verification_output_tokens,
             "Ingestion output tokens",
         )
 
     async def test_ingestion_tracks_prompt_input_tokens(
         self,
-        db_session: AsyncSession,
-        sample_data: tuple[Workspace, Peer],
+        ingestion_message: models.Message,
         prometheus_test_setup: PrometheusMetricChecker,
     ):
         """Verify PROMPT component is tracked for ingestion input."""
@@ -293,11 +324,7 @@ class TestDeriverIngestionMetrics:
         from src.deriver.prompts import estimate_minimal_deriver_prompt_tokens
 
         metric_checker = prometheus_test_setup
-        workspace, peer = sample_data
-        session = await create_test_session_with_peer(db_session, workspace, peer)
-        messages = await create_test_messages(
-            db_session, workspace.name, session.name, peer.name, count=1
-        )
+        messages = [ingestion_message]
 
         mock_response = create_mock_deriver_response()
 
@@ -315,7 +342,9 @@ class TestDeriverIngestionMetrics:
         with (
             patch(
                 "src.deriver.deriver.honcho_llm_call",
-                new=AsyncMock(return_value=mock_response),
+                new=AsyncMock(
+                    side_effect=[mock_response, create_mock_verification_response()]
+                ),
             ),
             patch(
                 "src.crud.representation.RepresentationManager.save_representation",
@@ -325,9 +354,10 @@ class TestDeriverIngestionMetrics:
             await process_representation_tasks_batch(
                 messages=messages,
                 message_level_configuration=create_test_configuration(),
-                observers=[peer.name],
-                observed=peer.name,
+                observers=[ingestion_message.peer_name],
+                observed=ingestion_message.peer_name,
                 queue_item_message_ids=[m.id for m in messages],
+                session_id="synthetic-session-id",
             )
 
         metric_checker.assert_delta(
@@ -340,24 +370,14 @@ class TestDeriverIngestionMetrics:
 
     async def test_ingestion_tracks_messages_input_tokens(
         self,
-        db_session: AsyncSession,
-        sample_data: tuple[Workspace, Peer],
+        ingestion_message: models.Message,
         prometheus_test_setup: PrometheusMetricChecker,
     ):
         """Verify MESSAGES component is tracked for ingestion input."""
         from src.deriver.deriver import process_representation_tasks_batch
 
         metric_checker = prometheus_test_setup
-        workspace, peer = sample_data
-        session = await create_test_session_with_peer(db_session, workspace, peer)
-        messages = await create_test_messages(
-            db_session,
-            workspace.name,
-            session.name,
-            peer.name,
-            count=1,
-            content_prefix="Hello this is a test message",
-        )
+        messages = [ingestion_message]
 
         mock_response = create_mock_deriver_response()
 
@@ -372,7 +392,9 @@ class TestDeriverIngestionMetrics:
         with (
             patch(
                 "src.deriver.deriver.honcho_llm_call",
-                new=AsyncMock(return_value=mock_response),
+                new=AsyncMock(
+                    side_effect=[mock_response, create_mock_verification_response()]
+                ),
             ),
             patch(
                 "src.crud.representation.RepresentationManager.save_representation",
@@ -382,9 +404,10 @@ class TestDeriverIngestionMetrics:
             await process_representation_tasks_batch(
                 messages=messages,
                 message_level_configuration=create_test_configuration(),
-                observers=[peer.name],
-                observed=peer.name,
+                observers=[ingestion_message.peer_name],
+                observed=ingestion_message.peer_name,
                 queue_item_message_ids=[m.id for m in messages],
+                session_id="synthetic-session-id",
             )
 
         # Verify messages tokens were tracked (should be > 0)

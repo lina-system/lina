@@ -6,6 +6,7 @@ import logging
 import re
 from typing import Any, Callable
 
+from .conclusion_sources import conclusion_record, message_speaker
 from .session_auth import HonchoAuthError
 
 logger = logging.getLogger("plugins.memory.honcho.session")
@@ -328,7 +329,8 @@ class SessionContextMixin:
             target = session.user_peer_id
             ai_observes = self._ai_observes_others(session)
             observer = self._get_or_create_peer(session.assistant_peer_id if ai_observes else target)
-            return self._authed_call("conclusion list", lambda: conclusions_about([observer], target))
+            return self._authed_call("conclusion list", lambda: conclusions_about(
+                [observer], target, read_record=lambda item, scope: self._conclusion_record(session, item)))
         return self._guarded_session(session_key, _all, [], logging.WARNING,
                                      "Honcho conclusions for the person page could not be listed: %s")
 
@@ -350,16 +352,13 @@ class SessionContextMixin:
                 "lina_grade": metadata.get("lina_grade") if isinstance(metadata, dict) else None,
                 "session_id": getattr(message, "session_id", "") or "",
                 "created_at": created.isoformat() if hasattr(created, "isoformat") else created,
-                "speaker": "agent" if author == session.assistant_peer_id else "person"}
+                "speaker": message_speaker(message, session.assistant_peer_id)}
 
-    @staticmethod
-    def _conclusion_record(conclusion: Any) -> dict[str, Any]:
-        created = getattr(conclusion, "created_at", None)
-        return {"id": str(conclusion.id), "content": getattr(conclusion, "content", "") or "",
-                "observer_id": getattr(conclusion, "observer_id", "") or "",
-                "observed_id": getattr(conclusion, "observed_id", "") or "",
-                "session_id": getattr(conclusion, "session_id", None),
-                "created_at": created.isoformat() if hasattr(created, "isoformat") else created}
+    def _conclusion_record(self, session: Any, conclusion: Any) -> dict[str, Any]:
+        return self._authed_call("conclusion sources", lambda: conclusion_record(
+            conclusion, self._conclusions_scope(session, conclusion.observed_id),
+            lambda session_id, message_id: self.honcho.session(session_id).get_message(message_id),
+            assistant_peer_id=session.assistant_peer_id))
 
     def search_messages(self, session_key: str, query: str, *, limit: int = 10, peer: str = "user") -> list[dict]:
         """Raw messages visible from ``peer``'s perspective, all sessions, best first, as dicts."""
@@ -378,7 +377,7 @@ class SessionContextMixin:
             return []
         found = self._authed_call("conclusion query", lambda: self._conclusions_scope(session, target_peer_id).query(
             query, top_k=max(1, int(limit))))
-        return [self._conclusion_record(c) for c in found or ()]
+        return [self._conclusion_record(session, c) for c in found or ()]
 
     def get_message(self, session_key: str, honcho_session_id: str, message_id: str) -> dict[str, Any]:
         """One message of a Honcho session, verbatim."""
@@ -392,7 +391,7 @@ class SessionContextMixin:
         target_peer_id = self._resolve_peer_id(session, peer)
         conclusion = self._authed_call(
             "conclusion get", lambda: self._conclusions_scope(session, target_peer_id).get(conclusion_id))
-        return self._conclusion_record(conclusion)
+        return self._conclusion_record(session, conclusion)
 
     def set_peer_card(self, session_key: str, card: list[str], peer: str = "user") -> list[str] | None:
         """Replace a peer's card. Returns the updated card, or None on failure."""

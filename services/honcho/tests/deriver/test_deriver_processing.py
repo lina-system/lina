@@ -9,6 +9,7 @@ import pytest
 from src import crud, models
 from src.config import settings
 from src.crud.representation import RepresentationManager
+from src.deriver.conclusions import ConclusionVerification
 from src.deriver.deriver import process_representation_tasks_batch
 from src.exceptions import EmptyRepresentationError, RepresentationSaveError
 from src.llm import HonchoLLMCallResponse
@@ -18,6 +19,21 @@ from src.utils.representation import (
     Representation,
 )
 from src.utils.work_unit import construct_work_unit_key, parse_work_unit_key
+
+
+def _responses_with_verification(
+    response: HonchoLLMCallResponse[PromptRepresentation],
+) -> list[HonchoLLMCallResponse[Any]]:
+    """The existing generation/save tests use a supported single candidate."""
+    return [
+        response,
+        HonchoLLMCallResponse(
+            content=ConclusionVerification(supported_indices=[0]),
+            input_tokens=0,
+            output_tokens=0,
+            finish_reasons=["STOP"],
+        ),
+    ]
 
 
 @pytest.mark.asyncio
@@ -79,7 +95,7 @@ class TestDeriverProcessing:
             patch(
                 "src.deriver.deriver.honcho_llm_call",
                 new_callable=AsyncMock,
-                return_value=mock_response,
+                side_effect=_responses_with_verification(mock_response),
             ),
             patch.object(RepresentationManager, "save_representation", capture_save),
         ):
@@ -127,7 +143,7 @@ class TestDeriverProcessing:
         with patch(
             "src.deriver.deriver.honcho_llm_call",
             new_callable=AsyncMock,
-            return_value=mock_response,
+            side_effect=_responses_with_verification(mock_response),
         ) as mock_llm_call:
             await process_representation_tasks_batch(
                 messages=[message],
@@ -298,7 +314,7 @@ class TestDeriverProcessing:
             patch(
                 "src.deriver.deriver.honcho_llm_call",
                 new_callable=AsyncMock,
-                return_value=mock_response,
+                side_effect=_responses_with_verification(mock_response),
             ),
             patch.object(RepresentationManager, "save_representation", failing_save),
             patch("src.deriver.deriver.emit", side_effect=emitted.append),
@@ -361,7 +377,7 @@ class TestDeriverProcessing:
             patch(
                 "src.deriver.deriver.honcho_llm_call",
                 new_callable=AsyncMock,
-                return_value=mock_response,
+                side_effect=_responses_with_verification(mock_response),
             ),
             patch.object(RepresentationManager, "save_representation", partial_save),
             patch("src.deriver.deriver.emit", side_effect=emitted.append),
@@ -419,7 +435,7 @@ class TestDeriverProcessing:
             patch(
                 "src.deriver.deriver.honcho_llm_call",
                 new_callable=AsyncMock,
-                return_value=mock_response,
+                side_effect=_responses_with_verification(mock_response),
             ),
             patch.object(RepresentationManager, "save_representation", partial_save),
             patch("src.deriver.deriver.emit", side_effect=emitted.append),
@@ -478,7 +494,7 @@ class TestDeriverProcessing:
             patch(
                 "src.deriver.deriver.honcho_llm_call",
                 new_callable=AsyncMock,
-                return_value=mock_response,
+                side_effect=_responses_with_verification(mock_response),
             ) as mock_llm_call,
         ):
             await process_representation_tasks_batch(
@@ -620,7 +636,7 @@ class TestDeriverProcessing:
             patch(
                 "src.deriver.deriver.honcho_llm_call",
                 new_callable=AsyncMock,
-                return_value=mock_response,
+                side_effect=_responses_with_verification(mock_response),
             ),
             caplog.at_level(logging.WARNING, logger="src.deriver.deriver"),
         ):
@@ -674,7 +690,7 @@ class TestDeriverProcessing:
             patch(
                 "src.deriver.deriver.honcho_llm_call",
                 new_callable=AsyncMock,
-                return_value=mock_response,
+                side_effect=_responses_with_verification(mock_response),
             ),
             patch(
                 "src.deriver.deriver.estimate_deriver_prompt_tokens",
@@ -747,7 +763,7 @@ class TestDeriverProcessing:
             patch(
                 "src.deriver.deriver.honcho_llm_call",
                 new_callable=AsyncMock,
-                return_value=mock_response,
+                side_effect=_responses_with_verification(mock_response),
             ),
             patch(
                 "src.deriver.deriver.RepresentationManager",

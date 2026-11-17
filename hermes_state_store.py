@@ -772,7 +772,7 @@ class MessageStore:
             f" + ({hit_sum})::float / %s / (1 + ln(1 + length(content) / %s::float)))"
             " * greatest(%s, least(1.0, power(0.5, extract(epoch FROM now() - coalesce(ts, observed_at)) / %s)))"
             " AS score"
-            " FROM memory.messages"
+            " FROM searchable_messages"
             " WHERE forgotten_at IS NULL AND content IS NOT NULL AND source = ANY(%s)"
             " AND (source <> 'agent' OR (role IN ('user', 'assistant') AND content !~ %s))"
             f" AND (tsv @@ plainto_tsquery('simple', %s) OR {any_hit}){by_author}{by_speaker}"
@@ -783,7 +783,8 @@ class MessageStore:
                 *([] if authors is None else [list(authors), list(authors)]),
                 *([] if speakers is None else [list(speakers)]), int(limit)]
         with self._cursor() as cur:
-            cur.execute(sql, args)
+            projection, parameters = _memory_search_projection(cur)
+            cur.execute(projection + sql, [*parameters, *args])
             return [_memory_row(row) for row in cur.fetchall()]
 
     def has_memory_vectors(self, *, model: str, sources: Sequence[str]) -> bool:
@@ -798,30 +799,41 @@ class MessageStore:
         first, each row once; empty when nothing of *sources* is embedded with *model*. Row-level security gives
         this agent's chunks and the shared external ones (owner ``SHARED_VECTOR_OWNER``, migration 0009).
         *speakers* keeps the chunks holding a row of those speaker kinds, before the limit, and those rows."""
+        if limit <= 0 or not sources:
+            return []
         vector = "[" + ",".join(repr(float(v)) for v in embedding) + "]"
         of_speaker = "" if speakers is None else " AND speaker = ANY(%s)"
         kinds = [] if speakers is None else [list(speakers)]
+        found: dict[int, MemoryRow] = {}
         with self._cursor() as cur:
+            projection, parameters = _memory_search_projection(cur)
             # Its own transaction (a savepoint inside a write) so the HNSW settings end with the query (lina#387).
             with cur.connection.transaction():
                 for setting in HNSW_FILTERED_SEARCH:
                     cur.execute(setting)
-                cur.execute(
-                    "SELECT c.message_ids FROM vec.embeddings e JOIN vec.chunks c ON c.chunk_id = e.item_id"
-                    " WHERE e.kind = 'chunk' AND e.model = %s AND c.source = ANY(%s)"
-                    + ("" if speakers is None else " AND EXISTS (SELECT 1 FROM memory.messages m"
-                       " WHERE m.message_id = ANY(c.message_ids) AND m.speaker = ANY(%s))")
-                    + " ORDER BY e.embedding <=> %s::vector LIMIT %s", (model, list(sources), *kinds, vector, int(limit)))
-                ordered = list(dict.fromkeys(int(i) for row in cur.fetchall() for i in row[0]))
-            if not ordered:
-                return []
-            # The same readable rows as search_memory: an agent's own turns without the host-injected blocks.
-            cur.execute(f"SELECT {_MEMORY_COLUMNS} FROM memory.messages WHERE message_id = ANY(%s)"
-                        " AND forgotten_at IS NULL AND content IS NOT NULL"
-                        " AND (source <> 'agent' OR (role IN ('user', 'assistant') AND content !~ %s))" + of_speaker,
-                        (ordered, _INJECTED_TURN_RE, *kinds))
-            rows = {row.message_id: row for row in map(_memory_row, cur.fetchall())}
-        return [rows[i] for i in ordered if i in rows][:int(limit)]
+                offset = 0
+                while len(found) < limit:
+                    cur.execute(
+                        "SELECT c.message_ids FROM vec.embeddings e JOIN vec.chunks c ON c.chunk_id = e.item_id"
+                        " WHERE e.kind = 'chunk' AND e.model = %s AND c.source = ANY(%s)"
+                        + ("" if speakers is None else " AND EXISTS (SELECT 1 FROM memory.messages m"
+                           " WHERE m.message_id = ANY(c.message_ids) AND m.speaker = ANY(%s))")
+                        + " ORDER BY e.embedding <=> %s::vector LIMIT %s OFFSET %s",
+                        (model, list(sources), *kinds, vector, int(limit), offset))
+                    candidates = cur.fetchall()
+                    ordered = list(dict.fromkeys(int(i) for row in candidates for i in row[0]))
+                    cur.execute(projection + f"SELECT {_MEMORY_COLUMNS} FROM searchable_messages"
+                                " WHERE message_id = ANY(%s) AND forgotten_at IS NULL AND content IS NOT NULL"
+                                " AND (source <> 'agent' OR (role IN ('user', 'assistant') AND content !~ %s))"
+                                + of_speaker, [*parameters, ordered, _INJECTED_TURN_RE, *kinds])
+                    rows = {row.message_id: row for row in map(_memory_row, cur.fetchall())}
+                    for item_id in ordered:
+                        if item_id in rows:
+                            found.setdefault(item_id, rows[item_id])
+                    if len(candidates) < limit:
+                        break
+                    offset += len(candidates)
+        return list(found.values())[:int(limit)]
 
     def open_memory(self, uid: str) -> Optional[MemoryRow]:
         """The row *uid*, when this agent may read it (forgotten rows too: ``forgotten`` says so and the text is
@@ -829,7 +841,15 @@ class MessageStore:
         with self._cursor() as cur:
             cur.execute(f"SELECT {_MEMORY_COLUMNS} FROM memory.messages WHERE uid = %s", (uid,))
             row = cur.fetchone()
-        return None if row is None else _memory_row(row)
+        if row is None:
+            return None
+        result = _memory_row(row)
+        if result.source == "agent" and result.role == "user" and not result.forgotten:
+            from dataclasses import replace
+            from agent.skill_commands import extract_user_instruction_from_skill_message
+
+            result = replace(result, content=extract_user_instruction_from_skill_message(result.content))
+        return result
 
     def search_parts(self, query: str, *, limit: int = 20) -> list[PartRow]:
         """The gateway's notes (``memory.message_parts``) this agent may read that match *query*, best first, the way
@@ -873,13 +893,14 @@ class MessageStore:
         matches = "".join(" AND content ILIKE %s" for _ in pieces)
         sql = ("SELECT uid, content FROM ("
                " SELECT DISTINCT ON (split_part(uid, '#', 1)) message_id, uid, content, forgotten_at"
-               " FROM memory.messages WHERE speaker = 'owner' AND source = ANY(%s)"
+               " FROM searchable_messages WHERE speaker = 'owner' AND source = ANY(%s)"
                " ORDER BY split_part(uid, '#', 1), message_id DESC"
                ") newest WHERE forgotten_at IS NULL AND content IS NOT NULL AND content !~ %s"
                f"{matches} ORDER BY message_id DESC LIMIT %s")
         args = [list(sources), _INJECTED_TURN_RE, *("%" + _like_escape(piece) + "%" for piece in pieces), int(limit)]
         with self._cursor() as cur:
-            cur.execute(sql, args)
+            projection, parameters = _memory_search_projection(cur)
+            cur.execute(projection + sql, [*parameters, *args])
             return [(uid, content) for uid, content in cur.fetchall()]
 
 
@@ -908,6 +929,34 @@ _MEMORY_COLUMNS = ("message_id, uid, source, role, author, agent_id, conversatio
                    " speaker_ref, grade, source_id")
 _MEMORY_FIELDS = ("message_id, uid, source, role, author, agent_id, conversation_id, session_id, at, content,"
                   " forgotten, speaker, speaker_ref, grade, source_id")
+
+
+def _memory_search_projection(cur) -> tuple[str, list]:
+    """Project skill instructions for matching and ranking without rewriting stored turns."""
+    from agent.skill_commands import (
+        SKILL_SCAFFOLD_SQL_LIKE,
+        extract_user_instruction_from_skill_message,
+    )
+
+    cur.execute("SELECT message_id, content FROM memory.messages"
+                " WHERE source = 'agent' AND role = 'user' AND forgotten_at IS NULL AND content LIKE %s",
+                (SKILL_SCAFFOLD_SQL_LIKE,))
+    skills = cur.fetchall()
+    if not skills:
+        return "WITH searchable_messages AS (SELECT * FROM memory.messages) ", []
+    ids = [row[0] for row in skills]
+    instructions = [extract_user_instruction_from_skill_message(row[1]) for row in skills]
+    content = "CASE WHEN s.skill_message_id IS NULL THEN content ELSE s.instruction END"
+    columns = _MEMORY_COLUMNS.replace(" content,", f" {content} AS content,")
+    return (
+        f"WITH searchable_messages AS (SELECT {columns}, scope, ts, observed_at, forgotten_at,"
+        " CASE WHEN s.skill_message_id IS NULL THEN m.tsv ELSE to_tsvector('simple', s.instruction) END AS tsv"
+        " FROM memory.messages m LEFT JOIN unnest(%s::bigint[], %s::text[])"
+        " AS s(skill_message_id, instruction) ON m.message_id = s.skill_message_id) ",
+        [ids, instructions],
+    )
+
+
 _PART_COLUMNS = ("p.part_id, m.uid, p.kind, p.speaker, p.quoted_speaker, p.quoted_ref,"
                  " coalesce(m.ts, m.observed_at) AS at, p.content, p.grade")
 

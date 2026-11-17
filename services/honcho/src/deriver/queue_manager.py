@@ -41,6 +41,7 @@ from src.dreamer.dream_scheduler import (
     get_dream_scheduler,
     set_dream_scheduler,
 )
+from src.exceptions import EmptyRepresentationError
 from src.models import QueueItem
 from src.reconciler import (
     ReconcilerScheduler,
@@ -591,7 +592,7 @@ class QueueManager:
             work_unit_key: The work unit key for the queue items
             context: Context string describing what was being processed (e.g., "processing representation batch")
         """
-        if is_retryable_error(error):
+        if is_retryable_error(error) or isinstance(error, EmptyRepresentationError):
             try:
                 attempts = await self._get_work_unit_retry_attempts(work_unit_key) + 1
                 if attempts < MAX_RETRYABLE_ATTEMPTS:
