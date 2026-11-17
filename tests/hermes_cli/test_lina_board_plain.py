@@ -154,6 +154,31 @@ def test_each_field_check_says_why_it_refuses(field, text, reason):
     assert CHECKS[field](text) == reason
 
 
+WORK = ("봇", "[작업 진행 1/3] 백업 사진을 크기별로 나누는 중")
+LEDGER_LINK = ("봇", "[작업 · t_0000000c] 장부 목표 G117(사진 백업 정리)에 붙였다. 목표 없이 열려 있던 카드라서 연결했다.")
+
+
+@pytest.mark.parametrize(("comments", "status", "source"), [
+    ([WORK, ("kanban-dispatcher", "[대기 충족] card t_0000000d done — ready로 돌렸다. 다음 run이 이어 간다.")], "running",
+     WORK[1]),
+    ([WORK, ("봇", "[대기 충족] card t_0000000d done")], "running", WORK[1]),
+    ([WORK, LEDGER_LINK], "blocked", WORK[1]),
+    ([LEDGER_LINK], "blocked", ""),
+    ([WORK, ("lina-worker", "run OT-ALP0001 handed out")], "running", WORK[1]),
+    ([WORK, ("봇", "[lina worker · automatic] run OT-ALP0001 handed out (codex).")], "running", WORK[1]),
+    ([("lina-worker", "[lina worker · automatic] run OT-ALP0001 handed out")], "running", ""),
+    ([WORK, ("봇", "[받음] 읽었다")], "running", WORK[1]),
+    ([LEDGER_LINK, WORK], "running", WORK[1]),
+    ([WORK, ("봇", "[현황] 장부 목표 G117 기준으로 남은 사진을 세는 중")], "running",
+     "[현황] 장부 목표 G117 기준으로 남은 사진을 세는 중"),
+    ([WORK, ("봇", "  ")], "running", WORK[1]),
+    ([WORK], "done", ""),
+])
+def test_the_now_source_is_the_latest_comment_that_is_not_an_automatic_notice(comments, status, source):
+    from hermes_cli.lina_board_plain import now_source
+    assert now_source(comments, status) == source
+
+
 def test_good_answers_are_stored_and_served_on_run_cards_and_work_cards(work, fakes, model, client):
     from hermes_cli.lina_board_plain import write_board
     _runs(work, fakes)

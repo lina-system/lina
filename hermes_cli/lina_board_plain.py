@@ -41,6 +41,10 @@ SOURCE_CHARS = 2000
 ALLOWED_LATIN = frozenset({"LINA", "Honcho", "GitHub", "macOS", "iPhone", "Telegram", "Codex"})
 # Words the app never draws (lina-app words.ts BANNED_WORDS): a now line holding one is dropped there, so refuse it here and let the model retry.
 NOW_BANNED = ("세션", "일꾼", "회차", "판정", "장부")
+# Automatic notices, which say nothing of what a card is doing, are skipped as a card's now source: by their author (the
+# dispatcher's met waits, the hub's run notices) or their head (receipts, met waits, run notices, ledger links).
+NOW_SKIP_AUTHORS = frozenset({"kanban-dispatcher", "lina-worker"})
+NOW_SKIP_HEAD = re.compile(r"\[받음\]|\[대기 충족\]|\[lina worker|\[[^\]\n]*\]\s*장부 목표 G\d+.*붙였다", re.DOTALL)
 ACTION_NOUNS = ("정리", "점검", "추가", "수정", "확인", "개선", "작성", "이전", "배포", "설정", "검토", "정비", "구축",
                 "연결", "분리", "통합", "제거", "교체", "갱신", "복구", "조사", "분석", "준비", "도입", "적용", "전환",
                 "등록", "보완", "마련", "구현", "변경", "해결", "대응", "측정", "비교", "보강", "이관", "검증", "표시",
@@ -484,13 +488,12 @@ def card_sources() -> list[Source]:
 
 def now_source(comments: list[tuple[str, str]], status: str) -> str:
     """A card's ``now`` source from its ``(author, body)`` comments, oldest first: the latest that is not empty and
-    not an automatic notice, which says nothing of what is being done (the hub's own comments, by
-    ``kanban_link.AUTHOR``, and a receipt starting ``[받음]``); "" once the card is done or when no comment is left."""
-    from hermes_cli.worker.kanban_link import AUTHOR
+    not an automatic notice (``NOW_SKIP_AUTHORS``, ``NOW_SKIP_HEAD``); "" once the card is done or when no comment is
+    left."""
     if status == "done":
         return ""
     return next((body for author, body in reversed(comments)
-                 if body.strip() and author != AUTHOR and not body.lstrip().startswith("[받음]")), "")
+                 if body.strip() and author not in NOW_SKIP_AUTHORS and not NOW_SKIP_HEAD.match(body.lstrip())), "")
 
 
 def _card_lines(card_id: str, board: str, title: str, body: str | None, status: str,
