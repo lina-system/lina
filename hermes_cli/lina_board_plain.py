@@ -33,6 +33,7 @@ LIMITS = {"title": 25, "now": 40, "result": 80}  # the app shows a now line of a
 EMPTY = dict.fromkeys(FIELDS)
 STOP_AFTER_S = 30 * 60
 MAX_CALLS = 20
+RETRIES = 2  # more asks for one field whose answer failed its check, in the same slot, each told why
 PASS_S = 90.0  # wall time one pass may spend calling the model; what is left stays pending for the next
 EVERY_S = 60.0
 _clock = time.monotonic
@@ -54,6 +55,7 @@ class Source(NamedTuple):
     field: str
     text: str
     board: str = ""  # a card's board (``board_key``); "" for runs. Card ids repeat across boards (an imported board)
+    unfinished: bool = False  # a card that is not done: its fields queue ahead of done cards' and runs'
 
 
 def board_key(slug: str | None) -> str:
@@ -171,12 +173,16 @@ def _clean(answer: str) -> str:
     return lines[0].strip("\"'“”‘’ ") if len(lines) == 1 else "\n".join(lines)
 
 
-def ask(field: str, source: str) -> str:
-    """One field from its source text through the auxiliary client; raises when the call fails."""
+def ask(field: str, source: str, refused: list[tuple[str, str]] | None = None) -> str:
+    """One field from its source text through the auxiliary client; raises when the call fails. *refused* holds the
+    earlier answers of this slot with the reason each failed its check, sent back so the model writes it again."""
     from agent.auxiliary_client import call_llm
-    response = call_llm(task=TASK, max_tokens=120, temperature=0.2, messages=[
-        {"role": "system", "content": _SYSTEM + "\n\n" + _PROMPTS[field]},
-        {"role": "user", "content": "원문: " + source[:SOURCE_CHARS]}])
+    messages = [{"role": "system", "content": _SYSTEM + "\n\n" + _PROMPTS[field]},
+                {"role": "user", "content": "원문: " + source[:SOURCE_CHARS]}]
+    for answer, reason in refused or ():
+        messages += [{"role": "assistant", "content": answer},
+                     {"role": "user", "content": f"이 답은 쓸 수 없다({reason}). 같은 규칙으로 한 줄만 다시 쓴다."}]
+    response = call_llm(task=TASK, max_tokens=120, temperature=0.2, messages=messages)
     return _clean(response.choices[0].message.content or "")
 
 
@@ -303,13 +309,27 @@ def _say_call_failed(s: Source, exc: Exception) -> None:
     _said["call"] = problem
 
 
+def _answer(s: Source, deadline: float) -> tuple[str, str | None]:
+    """One field's answer and the reason its check refused it (None when it passed): a refused answer is sent back
+    with its reason and asked again, at most RETRIES times and only before *deadline*. Raises when a call fails."""
+    refused: list[tuple[str, str]] = []
+    while True:
+        answer = ask(s.field, s.text.strip(), refused)
+        reason = CHECKS[s.field](answer)
+        if not reason or len(refused) == RETRIES or _clock() >= deadline:
+            return answer, reason
+        log.debug("board line %s %s %s refused, asking again: %s", s.kind, s.id, s.field, reason)
+        refused.append((answer, reason))
+
+
 def write(sources: list[Source], root: Path | None = None, now: float | None = None, usable: bool = True) -> dict:
     """Write what changed: one call per field whose source hash moved (at most MAX_CALLS and PASS_S a run), the check's verdict
     stored either way; a field whose source is gone is cleared. A call that fails stores nothing and is tried again
     next run; with no usable model setting (``usable`` False) nothing is called, the due fields stay pending and the
-    writer counts as stopped. The due fields queue by how long they have waited: never attempted first, then the oldest last
-    attempt (a failed call counts as an attempt), so sources that change on every pass cannot keep a field waiting
-    for more than a few passes. -> {called, failed, pending}."""
+    writer counts as stopped. The due fields of unfinished cards queue first, then the rest; within each, by how long
+    they have waited: never attempted first, then the oldest last attempt (a failed call counts as an attempt), so
+    sources that change on every pass cannot keep a field waiting for more than a few passes. A refused answer is
+    asked again in its slot (``_answer``). -> {called, failed, pending}."""
     now = int(time.time() if now is None else now)
     db = _open(root, write=True)
     try:
@@ -324,7 +344,7 @@ def write(sources: list[Source], root: Path | None = None, now: float | None = N
                         db.execute(f"DELETE FROM {table} WHERE kind = ? AND board = ? AND id = ? AND field = ?",
                                    (s.kind, s.board, s.id, s.field))
         due = sorted((s for s in sources if s.text.strip() and cached.get(_key(s)) != _hash(s)),
-                     key=lambda s: tried.get(_key(s), -1))  # stable: source order among equals
+                     key=lambda s: (not s.unfinished, tried.get(_key(s), -1)))  # stable: source order among equals
         calls, failed, deadline = [], 0, _clock() + PASS_S
         for s in due[:MAX_CALLS] if usable else ():
             if _clock() >= deadline:
@@ -334,13 +354,12 @@ def write(sources: list[Source], root: Path | None = None, now: float | None = N
                 db.execute("INSERT OR REPLACE INTO attempt (kind, board, id, field, at) VALUES (?, ?, ?, ?, ?)",
                            (*_key(s), now))
             try:
-                answer = ask(s.field, s.text.strip())
+                answer, reason = _answer(s, deadline)
             except Exception as exc:  # health: allow BLE001 -- any provider error; logged once per distinct failure, the field is retried next pass
                 _say_call_failed(s, exc)
                 failed += 1
                 continue
             _said["call"] = None
-            reason = CHECKS[s.field](answer)
             if reason:
                 log.info("board line %s %s %s refused: %s", s.kind, s.id, s.field, reason)
             with db:
@@ -466,11 +485,12 @@ def now_source(comments: list[tuple[str, str]], status: str) -> str:
 def _card_lines(card_id: str, board: str, title: str, body: str | None, status: str,
                 comments: list[tuple[str, str]], result: str) -> list[Source]:
     """One work card's sources: title from the card title plus the issue it names, now from ``now_source``, result
-    from *result* once it is done."""
+    from *result* once it is done; a card that is not done queues first (``Source.unfinished``)."""
     issue = _ISSUE_REF.search(body or "")
-    return [Source("card", card_id, "title", title + (f" {issue.group(0)}" if issue else ""), board),
-            Source("card", card_id, "now", now_source(comments, status), board),
-            Source("card", card_id, "result", result if status == "done" else "", board)]
+    unfinished = status != "done"
+    return [Source("card", card_id, "title", title + (f" {issue.group(0)}" if issue else ""), board, unfinished),
+            Source("card", card_id, "now", now_source(comments, status), board, unfinished),
+            Source("card", card_id, "result", result if status == "done" else "", board, unfinished)]
 
 
 def _board_cards(kanban_db, path: Path, board: str) -> list[Source]:
