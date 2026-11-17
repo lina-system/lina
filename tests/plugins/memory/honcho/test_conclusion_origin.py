@@ -86,3 +86,25 @@ def test_generated_honcho_recall_cannot_precede_or_pose_as_original_evidence(mon
     block = text.split("<external-data>", 1)[1].split("</external-data>", 1)[0]
     assert "> The owner grows herbs." in block
     assert "derived; check original record" in block
+
+
+def test_missing_premise_is_unknown_provenance_and_service_errors_still_raise():
+    from plugins.memory.honcho.conclusion_sources import conclusion_record
+
+    class NotFoundError(Exception):  # the SDK's NotFoundError carries status 404
+        status = 404
+
+    orphan = SimpleNamespace(
+        id="orphan", content="The owner grows herbs.", created_at=None, observer_id="agent-peer",
+        observed_id="owner-peer", session_id="conversation", source_message_ids=[], source_ids=["deleted-premise"])
+
+    def get(ident):
+        raise NotFoundError("Conclusion not found")
+
+    def broken(ident):
+        raise RuntimeError("service down")
+
+    record = conclusion_record(orphan, SimpleNamespace(get=get), lambda *a: None, assistant_peer_id="agent-peer")
+    assert record["source_speakers"] == ["unknown"] and record["source_grades"] == [None]
+    with pytest.raises(RuntimeError):
+        conclusion_record(orphan, SimpleNamespace(get=broken), lambda *a: None, assistant_peer_id="agent-peer")

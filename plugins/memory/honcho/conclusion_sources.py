@@ -12,12 +12,18 @@ def message_speaker(message: Any, assistant_peer_id: str) -> str:
         "agent" if getattr(message, "peer_id", None) == assistant_peer_id else "unknown")
 
 
+def _premise_missing(error: Exception) -> bool:
+    """True for the Honcho SDK's 404 on a premise lookup; every other failure is a real service error."""
+    return getattr(error, "status", None) == 404
+
+
 def conclusion_record(
     conclusion: Any, scope: Any, get_message: Callable[[str, str], Any], *, assistant_peer_id: str,
 ) -> dict[str, Any]:
     """Follow explicit message citations and derived premises to their existing speaker kinds and grades.
 
-    Uncited legacy conclusions and circular ancestry remain unknown; neither can establish an owner fact.
+    Uncited legacy conclusions, circular ancestry and premises that no longer resolve (deleted, or never stored:
+    ``source_ids`` has no foreign key) remain unknown; none can establish an owner fact. Other read failures propagate.
     Shared premises and messages are read once within this traversal.
     """
     speakers: list[str] = []
@@ -35,7 +41,14 @@ def conclusion_record(
         if ident in visited:
             continue
         visited.add(ident)
-        current = conclusion if ident == root_id else scope.get(ident)
+        try:
+            current = conclusion if ident == root_id else scope.get(ident)
+        except Exception as error:
+            if not _premise_missing(error):
+                raise
+            speakers.append("unknown")
+            grades.append(None)
+            continue
         message_ids = getattr(current, "source_message_ids", None) or []
         source_ids = getattr(current, "source_ids", None) or []
         session_id = getattr(current, "session_id", None)
