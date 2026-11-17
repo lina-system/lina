@@ -64,6 +64,25 @@ def _start_hermes_board():
     return stop_quietly
 
 
+def _start_board_lines():
+    """The board lines writer (lina#151) of the standalone web server -> its stop: the Hermes board reader runs only
+    here, so only a writer here has the connected board's cards (``lina_board_plain.hermes_card_sources``). The
+    gateway and the worker service run one too; the shared ``plain`` lock keeps one pass writing at a time. Under a
+    gateway the app runs in its process, whose writer already has them. A writer that cannot start is one warning."""
+    import threading
+
+    stop = threading.Event()
+    try:
+        from hermes_cli.lina_board_plain import start_writer
+        from hermes_cli.lina_deps import lina_root
+        from hermes_cli.worker import settings
+
+        start_writer(settings.root(lina_root()), stop)
+    except Exception:
+        logger.warning("board lines: the writer did not start with the server", exc_info=True)
+    return stop.set
+
+
 def _warm_board() -> None:
     """lina#584: the board's outside reads start with the server, so the first sign-in is served from them."""
     try:
@@ -212,12 +231,14 @@ async def standalone_lifespan(app: "FastAPI"):
 
     stop_push = _start_push()
     stop_hermes_board = _start_hermes_board()
+    stop_board_lines = _start_board_lines()
     _warm_board()
 
     try:
         yield
     finally:
         stop_push()
+        stop_board_lines()
         stop_hermes_board()
         try:
             tui_gateway.server.clear_tui_message_injector()

@@ -139,6 +139,8 @@ def _card(work: WorkEnv) -> str:
     ("now", "report.md 를 쓰는 중", "contains a file name"),
     ("now", "`시험` 을 돌리는 중", "contains a backtick"),
     ("now", "로그를 | 로 거르는 중", "contains a command"),
+    ("now", "가" * 40, None),
+    ("now", "가" * 41, "longer than 40 characters"),
     ("result", "빌드 기기 두 대의 디스크를 비웠다.", None),
     ("result", "https://example.com 에 올렸다.", "contains a URL"),
     ("result", "기록을 /var/log 에서 지웠다.", "contains a path"),
