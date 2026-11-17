@@ -500,6 +500,36 @@ def test_a_stopped_row_asks_the_owner_with_the_first_korean_sentence_of_its_bloc
         assert _card_json(client, tid)["ask"] == rows[tid]["ask"]
 
 
+def test_an_untyped_block_waits_on_the_owner_only_when_its_text_asks_them(client, conn):
+    """lina#795: an untyped block reads as the owner's wait only for an owner-inbox line, a question, or the goal loop's
+    gate or budget; a status word or a note of what it waits for asks the owner nothing (``feedback``, no
+    ``waitingOn``, no ``ask``). Typed blocks keep their table; a block with no text says nothing. The row and the
+    detail agree."""
+    blocks = {
+        "status word": ("initial_status", None, ("feedback", None, "none", None)),
+        "plain note": ("빌드 기기가 돌아올 때까지 기다림", None, ("feedback", None, "none", None)),
+        "question": ("새 판을 지금 고정할까요?", None, ("decision", "owner", "none", "새 판을 지금 고정할까요?")),
+        "inbox line": ("agent-a · 검토 · 결과를 봐 주세요.", None, ("review", "owner", "none", "결과를 봐 주세요.")),
+        "needs_input": ("판 고정을 기다려요.", "needs_input", ("decision", "owner", "none", "판 고정을 기다려요.")),
+        "capability": ("웹 푸시 키가 없어요.", "capability", ("feedback", "owner", "none", "웹 푸시 키가 없어요.")),
+        "gate": ("goal gate still failing after 3 tries", None, ("gate", "owner", "none", None)),
+        "budget": ("turn budget spent", None, ("budget", "owner", "none", None)),
+        "no text": ("   ", None, (None, None, None, None)),
+    }
+    ids = {}
+    for name, (reason, kind, _) in blocks.items():
+        ids[name] = kb.create_task(conn, title=name, assignee=AGENT, body="plain body")
+        assert kb.block_task(conn, ids[name], reason=reason, kind=kind)
+
+    rows = {c["id"]: c for c in _valid("WorkCardList", client.get(f"{WORK}/cards").json())["cards"]}
+    fields = ("reason", "waitingOn", "retry", "ask")
+    assert {name: tuple(rows[tid][f] for f in fields) for name, tid in ids.items()} == {
+        name: want for name, (_, _, want) in blocks.items()}
+    for tid in ids.values():
+        detail = _card_json(client, tid)
+        assert tuple(detail[f] for f in ("state", *fields)) == tuple(rows[tid][f] for f in ("state", *fields))
+
+
 LIVE_RUN, DONE_RUN = "OT-SYN1115000001", "OT-SYN1115000002"
 
 
