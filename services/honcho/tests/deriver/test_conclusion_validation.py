@@ -6,7 +6,7 @@ They run without application conftest fixtures or external services.
 """
 
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import crud, models, schemas
 from src.crud.document import _document_model_from_create
 from src.deriver import deriver
+from src.exceptions import EmptyRepresentationError
 from src.llm import HonchoLLMCallResponse
 from src.utils.config_helpers import get_configuration
 from src.utils.representation import PromptRepresentation
@@ -90,7 +91,12 @@ async def _write_batch(
     model_calls: list[str] = []
 
     async def model_response(
-        *, response_model: type[BaseModel], prompt: str, **_kwargs
+        *,
+        response_model: type[BaseModel],
+        prompt: str,
+        validate_response: Callable[[HonchoLLMCallResponse[BaseModel]], None]
+        | None = None,
+        **_kwargs,
     ) -> HonchoLLMCallResponse[BaseModel]:
         model_calls.append(prompt)
         is_generation = response_model is PromptRepresentation
@@ -99,13 +105,16 @@ async def _write_batch(
             if is_generation
             else response_model.model_validate({"supported_indices": supported_indices})
         )
-        return HonchoLLMCallResponse(
+        result = HonchoLLMCallResponse(
             content=payload,
             input_tokens=100,
             output_tokens=10,
             finish_reasons=["STOP"],
-            hit_input_token_cap=clipped_verification and not is_generation,
         )
+        if validate_response is not None:
+            validate_response(result)
+        result.hit_input_token_cap = clipped_verification and not is_generation
+        return result
 
     @asynccontextmanager
     async def transaction(_name: str) -> AsyncIterator[AsyncSession]:
@@ -149,27 +158,29 @@ async def _write_batch(
     )
     configuration = get_configuration(None, None, None)
     configuration.dream.enabled = False
-    await deriver.process_representation_tasks_batch(
-        messages,
-        configuration,
-        observers=["synthetic-peer"],
-        observed="synthetic-peer",
-        queue_item_message_ids=[1],
-        session_id="synthetic-session-id",
-    )
-    capture = {
-        "source": source,
-        "context": context,
-        "source_metadata": messages[-1].h_metadata,
-        "candidates": candidates,
-        "supported_indices": supported_indices,
-        "model_calls": len(model_calls),
-        "embedded": embedded,
-        "written": [row.model_dump(mode="json", by_alias=True) for row in written],
-    }
-    (tmp_path / "capture.json").write_text(
-        json.dumps(capture, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    try:
+        await deriver.process_representation_tasks_batch(
+            messages,
+            configuration,
+            observers=["synthetic-peer"],
+            observed="synthetic-peer",
+            queue_item_message_ids=[1],
+            session_id="synthetic-session-id",
+        )
+    finally:
+        capture = {
+            "source": source,
+            "context": context,
+            "source_metadata": messages[-1].h_metadata,
+            "candidates": candidates,
+            "supported_indices": supported_indices,
+            "model_calls": len(model_calls),
+            "embedded": embedded,
+            "written": [row.model_dump(mode="json", by_alias=True) for row in written],
+        }
+        (tmp_path / "capture.json").write_text(
+            json.dumps(capture, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
     return written, embedded, model_calls
 
 
@@ -284,18 +295,20 @@ async def test_verifier_selects_original_candidates_without_reordering(
 async def test_verification_with_clipped_context_cannot_approve_storage(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    written, embedded, _ = await _write_batch(
-        monkeypatch,
-        tmp_path,
-        source="허브를 옮겼어요.",
-        context="서버와 네트워크 연결을 이전했어요.",
-        candidates=["synthetic-peer moved herb plants."],
-        supported_indices=[0],
-        source_indices=[1],
-        clipped_verification=True,
-    )
-    assert written == []
-    assert embedded == []
+    with pytest.raises(EmptyRepresentationError):
+        await _write_batch(
+            monkeypatch,
+            tmp_path,
+            source="허브를 옮겼어요.",
+            context="서버와 네트워크 연결을 이전했어요.",
+            candidates=["synthetic-peer moved herb plants."],
+            supported_indices=[0],
+            source_indices=[1],
+            clipped_verification=True,
+        )
+    capture = json.loads((tmp_path / "capture.json").read_text(encoding="utf-8"))
+    assert capture["written"] == []
+    assert capture["embedded"] == []
 
 
 @pytest.mark.asyncio
