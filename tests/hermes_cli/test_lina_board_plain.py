@@ -487,3 +487,78 @@ def test_the_writer_is_ok_again_once_its_failing_source_is_gone(work, model):
     model.fail = False
     assert write([], work.root, NOW + 60) == {"called": 0, "failed": 0, "pending": 0}
     assert plain.writer_state(work.root, NOW + 61)["stoppedSince"] is None
+
+
+def test_an_unfinished_card_is_written_before_done_cards_and_runs(work, model, monkeypatch):
+    """With the cache empty, the fields of a card still in progress go first however many done cards and runs sit
+    ahead of it in source order."""
+    from hermes_cli import lina_board_plain as plain
+    monkeypatch.setattr(plain, "MAX_CALLS", 2)
+    done = [line for i in range(5) for line in plain._card_lines(
+        f"t_{i:08x}", "default", f"Finished card {i}", "", "done", [], f"Card {i} was finished.")]
+    running = plain._card_lines("t_00c0ffee", "default", "Weekly photo backup check", "", "running",
+                                [("alpha", "checking last week's backup on the photo server")], "")
+
+    plain.write(_changing_runs(3, 0) + done + running, work.root, NOW)
+
+    assert sorted(field for field, _source in model.calls) == ["now", "title"]
+    assert plain.lookup("card", ["t_00c0ffee"], work.root, board="default")["t_00c0ffee"] == {
+        "title": GOOD["title"], "now": GOOD["now"], "result": None}
+
+
+def _answering(monkeypatch, answers: list[str]) -> list[list[dict]]:
+    """A fake model that gives *answers* in turn and records the messages of every call."""
+    from agent import auxiliary_client
+    sent: list[list[dict]] = []
+
+    def answer(task=None, *, messages, **_kwargs):
+        sent.append(messages)
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=answers[len(sent) - 1]))])
+    monkeypatch.setattr(auxiliary_client, "call_llm", answer)
+    return sent
+
+
+def test_a_refused_answer_is_asked_again_with_its_reason_and_the_passing_one_is_stored(work, monkeypatch):
+    from hermes_cli.lina_board_plain import Source, lookup, write
+    too_long = "가" * 41
+    sent = _answering(monkeypatch, [too_long, GOOD["now"]])
+    now = Source("card", "t_00c0ffee", "now", "checking last week's backup", "default")
+
+    assert write([now], work.root, NOW) == {"called": 1, "failed": 0, "pending": 0}
+
+    assert lookup("card", ["t_00c0ffee"], work.root, board="default")["t_00c0ffee"]["now"] == GOOD["now"]
+    assert _rows(work)[("card", "t_00c0ffee", "now")] == (GOOD["now"], None)
+    retry = sent[1]
+    assert retry[:2] == sent[0] and retry[2] == {"role": "assistant", "content": too_long}
+    assert "longer than 40 characters" in retry[3]["content"] and retry[3]["role"] == "user"
+
+
+def test_an_answer_refused_three_times_stores_the_error_after_exactly_three_calls(work, monkeypatch):
+    from hermes_cli.lina_board_plain import Source, write
+    sent = _answering(monkeypatch, ["OT-ALP0001 디스크 교체", "G12 디스크 교체", "t_1234 디스크 교체", GOOD["title"]])
+    title = Source("card", "t_00c0ffee", "title", "Rotate the build machine disks", "default")
+
+    assert write([title], work.root, NOW) == {"called": 1, "failed": 0, "pending": 0}
+
+    assert len(sent) == 3
+    assert _rows(work)[("card", "t_00c0ffee", "title")] == (None, "contains an id")
+    assert len(sent[2]) == 6  # both refused answers went back with their reasons
+
+
+def test_a_refused_answer_is_not_asked_again_after_the_pass_s_deadline(work, monkeypatch):
+    from hermes_cli import lina_board_plain as plain
+    clock = [0.0]
+    monkeypatch.setattr(plain, "_clock", lambda: clock[0])
+    sent = _answering(monkeypatch, ["가" * 41, GOOD["now"]])
+    from agent import auxiliary_client
+    answer = auxiliary_client.call_llm
+
+    def slow(*args, **kwargs):
+        clock[0] += plain.PASS_S  # the first call uses the whole pass
+        return answer(*args, **kwargs)
+    monkeypatch.setattr(auxiliary_client, "call_llm", slow)
+
+    plain.write([plain.Source("card", "t_00c0ffee", "now", "checking the backup", "default")], work.root, NOW)
+
+    assert len(sent) == 1
+    assert _rows(work)[("card", "t_00c0ffee", "now")] == (None, "longer than 40 characters")
