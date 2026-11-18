@@ -536,6 +536,17 @@ def last_cards() -> list[dict] | None:
     return running.part("cards").value
 
 
+def last_agents() -> dict[str, str]:
+    """The old record's agents (``bots``: id to display name) of the last good pass of this process's reader; {} when
+    no reader of the old record runs here or none has read it yet. It never starts a reader."""
+    with _READER_LOCK:
+        running = _READER
+    if running is None or running.stopped or running.src.work is None:
+        return {}
+    reply = running.part("record").value or {}
+    return {str(k): str(v) for k, v in (reply.get("bots") or {}).items()}
+
+
 def work_shows(shows: list[dict]) -> list[tuple[dict, bool]]:
     """The work cards of a pass (``lina_board_plain.is_work_card``), each with its goal mode: the CLI carries no
     ``goal_mode``, so a card without the field is a goal-mode card unless it is a link-child of another card."""

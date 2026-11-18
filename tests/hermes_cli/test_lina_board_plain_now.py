@@ -157,6 +157,44 @@ def test_a_now_line_that_starts_with_the_owner_s_name_is_refused_though_the_app_
     assert check_now(line.split(" · ", 1)[1]) is None
 
 
+# Who does the work, as ``doer_names`` reads it from the agents; 리나 is LINA's Korean name too.
+NAMES = frozenset({"시온", "리나", "베타"})
+NAMED = ("시온이 실사에서 리나 웹 서버 기동 단계를 알려줄 때까지 기다리는 중", "베타 관리자 권한 허용을 기다리는 중",
+         "리나 앱 보고 화면 배포 확인 대기 중", "웹 서버 기동을 시온에게 묻는 중")
+
+
+@pytest.mark.parametrize("line", NAMED)
+def test_a_now_line_that_names_who_does_the_work_is_refused_with_the_name(line):
+    from hermes_cli.lina_board_plain import check_now
+    reason = check_now(line, NAMES)
+    assert reason is not None and "say what is being done, not who does it" in reason
+    assert next(name for name in NAMES if name in reason) in line
+
+
+@pytest.mark.parametrize("line", ("주인이 앱에서 승인하기를 기다리는 중", "리나 웹 서버 기동 단계 알림을 기다리는 중",
+                                  "워치독 시험 복구 대기", "베타서버 사진을 옮기는 중"))
+def test_a_now_line_naming_the_waited_on_owner_or_the_product_passes(line):
+    from hermes_cli.lina_board_plain import check_now
+    assert check_now(line, NAMES) is None
+
+
+def test_the_names_are_the_agents_less_the_owner(work):
+    from hermes_cli.lina_board_plain import doer_names
+    assert doer_names(work.root) == {"alpha", "알파", "beta", "베타"}
+
+
+def test_a_now_answer_naming_an_agent_is_asked_again_and_the_prompt_says_not_to_name_one(work, monkeypatch):
+    from hermes_cli.lina_board_plain import write_board
+    from tests.hermes_cli.test_lina_board_plain import _card
+    tid = _card(work)
+    sent = _answering(monkeypatch, [GOOD["title"], "알파가 사진 서버 백업을 확인하는 중", "사진 서버 백업을 확인하는 중"])
+    write_board(work.root, NOW)
+
+    assert _rows(work)[("card", tid, "now")] == ("사진 서버 백업을 확인하는 중", None)
+    assert "starts with 알파" in sent[2][3]["content"]
+    assert "누가 하는지가 아니라 무엇을 하는지만 쓴다" in sent[1][0]["content"]
+
+
 def _stored(work, field: str, text: str) -> None:
     """What a cache written under an older ``check_now`` holds: *text* stored as the passing line of *field*."""
     with sqlite3.connect(work.root / "board" / "plain.db") as db:
@@ -201,6 +239,19 @@ def test_a_stored_now_line_whose_rewrites_are_refused_too_is_stored_refused_and_
     assert _rows(work)[("card", "t_0000000a", "now")] == (None, "contains the Latin letters LINA: write it in Korean")
     assert write(_sources(), work.root, NOW + 120) == {"called": 0, "failed": 0, "pending": 0}
     assert len(sent) == 3 + RETRIES + 1
+
+
+@pytest.mark.parametrize("named", NAMED[:3])
+def test_a_stored_now_line_that_names_who_does_it_is_asked_again_once(work, monkeypatch, named):
+    from hermes_cli.lina_board_plain import write
+    fixed = "웹 서버 기동 알림을 기다리는 중"
+    sent = _answering(monkeypatch, [GOOD["title"], GOOD["now"], GOOD["result"], fixed])
+    write(_sources(), work.root, NOW, names=NAMES)
+    _stored(work, "now", named)
+
+    assert write(_sources(), work.root, NOW + 60, names=NAMES) == {"called": 1, "failed": 0, "pending": 0}
+    assert len(sent) == 4 and _rows(work)[("card", "t_0000000a", "now")] == (fixed, None)
+    assert write(_sources(), work.root, NOW + 120, names=NAMES) == {"called": 0, "failed": 0, "pending": 0}
 
 
 def test_a_running_card_s_now_source_is_still_its_latest_comment():

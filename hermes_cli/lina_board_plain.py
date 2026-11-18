@@ -82,6 +82,14 @@ _URL = re.compile(r"https?:|www\.", re.IGNORECASE)
 _WORD = re.compile(r"[A-Za-z][A-Za-z0-9]*")
 _ENDERS = ".!?。"
 _NAME_HEADER = re.compile(r"^[^\s·]{1,8}\s*·\s")  # "시온 · ...": the card shows its owner on its own
+# A now line says what is being done, never who does it (the card shows who): a name of who does the work
+# (``doer_names``) may not be its first word, bare or with any particle, nor carry a subject or dative particle
+# anywhere. The owner is not among those names, so a line may say the owner is waited on.
+_FIRST_WORD_PARTICLES = ("께서", "에게", "한테", "이랑", "이", "가", "은", "는", "의", "도", "와", "과", "랑")
+_DOER_PARTICLES = "께서|에게|한테|이|가|은|는"
+# A name that is also the product's (``리나``, LINA's Korean name) is the product before one of its parts.
+PRODUCT_NAMES = frozenset({"리나"})
+PRODUCT_PARTS = ("웹", "서버", "코어", "허브")
 
 
 def _common(text: str, limit: int) -> str | None:
@@ -202,9 +210,28 @@ def _app_hides(text: str) -> str | None:
     return None if _closes(sentence) else "leaves a bracket or a quote open: close it"
 
 
-def check_now(text: str) -> str | None:
+def _names_doer(text: str, names: frozenset[str] | set[str] | tuple[str, ...]) -> str | None:
+    """Why *text* says who does the work rather than what is done (a header, or one of *names*); None when it does
+    not."""
+    if _NAME_HEADER.match(text):
+        return "starts with a name and a middle dot: say what is being done, not who does it"
+    words = text.split() or [""]
+    for name in sorted(names, key=len, reverse=True):
+        if words[0].startswith(name):
+            rest = words[0][len(name):]
+            product = (name in PRODUCT_NAMES and rest in ("", "의") and len(words) > 1
+                       and words[1].startswith(PRODUCT_PARTS))
+            if (rest == "" or rest in _FIRST_WORD_PARTICLES) and not product:
+                return f"starts with {name}, the name of who does it: say what is being done, not who does it"
+        if re.search(rf"(?<!\S){re.escape(name)}(?:{_DOER_PARTICLES})(?=[\s.,!?。]|$)", text):
+            return f"names {name}, who does it: say what is being done, not who does it"
+    return None
+
+
+def check_now(text: str, names: frozenset[str] | set[str] | tuple[str, ...] = ()) -> str | None:
     """At most 40 characters, one sentence, in the present progressive (~하는 중, ~고 있다) or a short noun
-    phrase, and a line the app shows (``_app_hides``)."""
+    phrase, not saying who does the work (``_names_doer``, *names* from ``doer_names``), and a line the app shows
+    (``_app_hides``)."""
     reason = _common(text, LIMITS["now"])
     if reason:
         return reason
@@ -213,8 +240,9 @@ def check_now(text: str) -> str | None:
     banned = next((w for w in NOW_BANNED if w in text), None)
     if banned:
         return f"contains the word {banned}, which the app does not show"
-    if _NAME_HEADER.match(text):
-        return "starts with a name and a middle dot: say what is being done, not who does it"
+    named = _names_doer(text, names)
+    if named:
+        return named
     body = text.rstrip(_ENDERS).rstrip()
     if body.endswith(("다", "요")) and not body.endswith(("중이다", "고 있다", "중입니다", "고 있습니다")):
         return "not the present progressive or a noun phrase"
@@ -246,7 +274,8 @@ _PROMPTS = {
     "now": ("지금 하고 있는 일을 40자 안의 한 문장으로 쓴다. '~하는 중' 같은 진행형이나 짧은 명사구로 쓴다. '일꾼', '세션', '회차', '판정', '장부'라는 말은 쓰지 않는다.\n"
             "영문 글자는 하나도 쓰지 않고 한글로 쓴다(LINA는 '리나'). 화살표(→), 빗금(/), 말줄임(…)도 쓰지 않는다.\n"
             "멈춘 작업이면 무엇을 기다리는지 쓴다. 이미 끝난 일의 결과는 쓰지 않는다.\n"
-            "맡은 사람이나 봇의 이름을 앞에 붙이지 않는다('시온 ·' 같은 머리말 금지). 기다리는 대상이 길면 '~를 기다리는 중'으로 줄인다.\n"
+            "문장에 맡은 사람이나 봇의 이름을 쓰지 않는다. 누가 하는지가 아니라 무엇을 하는지만 쓴다('시온 ·' 같은 머리말도, '시온이 ~하는 중' 같은 주어도 쓰지 않는다). "
+            "승인이나 답을 기다리는 상대는 써도 된다. 기다리는 대상이 길면 '~를 기다리는 중'으로 줄인다.\n"
             "예) 원문: '시온이 실사에서 웹 서버 기동 단계를 알려줄 때까지 기다림' -> 웹 서버 기동 알림을 기다리는 중\n"
             "예) 원문: 'running the test suite on build-a, 120 of 400 passed' -> 시험 묶음을 돌리는 중\n"
             "예) 원문: '질문: 두 기기 중 어느 쪽을 먼저 비울까요?' -> 먼저 비울 기기를 묻는 중\n"
@@ -410,6 +439,21 @@ def _say_call_failed(s: Source, exc: Exception) -> None:
     _said["call"] = problem
 
 
+def _check(field: str, text: str, names: frozenset[str]) -> str | None:
+    return check_now(text, names) if field == "now" else CHECKS[field](text)
+
+
+def doer_names(root: Path) -> frozenset[str]:
+    """The names a now line may not give (``check_now``): the ids and display names of the agents of LINA's work
+    record (``work.env``) and of the connected Hermes board's old record (``lina_board_hermes.last_agents``), less the
+    owner's, who is waited on rather than doing the work."""
+    from hermes_cli import lina_board_hermes as hermes
+    from hermes_cli.work import env
+    mine = env.load(root)
+    agents = {**hermes.last_agents(), **mine.agents}
+    return frozenset(n.strip() for pair in agents.items() for n in pair if n.strip()) - {mine.owner, mine.owner_name}
+
+
 def _tell(root: Path, s: Source) -> None:
     """A connected Hermes board card's served line changed: one ``cards`` journal line (``lina_board_events``), so an
     open app screen refetches the card. LINA's own cards' lines are not announced."""
@@ -419,28 +463,29 @@ def _tell(root: Path, s: Source) -> None:
         announce(root, "cards", "line", s.id)
 
 
-def _answer(s: Source, deadline: float) -> tuple[str, str | None]:
+def _answer(s: Source, deadline: float, names: frozenset[str]) -> tuple[str, str | None]:
     """One field's answer and the reason its check refused it (None when it passed): a refused answer is sent back
     with its reason and asked again, at most RETRIES times and only before *deadline*. Raises when a call fails."""
     refused: list[tuple[str, str]] = []
     while True:
         answer = ask(s.field, s.text.strip(), refused)
-        reason = CHECKS[s.field](answer)
+        reason = _check(s.field, answer, names)
         if not reason or len(refused) == RETRIES or _clock() >= deadline:
             return answer, reason
         log.debug("board line %s %s %s refused, asking again: %s", s.kind, s.id, s.field, reason)
         refused.append((answer, reason))
 
 
-def _due(s: Source, cached: tuple[str, str | None] | None) -> bool:
+def _due(s: Source, cached: tuple[str, str | None] | None, names: frozenset[str]) -> bool:
     """Whether a field is asked again: its source hash moved, or its stored ``now`` line fails the current
     ``check_now`` (a check grown since it was stored). A refused answer is stored with no text, so it is asked once."""
     if cached is None or cached[0] != _hash(s):
         return True
-    return s.field == "now" and cached[1] is not None and check_now(cached[1]) is not None
+    return s.field == "now" and cached[1] is not None and check_now(cached[1], names) is not None
 
 
-def write(sources: list[Source], root: Path | None = None, now: float | None = None, usable: bool = True) -> dict:
+def write(sources: list[Source], root: Path | None = None, now: float | None = None, usable: bool = True,
+          names: frozenset[str] = frozenset()) -> dict:
     """Write what changed: one call per field whose source hash moved or whose stored now line its check refuses now
     (``_due``; at most MAX_CALLS and PASS_S a run), the check's verdict
     stored either way; a field whose source is gone is cleared. A call that fails stores nothing and is tried again
@@ -448,8 +493,8 @@ def write(sources: list[Source], root: Path | None = None, now: float | None = N
     writer counts as stopped. The due fields of unfinished cards queue first, then the rest; within each, by how long
     they have waited: never attempted first, then the oldest last attempt (a failed call counts as an attempt), so
     sources that change on every pass cannot keep a field waiting for more than a few passes. A refused answer is
-    asked again in its slot (``_answer``). A Hermes board card whose served line changes is announced (``_tell``).
-    -> {called, failed, pending}."""
+    asked again in its slot (``_answer``); *names* are the ones a now line may not give (``doer_names``). A Hermes
+    board card whose served line changes is announced (``_tell``). -> {called, failed, pending}."""
     now = int(time.time() if now is None else now)
     db = _open(root, write=True)
     try:
@@ -466,7 +511,7 @@ def write(sources: list[Source], root: Path | None = None, now: float | None = N
         for s in cleared:
             if (cached.get(_key(s)) or (None, None))[1] is not None:
                 _tell(_root(root), s)
-        due = sorted((s for s in sources if s.text.strip() and _due(s, cached.get(_key(s)))),
+        due = sorted((s for s in sources if s.text.strip() and _due(s, cached.get(_key(s)), names)),
                      key=lambda s: (not s.unfinished, tried.get(_key(s), -1)))  # stable: source order among equals
         calls, failed, deadline = [], 0, _clock() + PASS_S
         for s in due[:MAX_CALLS] if usable else ():
@@ -477,7 +522,7 @@ def write(sources: list[Source], root: Path | None = None, now: float | None = N
                 db.execute("INSERT OR REPLACE INTO attempt (kind, board, id, field, at) VALUES (?, ?, ?, ?, ?)",
                            (*_key(s), now))
             try:
-                answer, reason = _answer(s, deadline)
+                answer, reason = _answer(s, deadline, names)
             except Exception as exc:  # health: allow BLE001 -- any provider error; logged once per distinct failure, the field is retried next pass
                 _say_call_failed(s, exc)
                 failed += 1
@@ -706,7 +751,8 @@ def write_board(root: Path | None = None, now: float | None = None, lives: dict[
                 usable: bool = True) -> dict:
     """The background step: every run's and work card's sources, then ``write``."""
     root, now = _root(root), time.time() if now is None else now
-    return write(run_sources(root, now, lives) + card_sources() + hermes_card_sources(), root, now, usable)
+    return write(run_sources(root, now, lives) + card_sources() + hermes_card_sources(), root, now, usable,
+                 doer_names(root))
 
 
 @contextmanager
