@@ -446,12 +446,13 @@ def _check(field: str, text: str, names: frozenset[str]) -> str | None:
 def doer_names(root: Path) -> frozenset[str]:
     """The names a now line may not give (``check_now``): the ids and display names of the agents of LINA's work
     record (``work.env``) and of the connected Hermes board's old record (``lina_board_hermes.last_agents``), less the
-    owner's, who is waited on rather than doing the work."""
+    owner's, who is waited on rather than doing the work. Each roster adds its own names: one id may have a display
+    name in each."""
     from hermes_cli import lina_board_hermes as hermes
     from hermes_cli.work import env
     mine = env.load(root)
-    agents = {**hermes.last_agents(), **mine.agents}
-    return frozenset(n.strip() for pair in agents.items() for n in pair if n.strip()) - {mine.owner, mine.owner_name}
+    names = {n.strip() for agents in (hermes.last_agents(), mine.agents) for pair in agents.items() for n in pair}
+    return frozenset(n for n in names if n) - {mine.owner, mine.owner_name}
 
 
 def _tell(root: Path, s: Source) -> None:

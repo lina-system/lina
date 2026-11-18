@@ -183,6 +183,15 @@ def test_the_names_are_the_agents_less_the_owner(work):
     assert doer_names(work.root) == {"alpha", "알파", "beta", "베타"}
 
 
+def test_an_agent_named_differently_by_the_hermes_record_keeps_both_names(work, monkeypatch):
+    from hermes_cli import lina_board_hermes
+    from hermes_cli.lina_board_plain import check_now, doer_names
+    monkeypatch.setattr(lina_board_hermes, "last_agents", lambda: {"alpha": "리나", "owner": "주인"})
+    names = doer_names(work.root)
+    assert names == {"alpha", "알파", "리나", "beta", "베타"}
+    assert check_now("리나가 사진 서버 백업을 확인하는 중", names) is not None
+
+
 def test_a_now_answer_naming_an_agent_is_asked_again_and_the_prompt_says_not_to_name_one(work, monkeypatch):
     from hermes_cli.lina_board_plain import write_board
     from tests.hermes_cli.test_lina_board_plain import _card
