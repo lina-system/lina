@@ -14,8 +14,8 @@
     "omo": {
       "installer": "npm",
       "package": "omo-ai",
-      "version": "5.1.69",
-      "integrity": "sha512-1FMNHIOVd6uj+M8ZEBHhUhdyOBStYiZoXf6mFbt4jlV1H8DtOiah1hMuSoY4eelbYgGLxzBpXdUZjkCYR/F+Jw==",
+      "version": "5.1.77",
+      "integrity": "sha512-6iT2B/EhrB73JpiBGn8wW+IiUn9ZXFVEdTDCxKMR0Lgc+X4klEPlTMSsWwN9fiAwKlLQjH1P6DRHWlNykjNq0A==",
       "bin": "omo",
       "entry": "bin/omo.js",
       "home": "vendor/omo",
