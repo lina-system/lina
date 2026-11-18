@@ -389,6 +389,49 @@ components:
           type: string
           nullable: true
           maxLength: 80
+    PlainHistoryLine:
+      type: object
+      additionalProperties: false
+      description: >
+        One earlier step of a card (G138): what its now line did, in one checked past-tense sentence of at most 40
+        characters, written by the model when the now line was, or backfilled once from the card's own comments.
+      required: [at, until, text]
+      properties:
+        at:
+          type: integer
+          description: When the step's now line was first stored (epoch seconds); a backfilled step's source time.
+        until:
+          type: integer
+          nullable: true
+          description: When another sentence replaced it or the card ended (epoch seconds); null on a backfilled step.
+        text:
+          type: string
+          maxLength: 40
+    PlainDetailLines:
+      type: object
+      additionalProperties: false
+      description: >
+        A card detail's checked lines: the `PlainLines` of its list row and its step record.
+      required: [title, now, result]
+      properties:
+        title:
+          type: string
+          nullable: true
+          maxLength: 25
+        now:
+          type: string
+          nullable: true
+          maxLength: 60
+        result:
+          type: string
+          nullable: true
+          maxLength: 80
+        history:
+          type: array
+          maxItems: 40
+          description: The card's earlier steps, newest first; empty or absent when none was recorded.
+          items:
+            $ref: "#/components/schemas/PlainHistoryLine"
     WorkCardSummary:
       type: object
       additionalProperties: false
@@ -677,7 +720,7 @@ components:
           nullable: true
           maxLength: 120
         plain:
-          $ref: "#/components/schemas/PlainLines"
+          $ref: "#/components/schemas/PlainDetailLines"
         endedAt:
           type: integer
           nullable: true

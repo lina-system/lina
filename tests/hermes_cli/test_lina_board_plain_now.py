@@ -11,7 +11,7 @@ import sqlite3
 import pytest
 
 from tests.hermes_cli._work_env import NOW, WorkEnv
-from tests.hermes_cli.test_lina_board_plain import GOOD, FakeModel, _answering, _rows
+from tests.hermes_cli.test_lina_board_plain import GOOD, FakeModel, _answering, _rows, said
 
 pytestmark = pytest.mark.platforms("posix")
 
@@ -72,7 +72,7 @@ def test_a_card_created_blocked_takes_its_now_source_from_its_comments(work, mod
 def test_ids_numbers_urls_and_hashes_never_reach_the_model_and_latin_words_are_asked_in_korean(work, monkeypatch):
     from hermes_cli.lina_board_plain import write_board
     tid = _blocked_card(WITH_TOKENS, WITH_TOKENS)
-    sent = _answering(monkeypatch, [GOOD["title"], "복구 결정을 기다리는 중"])
+    sent = _answering(monkeypatch, [GOOD["title"], said("복구 결정을 기다리는 중")])
     assert write_board(work.root, NOW) == {"called": 2, "failed": 0, "pending": 0}
 
     assert _rows(work)[("card", tid, "now")] == ("복구 결정을 기다리는 중", None)
@@ -85,7 +85,7 @@ def test_ids_numbers_urls_and_hashes_never_reach_the_model_and_latin_words_are_a
 def test_an_answer_refused_for_an_id_is_sent_back_and_the_korean_rewrite_is_stored(work, monkeypatch):
     from hermes_cli.lina_board_plain import Source, write
     copied, fixed = "t_6e6510d5 복구 결정을 기다리는 중", "현장 복구 결정을 기다리는 중"
-    sent = _answering(monkeypatch, [copied, fixed])
+    sent = _answering(monkeypatch, [copied, said(fixed)])
 
     write([Source("card", "t_0000000a", "now", WAITING, "default", True)], work.root, NOW)
 
@@ -196,7 +196,7 @@ def test_a_now_answer_naming_an_agent_is_asked_again_and_the_prompt_says_not_to_
     from hermes_cli.lina_board_plain import write_board
     from tests.hermes_cli.test_lina_board_plain import _card
     tid = _card(work)
-    sent = _answering(monkeypatch, [GOOD["title"], "알파가 사진 서버 백업을 확인하는 중", "사진 서버 백업을 확인하는 중"])
+    sent = _answering(monkeypatch, [GOOD["title"], "알파가 사진 서버 백업을 확인하는 중", said("사진 서버 백업을 확인하는 중")])
     write_board(work.root, NOW)
 
     assert _rows(work)[("card", tid, "now")] == ("사진 서버 백업을 확인하는 중", None)
@@ -219,7 +219,7 @@ def _sources():
 def test_a_stored_now_line_the_check_now_refuses_is_asked_again_once_and_the_rewrite_is_stored(work, monkeypatch):
     from hermes_cli.lina_board_plain import write
     hidden, fixed = "토스 QR 로그인을 승인하기를 기다리는 중", "토스 로그인 승인을 기다리는 중"
-    sent = _answering(monkeypatch, [GOOD["title"], GOOD["now"], GOOD["result"], fixed])
+    sent = _answering(monkeypatch, [GOOD["title"], said(GOOD["now"]), GOOD["result"], said(fixed)])
     write(_sources(), work.root, NOW)
     _stored(work, "now", hidden)
     _stored(work, "title", "LINA 알림 정리")
@@ -238,7 +238,7 @@ def test_a_stored_now_line_the_check_now_refuses_is_asked_again_once_and_the_rew
 def test_a_stored_now_line_whose_rewrites_are_refused_too_is_stored_refused_and_not_asked_again(work, monkeypatch):
     from hermes_cli.lina_board_plain import RETRIES, write
     hidden = "현장 실사에서 LINA 웹 서버 기동 알림 대기 중"
-    sent = _answering(monkeypatch, [GOOD["title"], GOOD["now"], GOOD["result"]] + [hidden] * (RETRIES + 1))
+    sent = _answering(monkeypatch, [GOOD["title"], said(GOOD["now"]), GOOD["result"]] + [hidden] * (RETRIES + 1))
     write(_sources(), work.root, NOW)
     _stored(work, "now", hidden)
 
@@ -254,7 +254,7 @@ def test_a_stored_now_line_whose_rewrites_are_refused_too_is_stored_refused_and_
 def test_a_stored_now_line_that_names_who_does_it_is_asked_again_once(work, monkeypatch, named):
     from hermes_cli.lina_board_plain import write
     fixed = "웹 서버 기동 알림을 기다리는 중"
-    sent = _answering(monkeypatch, [GOOD["title"], GOOD["now"], GOOD["result"], fixed])
+    sent = _answering(monkeypatch, [GOOD["title"], said(GOOD["now"]), GOOD["result"], said(fixed)])
     write(_sources(), work.root, NOW, names=NAMES)
     _stored(work, "now", named)
 

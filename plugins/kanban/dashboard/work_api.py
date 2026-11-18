@@ -495,10 +495,15 @@ def _run_dict(facts: CardFacts, run: kanban_db.Run, now: int) -> dict[str, Any]:
 
 def card_detail(facts: CardFacts, now: int, goal_title: Optional[str] = None,
                 found: Found = NOTHING_FOUND) -> dict[str, Any]:
-    """One card in full; *found* gives the result records of the card and of its worker runs."""
+    """One card in full; *found* gives the result records of the card and of its worker runs. Its ``plain`` adds the
+    card's step record (``plain.history``, G138), which list rows leave out."""
+    from hermes_cli import lina_board_plain_history as history
+    from hermes_cli.lina_board_plain import board_key
     gates = _latest_gate_results(facts.events)
+    summary = card_summary(facts, now, goal_title)
     return {
-        **card_summary(facts, now, goal_title),
+        **summary,
+        "plain": {**summary["plain"], "history": history.lookup("card", facts.task.id, board=board_key(facts.board))},
         "todos": parse_todos(facts.task.body, gates),
         "workerRuns": [dict(run, artifacts=found.run(run["id"])) for run in worker_runs(facts.comments)],
         "runsAwaitingVerdict": runs_awaiting_verdict(facts),
