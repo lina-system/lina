@@ -11,13 +11,13 @@
         "reasoning": "max"
       },
       {
-        "model": "gpt-6-astra",
+        "model": "gpt-6.2-astra",
         "reasoning": "max"
       }
     ],
     "categories.ultrabrain": [
       {
-        "model": "gpt-6.1-sol",
+        "model": "gpt-6.2-sol",
         "reasoning": "max"
       },
       {
@@ -27,7 +27,7 @@
     ],
     "categories.deep-high": [
       {
-        "model": "gpt-6.1-sol",
+        "model": "gpt-6.2-sol",
         "reasoning": "high"
       },
       {
@@ -63,7 +63,7 @@
     ],
     "categories.unspecified-high": [
       {
-        "model": "gpt-6.1-sol",
+        "model": "gpt-6.2-sol",
         "reasoning": "high"
       },
       {
@@ -95,13 +95,13 @@
     ],
     "agents.plan-consultant": [
       {
-        "model": "gpt-6-astra",
+        "model": "gpt-6.2-astra",
         "reasoning": "high"
       }
     ],
     "agents.plan-reviewer": [
       {
-        "model": "gpt-6.1-sol",
+        "model": "gpt-6.2-sol",
         "reasoning": "xhigh"
       }
     ]

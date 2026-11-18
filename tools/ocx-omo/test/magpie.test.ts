@@ -17,7 +17,7 @@ import { extractChains } from "../src/upstream.js";
 const at = (path: string) => fileURLToPath(new URL(path, import.meta.url));
 const FIXTURES = at("../../test/fixtures/");
 const CLI = at("../src/cli.js");
-const OMO_TASK = join(FIXTURES, "omo-task-5.1.69.js");
+const OMO_TASK = join(FIXTURES, "omo-task-5.1.77.js");
 const MODELS = join(FIXTURES, "models.magpie.json");
 
 const policy = JSON.parse(readFileSync(at("../../policy.default.json"), "utf8")) as Policy;
@@ -69,10 +69,20 @@ describe("magpie plan from the fixture catalog", () => {
     const plan = buildPlan(chains, policy, without);
     const ultrabrain = plan.routes["categories.ultrabrain"];
     assert.deepEqual(ultrabrain?.models.map((entry) => entry.model), [
+      "magpie/hub/codex/gpt-6.2-astra",
       "magpie/hub/codex/gpt-6-astra",
-      "magpie/hub/codex/gpt-6.1-sol",
+      "magpie/hub/codex/gpt-6.2-sol",
     ]);
     assert.ok(ultrabrain?.skipped.includes("claude-opus-5-5"));
+  });
+
+  test("puts the 6.2 astra and sol first where omo 5.1.77 and the policy name them", () => {
+    const firstModel = (route: string) => magpiePlan.routes[route]?.models[0]?.model;
+    assert.equal(firstModel("categories.ultrabrain"), "magpie/hub/codex/gpt-6.2-astra");
+    assert.equal(firstModel("categories.deep-high"), "magpie/hub/codex/gpt-6.2-astra");
+    assert.equal(firstModel("agents.plan-reviewer"), "magpie/hub/codex/gpt-6.2-astra");
+    assert.equal(firstModel("categories.deep-low"), "magpie/hub/codex/gpt-6.2-sol");
+    assert.ok(references(magpiePlan).some((entry) => entry.model === "magpie/hub/codex/gpt-6.2-sol"));
   });
 
   test("routes only to the named remote and the policy's providers", () => {
