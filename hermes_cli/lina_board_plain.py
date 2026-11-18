@@ -81,6 +81,7 @@ _HASH = re.compile(r"\b[0-9a-f]{7,40}\b")
 _URL = re.compile(r"https?:|www\.", re.IGNORECASE)
 _WORD = re.compile(r"[A-Za-z][A-Za-z0-9]*")
 _ENDERS = ".!?。"
+_NAME_HEADER = re.compile(r"^[^\s·]{1,8}\s*·\s")  # "시온 · ...": the card shows its owner on its own
 
 
 def _common(text: str, limit: int) -> str | None:
@@ -212,6 +213,8 @@ def check_now(text: str) -> str | None:
     banned = next((w for w in NOW_BANNED if w in text), None)
     if banned:
         return f"contains the word {banned}, which the app does not show"
+    if _NAME_HEADER.match(text):
+        return "starts with a name and a middle dot: say what is being done, not who does it"
     body = text.rstrip(_ENDERS).rstrip()
     if body.endswith(("다", "요")) and not body.endswith(("중이다", "고 있다", "중입니다", "고 있습니다")):
         return "not the present progressive or a noun phrase"
@@ -243,6 +246,8 @@ _PROMPTS = {
     "now": ("지금 하고 있는 일을 40자 안의 한 문장으로 쓴다. '~하는 중' 같은 진행형이나 짧은 명사구로 쓴다. '일꾼', '세션', '회차', '판정', '장부'라는 말은 쓰지 않는다.\n"
             "영문 글자는 하나도 쓰지 않고 한글로 쓴다(LINA는 '리나'). 화살표(→), 빗금(/), 말줄임(…)도 쓰지 않는다.\n"
             "멈춘 작업이면 무엇을 기다리는지 쓴다. 이미 끝난 일의 결과는 쓰지 않는다.\n"
+            "맡은 사람이나 봇의 이름을 앞에 붙이지 않는다('시온 ·' 같은 머리말 금지). 기다리는 대상이 길면 '~를 기다리는 중'으로 줄인다.\n"
+            "예) 원문: '시온이 실사에서 웹 서버 기동 단계를 알려줄 때까지 기다림' -> 웹 서버 기동 알림을 기다리는 중\n"
             "예) 원문: 'running the test suite on build-a, 120 of 400 passed' -> 시험 묶음을 돌리는 중\n"
             "예) 원문: '질문: 두 기기 중 어느 쪽을 먼저 비울까요?' -> 먼저 비울 기기를 묻는 중\n"
             "예) 원문: 'waiting on background job: image resize batch' -> 사진 크기 일괄 변환 대기"),

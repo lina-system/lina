@@ -148,6 +148,15 @@ def test_a_now_line_the_app_hides_is_refused_with_a_reason_the_model_can_act_on(
     assert reason is not None and word in reason
 
 
+@pytest.mark.parametrize("line", ("시온 · 토스 로그인 승인 대기 중", "리나 · 웹 서버 기동 알림 대기"))
+def test_a_now_line_that_starts_with_the_owner_s_name_is_refused_though_the_app_would_show_it(line):
+    """The card shows who holds it on its own; a name before the work in the line is a header, not the work."""
+    from hermes_cli.lina_board_plain import check_now
+    reason = check_now(line)
+    assert reason is not None and "name" in reason
+    assert check_now(line.split(" · ", 1)[1]) is None
+
+
 def _stored(work, field: str, text: str) -> None:
     """What a cache written under an older ``check_now`` holds: *text* stored as the passing line of *field*."""
     with sqlite3.connect(work.root / "board" / "plain.db") as db:
