@@ -487,6 +487,10 @@ that option is only an explicit interpreter override. The API and deriver are ne
 unrelated destination workspaces remain intact. Legacy vectors, including 1536-wide ones, are explicitly
 left for `lina store reembed`; migration never calls an embedding endpoint.
 
+With the destination store running and the memory imported, run `lina store owner-backfill`, review each
+migrated agent's counts, then run `lina store owner-backfill --apply`. Follow the
+[per-agent count and recall checks](test-copy.md#backfill-the-owner-speaker) before running `scripts/agent_acceptance.py`.
+
 Search over the migrated memory is therefore partial until `lina store reembed` finishes: Honcho's searches and
 the vector leg of `memory_search` only reach rows that have a vector of the configured model. While the agent's
 Honcho workspace has conclusions without one, `honcho_search` (its `partial` field) and the recall prefetch say

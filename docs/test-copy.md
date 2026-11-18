@@ -43,6 +43,23 @@ Name each host of the old setup with `--old-host <name>` (repeatable): the copy'
 those hosts, the old kanban board, `hermes kanban` and `session-queue` are not where its work status lives, and that
 its own record is `lina work`. The report's `census` lists the copied files that still name them.
 
+### Backfill the owner speaker
+
+After `lina store install` and the memory import, keep `LINA_HOME` and `HERMES_HOME` set to the destination
+root with its store running. Each command covers every profile there that has a `state.db`. Check the
+dry-run line for every migrated agent before applying the changes:
+
+```sh
+lina store owner-backfill          # count unknown user turns and how many qualify as the owner's
+lina store owner-backfill --apply  # mark the qualifying turns as owner
+lina store owner-backfill          # verify the remaining unknown count and zero qualifying turns
+```
+
+For each agent, `set` should match the dry run's owner count, and the last run's unknown count should match
+`stay unknown`. A nonzero remainder is expected when the session source is missing or outside
+`heart.owner_sources`, or the turn has a machine prefix. Those turns keep `unknown`. With the same data and
+settings, another `--apply` sets zero rows.
+
 ## 3. Copy the cron jobs
 
 ```sh
@@ -123,6 +140,8 @@ Start a gateway from the copy's home (`lina gateway run`, or `lina gateway insta
    The copy answers on the model you set.
 2. **Recall in the next chat.** In a new chat, ask about something from the first one, and about something from the
    real agent's past. The copy finds both (partial until step 4's re-embedding is done).
+   Before running `scripts/agent_acceptance.py`, search each migrated agent's memory for a distinctive phrase
+   the owner used in an old conversation. Open the top hits and verify they are original messages marked `owner`.
 3. **One worker call.** Write a small brief, then:
 
    ```sh
