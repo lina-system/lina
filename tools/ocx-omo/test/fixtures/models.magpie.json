@@ -32,6 +32,12 @@
           "id": "hub/codex/gpt-6-luna"
         },
         {
+          "id": "hub/codex/gpt-6.2-astra"
+        },
+        {
+          "id": "hub/codex/gpt-6.2-sol"
+        },
+        {
           "id": "hub/codex/gpt-6.1-sol"
         },
         {

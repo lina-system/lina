@@ -54,6 +54,15 @@ describe("extractChains", () => {
     }
   });
 
+  test("reads omo 5.1.77, whose constants name the 6.2 astra and sol", () => {
+    const chains = extractChains(fixture("5.1.77"));
+    assert.deepEqual(Object.keys(chains.categories), CATEGORIES);
+    assert.deepEqual(Object.keys(chains.agents), AGENTS);
+    assert.equal(chains.categories["deep-high"]?.[0]?.model, "gpt-6.2-astra");
+    assert.equal(chains.categories["deep-low"]?.[0]?.model, "gpt-6.2-sol");
+    assert.equal(chains.agents["plan-reviewer"]?.[0]?.model, "gpt-6.2-astra");
+  });
+
   test("fails with the format-changed message on an unknown category shape", () => {
     const unknown = fixture("5.1.69").replace('{"visual-engineering":[', '{"visual-engineering":new Set([');
     assert.throws(
