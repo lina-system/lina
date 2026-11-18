@@ -87,8 +87,9 @@ def end(db: sqlite3.Connection, s: Source, now: int) -> None:
 
 
 def lookup(kind: str, item: str, root: Path | None = None, board: str = "") -> list[dict]:
-    """One card's record, ``[{at, until, text}]`` newest first; empty when there is none or no cache."""
-    from hermes_cli.lina_board_plain import _open
+    """One card's record, ``[{at, until, text}]`` newest first, less the lines the current ``check_past`` refuses;
+    empty when there is none or no cache."""
+    from hermes_cli.lina_board_plain import _open, check_past
     db = _open(root, write=False)
     if db is None:
         return []
@@ -99,7 +100,25 @@ def lookup(kind: str, item: str, root: Path | None = None, board: str = "") -> l
         return []  # a cache written before the record existed has no table yet
     finally:
         db.close()
-    return [{"at": at, "until": until, "text": text} for at, until, text in rows]
+    return [{"at": at, "until": until, "text": text} for at, until, text in rows if not check_past(text)]
+
+
+def recheck(db: sqlite3.Connection) -> None:
+    """Drop the record's lines the current ``check_past`` refuses (once per ``CHECK_REVISION``): a backfilled line
+    (no ``until``) takes its card's other backfilled lines and its ``history_backfill`` mark with it, so a later pass
+    backfills the card again under the current prompt and check (``BACKFILL_CALLS`` a pass still); a line closed from
+    a now line goes alone, its source gone. A past tense waiting to be closed (``history_open``) that is refused is
+    dropped, so it is never recorded. Lines that pass stay."""
+    from hermes_cli.lina_board_plain import check_past
+    refused = [(rowid, card, until) for rowid, *card, until, text in
+               db.execute("SELECT rowid, kind, board, id, until, text FROM history").fetchall() if check_past(text)]
+    db.executemany("DELETE FROM history WHERE rowid = ?", [(rowid,) for rowid, _card, until in refused if until])
+    for card in {tuple(card) for _rowid, card, until in refused if until is None}:
+        db.execute(f"DELETE FROM history WHERE {_CARD} AND until IS NULL", card)
+        db.execute(f"DELETE FROM history_backfill WHERE {_CARD}", card)
+    db.executemany(f"UPDATE history_open SET past = NULL WHERE {_CARD}",
+                   [card for *card, past in db.execute("SELECT kind, board, id, past FROM history_open "
+                                                       "WHERE past IS NOT NULL").fetchall() if check_past(past)])
 
 
 # ---------------------------------------------------------------- backfill
@@ -121,8 +140,13 @@ _SYSTEM = ("너는 작업 카드의 단계 기록을 쓴다. 한국어로, 짧�
 PROMPT = ("아래는 한 작업 카드에 시각순으로 남은 글이다. 각 글이 그 단계에서 한 일을 말하면, 그 일을 40자 안의 과거형 "
           "한 문장으로 '글 번호. 문장' 꼴로 한 줄씩 쓴다('~함', '~했다', '~를 기다림'). '~하는 중', '~대기 중'으로 "
           "끝내지 않는다. 영문 글자, 화살표(→), 빗금(/), 말줄임(…)은 쓰지 않는다. 맡은 사람이나 봇의 이름을 주어로 "
-          "쓰지 않는다. 한 일을 말하지 않는 글(인사, 접수 알림, 상태 낱말만 있는 글)은 건너뛴다.\n"
-          "예) 1. 디스크를 비웠고 경고가 사라졌다 / 2. 검토를 통과했다 -> 1. 빌드 기기 디스크를 비움")
+          "쓰지 않는다. 한 일을 말하지 않는 글(인사, 접수 알림, 상태 낱말만 있는 글)은 건너뛴다. "
+          "변경이나 이슈의 번호('34번 변경')는 쓰지 않고 무엇을 합쳤는지로 쓴다. 기기는 사용자가 부르는 한글 "
+          "이름(리나허브, 리나맥, 빌드 기기)으로 쓰고, 지금은 없는 옛 허브 맥은 '옛 허브 맥'으로 쓴다. 영문 호스트 이름과 "
+          "주소는 쓰지 않는다. 기기 이름은 맡은 사람이나 봇의 이름이 아니다.\n"
+          "예) 1. 디스크를 비웠고 경고가 사라졌다 / 2. 검토를 통과했다 -> 1. 빌드 기기 디스크를 비움\n"
+          "예) 1. #34, #36 order export 수정을 main에 머지 / 2. 허브맥 재부팅 후 build-main 접속 확인 -> "
+          "1. 주문 내보내기 수정을 메인에 합침 / 2. 옛 허브 맥을 재부팅하고 빌드 기기 접속을 확인함")
 _NUMBERED = re.compile(r"^\s*(\d{1,2})\s*[.):]\s*(.+?)\s*$")
 
 

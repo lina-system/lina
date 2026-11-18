@@ -148,6 +148,50 @@ def test_a_now_line_the_app_hides_is_refused_with_a_reason_the_model_can_act_on(
     assert reason is not None and word in reason
 
 
+# Lines the hub held that numbered a change or named the hub Mac that is gone (G138), and hosts, addresses and ids the
+# record may not hold; with a word of the reason. The devices the person names in Korean stay.
+HUB_REFUSED = (
+    ("34·36·37·39번 변경을 메인에 합침", "numbers a change"),
+    ("주문 기능을 마지막 44번 변경까지 메인에 합침", "numbers a change"),
+    ("이슈 12를 닫고 답을 남김", "numbers a change"),
+    ("허브맥 접속이 끊겨 일을 쉬고 재로그인을 기다림", "옛 허브 맥"),
+    ("192.168.0.10 접속을 확인함", "an address"),
+    ("build-main 디스크를 비움", "Latin word build"),
+    ("lina-hub 웹을 다시 띄움", "Latin word lina"),
+    ("OT-SIO1118 결과를 읽음", "an id"),
+)
+HUB_REFUSED_NOW = (("허브 맥 재부팅 시험 승인을 기다리는 중", "옛 허브 맥"), ("변경 34 검토를 기다리는 중", "numbers a change"),
+                   ("10.0.0.5 접속을 기다리는 중", "an address"))
+HUB_SHOWN = ("리나허브 오씨엑스 홈을 한 번 재시작하고 준비 상태 확인함", "옛 허브 맥 폐기 확정을 반영함",
+             "11-10·11-11·11-17 계획 수치를 정정했다", "5개 항목을 확인함", "빌드 기기 디스크를 비움")
+
+
+@pytest.mark.parametrize(("line", "word"), HUB_REFUSED)
+def test_a_step_line_numbering_a_change_or_naming_a_gone_device_a_host_or_an_id_is_refused(line, word):
+    from hermes_cli.lina_board_plain import check_past
+    reason = check_past(line)
+    assert reason is not None and word in reason
+
+
+@pytest.mark.parametrize(("line", "word"), HUB_REFUSED_NOW)
+def test_a_now_line_naming_the_gone_hub_mac_a_change_s_number_or_an_address_is_refused(line, word):
+    from hermes_cli.lina_board_plain import check_now
+    reason = check_now(line)
+    assert reason is not None and word in reason
+
+
+@pytest.mark.parametrize("line", HUB_SHOWN)
+def test_a_step_line_naming_a_device_as_the_person_does_or_listing_dates_or_a_count_passes(line):
+    from hermes_cli.lina_board_plain import check_past
+    assert check_past(line) is None
+
+
+@pytest.mark.parametrize("line", ("리나맥 관리자 실행과 권한 허용을 기다리는 중", "옛 허브 맥 정리 승인을 기다리는 중"))
+def test_a_now_line_naming_a_device_as_the_person_does_passes(line):
+    from hermes_cli.lina_board_plain import check_now
+    assert check_now(line) is None
+
+
 @pytest.mark.parametrize("line", ("시온 · 토스 로그인 승인 대기 중", "리나 · 웹 서버 기동 알림 대기"))
 def test_a_now_line_that_starts_with_the_owner_s_name_is_refused_though_the_app_would_show_it(line):
     """The card shows who holds it on its own; a name before the work in the line is a header, not the work."""
@@ -248,6 +292,20 @@ def test_a_stored_now_line_whose_rewrites_are_refused_too_is_stored_refused_and_
     assert _rows(work)[("card", "t_0000000a", "now")] == (None, "contains the Latin letters LINA: write it in Korean")
     assert write(_sources(), work.root, NOW + 120) == {"called": 0, "failed": 0, "pending": 0}
     assert len(sent) == 3 + RETRIES + 1
+
+
+def test_a_stored_now_line_a_grown_check_refuses_is_served_null_until_the_rewrite_is_stored(work, monkeypatch):
+    from hermes_cli.lina_board_plain import lookup, write
+    stale, fixed = "허브 맥 재부팅 시험 승인을 기다리는 중", "옛 허브 맥 재부팅 승인을 기다리는 중"
+    sent = _answering(monkeypatch, [GOOD["title"], said(GOOD["now"]), GOOD["result"], said(fixed)])
+    write(_sources(), work.root, NOW)
+    _stored(work, "now", stale)
+
+    assert lookup("card", ["t_0000000a"], work.root, board="default")["t_0000000a"]["now"] is None
+    assert write(_sources(), work.root, NOW + 60) == {"called": 1, "failed": 0, "pending": 0}
+
+    assert len(sent) == 4 and WAITING in sent[3][1]["content"]
+    assert lookup("card", ["t_0000000a"], work.root, board="default")["t_0000000a"]["now"] == fixed
 
 
 @pytest.mark.parametrize("named", NAMED[:3])

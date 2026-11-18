@@ -82,6 +82,7 @@ _FILE = re.compile(r"[\w-]\.[A-Za-z][A-Za-z0-9]{0,4}\b")
 _COMMAND = re.compile(r"(?:^|\s)--?[A-Za-z]|[$|<>=]")
 _HASH = re.compile(r"\b[0-9a-f]{7,40}\b")
 _URL = re.compile(r"https?:|www\.", re.IGNORECASE)
+_ADDRESS = re.compile(r"[0-9]{1,3}(?:\.[0-9]{1,3}){3}")  # read before the sentence rules, which take its dots for ends
 _WORD = re.compile(r"[A-Za-z][A-Za-z0-9]*")
 _ENDERS = ".!?。"
 _NAME_HEADER = re.compile(r"^[^\s·]{1,8}\s*·\s")  # "시온 · ...": the card shows its owner on its own
@@ -103,7 +104,7 @@ def _common(text: str, limit: int) -> str | None:
         return f"longer than {limit} characters"
     if "\n" in text:
         return "more than one line"
-    for rule, reason in ((_URL, "a URL"), (_ID, "an id"), (_HASH, "a hash"), (_FILE, "a file name"),
+    for rule, reason in ((_URL, "a URL"), (_ADDRESS, "an address"), (_ID, "an id"), (_HASH, "a hash"), (_FILE, "a file name"),
                          (_PATH, "a path"), (_COMMAND, "a command")):
         if rule.search(text):
             return f"contains {reason}"
@@ -166,6 +167,11 @@ _LINE_RULES = tuple((re.compile(rule), reason) for rule, reason in (
     (rf"(?<![0-9.,])[0-9]{{7,}}(?![0-9]|\.[0-9]|,[0-9]{{3}}(?![0-9])|(?!(?:{_PARTICLES})(?!{_H})){_H})",
      "contains a number of seven digits or more: leave it out"),
     (rf"(?:표지\s*)?카드\s*[0-9]+(?![0-9]|{_H})", "numbers a card: say what the card is about instead"),
+    # A numbered change or item and the hub Mac that is gone (G138; an address is ``_common``'s): the devices are named
+    # as the person names them (리나허브, 리나맥, 빌드 기기), the gone one as 옛 허브 맥.
+    (r"[0-9]+\s*번", "numbers a change or an item: say what it is about"),
+    (r"(?:이슈|변경|커밋|풀 리퀘스트)\s*[0-9]+", "numbers a change or an item: say what it is about"),
+    (r"허브맥|(?<!옛 )허브 맥", "names the hub Mac that is gone: write it 옛 허브 맥"),
     (r"\s&&\s", "contains a command"),
     (r"^\(?[0-9]{1,2}[.)]$|\s\(?1[.)]$", "ends on a list's mark: write the item itself"),
     (_H + r"(?:을|를|에서|으로|은|는|이)[.!?。]?[\"'\u2019\u201d)\]]*$",
@@ -288,7 +294,10 @@ CHECKS: dict[str, Callable[[str], str | None]] = {"title": check_title, "now": c
 # ---------------------------------------------------------------- prompts
 _SYSTEM = ("너는 작업 보드의 한 줄을 쓴다. 한국어로, 짧고 쉬운 업무 말투로 쓴다. 대상과 그 상태만 말하고 멈춘다. "
            "설명, 따옴표, 머리말 없이 한 줄만 답한다. id, 경로, 파일 이름, 명령, 영어 도구 이름, 번호는 쓰지 않는다. "
-           "UPS, NAS 같은 영어 약어는 무엇인지 한글로 풀어 쓴다.")
+           "UPS, NAS 같은 영어 약어는 무엇인지 한글로 풀어 쓴다. 변경이나 이슈의 번호('34번 변경')는 쓰지 않고 무엇을 합쳤는지, "
+           "무엇을 고쳤는지로 쓴다. 기기는 사용자가 부르는 한글 이름(리나허브, 리나맥, 빌드 기기)으로 쓰고, 지금은 없는 "
+           "옛 허브 맥은 '옛 허브 맥'으로 쓴다. 영문 호스트 이름(build-main 같은)과 주소는 쓰지 않는다. "
+           "기기 이름은 맡은 사람이나 봇의 이름이 아니다.")
 _PROMPTS = {
     "title": ("작업의 제목을 25자 안으로 쓴다. [대상] [무엇] [동작] 순서로, 동작 명사나 ~기로 끝낸다.\n"
               "예) 원문: 'ulw # Rotate the build machine disks before they fill' -> 빌드 기기 디스크 교체\n"
@@ -303,6 +312,8 @@ _PROMPTS = {
             "예) 원문: 'running the test suite on build-a, 120 of 400 passed' -> 시험 묶음을 돌리는 중\n"
             "예) 원문: '질문: 두 기기 중 어느 쪽을 먼저 비울까요?' -> 먼저 비울 기기를 묻는 중\n"
             "예) 원문: 'waiting on background job: image resize batch' -> 사진 크기 일괄 변환 대기\n"
+            "예) 원문: 'merging #44 (order export) into main on build-main' -> 주문 내보내기 변경을 메인에 합치는 중\n"
+            "예) 원문: '허브맥 재부팅 후 lina-mac 10.0.0.5 권한 허용 대기' -> 리나맥 권한 허용을 기다리는 중\n"
             "이 칸만은 두 줄로 답한다. 첫 줄은 위 규칙대로 쓴 지금 하는 일이고, 둘째 줄은 같은 일을 마친 뒤 기록에 남길 "
             "과거형 한 문장이다. 둘째 줄도 40자 안에 같은 규칙을 지키고, '~함', '~했다', '~를 기다림' 꼴로 쓰며 "
             "'~하는 중', '~대기 중'으로 끝내지 않는다. 글자만 바꾸지 말고 자연스러운 과거형으로 쓴다.\n"
@@ -353,6 +364,10 @@ _SCHEMA = ("CREATE TABLE IF NOT EXISTS line (kind TEXT NOT NULL, board TEXT NOT 
 # to be asked again. 1: a refused answer is asked again with its reason (lina#789); ``now`` lines refused before that
 # left cards with an empty top line. Refused titles and results are kept: there are many and they were not the fault.
 ASK_REVISION = 1
+# How the step record's lines are checked, kept as the ``writer`` key ``check_revision``: a cache from an older
+# revision has its record checked again once (``history.recheck``). 1: numbered changes, addresses and the hub Mac that
+# is gone are refused (G138); backfilled lines of hub cards held them.
+CHECK_REVISION = 1
 
 
 def _root(root: Path | None) -> Path:
@@ -381,6 +396,10 @@ def _open(root: Path | None, write: bool) -> sqlite3.Connection | None:
                    "(SELECT kind, board, id FROM line WHERE field = 'now' AND error IS NOT NULL)")
         db.execute("DELETE FROM line WHERE field = 'now' AND error IS NOT NULL")
         db.execute("INSERT OR REPLACE INTO writer (key, value) VALUES ('ask_revision', ?)", (ASK_REVISION,))
+    checked = db.execute("SELECT value FROM writer WHERE key = 'check_revision'").fetchone()
+    if (checked[0] if checked else 0) < CHECK_REVISION:
+        history.recheck(db)
+        db.execute("INSERT OR REPLACE INTO writer (key, value) VALUES ('check_revision', ?)", (CHECK_REVISION,))
     db.commit()
     return db
 
@@ -391,7 +410,8 @@ def _hash(source: Source) -> str:
 
 def lookup(kind: str, ids: list[str], root: Path | None = None, board: str = "") -> dict[str, dict]:
     """``{id: {title, now, result}}`` of one board's cards (``board_key``) or of runs (``board`` ""), null where
-    nothing passed its check, nothing was written yet, or the cache predates ``SCHEMA_VERSION``."""
+    nothing passed its check, nothing was written yet, or the cache predates ``SCHEMA_VERSION``. A stored now line the
+    current ``check_now`` refuses is null too: the writer asks it again (``_due``)."""
     out = {i: dict(EMPTY) for i in ids}
     db = _open(root, write=False) if ids else None
     if db is None:
@@ -404,7 +424,7 @@ def lookup(kind: str, ids: list[str], root: Path | None = None, board: str = "")
                 f"SELECT id, field, text FROM line WHERE kind = ? AND board = ? AND id IN ({marks})",
                 [kind, board, *ids]):
             if field in EMPTY:
-                out[item][field] = text
+                out[item][field] = None if field == "now" and text and check_now(text) else text
     except sqlite3.OperationalError:
         return out  # a cache from before its first write has no tables yet
     finally:
