@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -230,3 +231,57 @@ def test_a_now_line_kept_for_its_missing_past_tense_is_stored_when_the_retry_cal
     assert _rows(work)[("card", CARD, "now")] == (A, None)
     with sqlite3.connect(work.root / "board" / "plain.db") as db:
         assert db.execute("SELECT now, past FROM history_open").fetchall() == [(A, None)]
+
+
+NUMBERED, GONE = "34·36·37·39번 변경을 메인에 합침", "허브맥 재부팅 후 상태가 정상인 것을 확인함"  # lines the hub held
+
+
+def _cache(work, rows: list[tuple], backfilled: list[str], shown: tuple = ()) -> Path:
+    """A cache written under an older ``check_past``: *rows* ``(id, at, until, text)`` in the record, the cards of
+    *backfilled* marked backfilled, *shown* ``(id, now, past)`` lines being shown, and no ``check_revision`` yet."""
+    from hermes_cli.lina_board_plain import _open
+    _open(work.root, write=True).close()
+    path = work.root / "board" / "plain.db"
+    with sqlite3.connect(path) as db:
+        db.execute("INSERT INTO writer VALUES ('history_from', ?)", (NOW,))
+        db.execute("DELETE FROM writer WHERE key = 'check_revision'")
+        db.executemany("INSERT INTO history VALUES ('card', 'default', ?, ?, ?, ?)", rows)
+        db.executemany("INSERT INTO history_backfill VALUES ('card', 'default', ?, ?)", [(i, NOW) for i in backfilled])
+        db.executemany("INSERT INTO history_open VALUES ('card', 'default', ?, ?, ?, ?)", [(*s, NOW) for s in shown])
+    return path
+
+
+def _record(path: Path) -> list[tuple]:
+    with sqlite3.connect(path) as db:
+        return db.execute("SELECT id, at, until, text FROM history ORDER BY id, at").fetchall()
+
+
+def test_a_stored_line_the_grown_check_past_refuses_is_not_served(work):
+    _cache(work, [(CARD, NOW - 300, None, NUMBERED), (CARD, NOW - 200, None, B_PAST), (CARD, NOW + 10, NOW + 20, GONE)],
+           [CARD])
+    assert _history(work) == [{"at": NOW - 200, "until": None, "text": B_PAST}]
+
+
+def test_a_cache_s_refused_record_lines_are_dropped_once_and_its_backfilled_cards_are_backfilled_again(work, monkeypatch):
+    from hermes_cli.lina_board_plain import Source, write
+    refilled, live, untouched = CARD, "t_0000000b", "t_0000000c"
+    path = _cache(work, [(refilled, NOW - 300, None, NUMBERED), (refilled, NOW - 200, None, B_PAST),
+                         (refilled, NOW + 10, NOW + 20, A_PAST), (live, NOW + 10, NOW + 20, GONE),
+                         (live, NOW + 20, NOW + 30, B_PAST), (untouched, NOW - 100, None, A_PAST)],
+                  [refilled, untouched], ((live, B, GONE),))
+    sources = [Source("card", refilled, "now", "", "default", True,
+                      ((NOW - 300, "merged the order export fix"), (NOW - 200, "cleared the build disks"))),
+               Source("card", untouched, "now", "", "default", True, ((NOW - 100, "checked the photo backup"),))]
+    sent = _answering(monkeypatch, ["1. 주문 내보내기 수정을 메인에 합침\n2. 빌드 기기 디스크를 비움"])
+
+    assert write(sources, work.root, NOW + 60)["called"] == 1
+
+    assert len(sent) == 1 and "1. merged the order export fix" in sent[0][1]["content"]
+    assert _record(path) == [(refilled, NOW - 300, None, "주문 내보내기 수정을 메인에 합침"), (refilled, NOW - 200, None, B_PAST),
+                             (refilled, NOW + 10, NOW + 20, A_PAST), (live, NOW + 20, NOW + 30, B_PAST),
+                             (untouched, NOW - 100, None, A_PAST)]
+    with sqlite3.connect(path) as db:
+        assert db.execute("SELECT id, now, past FROM history_open").fetchall() == [(live, B, None)]
+        db.execute("INSERT INTO history VALUES ('card', 'default', ?, ?, ?, ?)", (untouched, NOW + 40, NOW + 50, GONE))
+    assert write(sources, work.root, NOW + 120)["called"] == 0  # checked once: a later open leaves the record be
+    assert (untouched, NOW + 40, NOW + 50, GONE) in _record(path)
