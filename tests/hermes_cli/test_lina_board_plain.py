@@ -25,6 +25,12 @@ pytestmark = pytest.mark.platforms("posix")
 
 REPO = Path(__file__).resolve().parents[2]
 GOOD = {"title": "빌드 기기 디스크 교체", "now": "시험 묶음을 돌리는 중", "result": "빌드 기기 두 대의 디스크를 비웠다."}
+PAST = "시험 묶음을 돌림"
+
+
+def said(line: str, past: str = PAST) -> str:
+    """A now answer: the line, then on a second line its past tense for the card's step record."""
+    return f"{line}\n{past}"
 
 
 def _jsonschema(node):
@@ -50,14 +56,16 @@ class FakeModel:
     """Stands in for ``agent.auxiliary_client.call_llm``: answers per field, counts the calls, or fails."""
 
     def __init__(self):
-        self.answers = dict(GOOD)
+        self.answers = {**GOOD, "now": said(GOOD["now"]), "history": ""}  # a backfill that finds no step
         self.calls: list[tuple[str, str]] = []
         self.fail = False
 
     def __call__(self, task=None, *, messages, **_kwargs):
         from hermes_cli.lina_board_plain import _PROMPTS
+        from hermes_cli.lina_board_plain_history import PROMPT
         assert task == "board_lines"
-        field = next(name for name, prompt in _PROMPTS.items() if prompt in messages[0]["content"])
+        field = next(name for name, prompt in {**_PROMPTS, "history": PROMPT}.items()
+                     if prompt in messages[0]["content"])
         self.calls.append((field, messages[1]["content"]))
         if self.fail:
             raise ConnectionError("the model is not reachable")
@@ -198,7 +206,7 @@ def test_good_answers_are_stored_and_served_on_run_cards_and_work_cards(work, fa
     assert cards["OT-ALP0002"] == {"title": GOOD["title"], "now": None, "result": GOOD["result"]}
     assert board["writer"] == {"state": "ok", "lastSuccessAt": NOW, "stoppedSince": None}
     card = _valid("work-client.yaml", "WorkCardDetail", client.get(f"/api/plugins/kanban/work/cards/{tid}").json())
-    assert card["plain"] == {"title": GOOD["title"], "now": GOOD["now"], "result": None}
+    assert card["plain"] == {"title": GOOD["title"], "now": GOOD["now"], "result": None, "history": []}
 
 
 def test_reads_only_look_the_cache_up_and_never_call_the_model(work, fakes, model, client):
@@ -356,7 +364,7 @@ def _titles_by_source(monkeypatch) -> list[str]:
         field = next(name for name, prompt in _PROMPTS.items() if prompt in messages[0]["content"])
         calls.append(messages[1]["content"])
         text = ("공유기 펌웨어 점검" if "Router" in messages[1]["content"] else GOOD["title"]) if field == "title" \
-            else GOOD[field]
+            else said(GOOD["now"]) if field == "now" else GOOD[field]
         return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=text))])
     monkeypatch.setattr(auxiliary_client, "call_llm", answer)
     return calls
@@ -546,7 +554,7 @@ def _answering(monkeypatch, answers: list[str]) -> list[list[dict]]:
 def test_a_refused_answer_is_asked_again_with_its_reason_and_the_passing_one_is_stored(work, monkeypatch):
     from hermes_cli.lina_board_plain import Source, lookup, write
     too_long = "가" * 41
-    sent = _answering(monkeypatch, [too_long, GOOD["now"]])
+    sent = _answering(monkeypatch, [too_long, said(GOOD["now"])])
     now = Source("card", "t_00c0ffee", "now", "checking last week's backup", "default")
 
     assert write([now], work.root, NOW) == {"called": 1, "failed": 0, "pending": 0}
@@ -574,7 +582,7 @@ def test_a_refused_answer_is_not_asked_again_after_the_pass_s_deadline(work, mon
     from hermes_cli import lina_board_plain as plain
     clock = [0.0]
     monkeypatch.setattr(plain, "_clock", lambda: clock[0])
-    sent = _answering(monkeypatch, ["가" * 41, GOOD["now"]])
+    sent = _answering(monkeypatch, ["가" * 41, said(GOOD["now"])])
     from agent import auxiliary_client
     answer = auxiliary_client.call_llm
 
@@ -596,7 +604,8 @@ def test_a_now_line_refused_before_refused_answers_were_asked_again_is_asked_onc
                Source("card", "t_0000000a", "result", "The backup ran.", "default", True),
                Source("card", "t_0000000b", "now", "rotating the build machine disks", "default", True),
                Source("card", "t_0000000b", "title", "Rotate the build machine disks", "default", True)]
-    sent = _answering(monkeypatch, [GOOD[s.field] for s in sources] + [GOOD["now"]])
+    sent = _answering(monkeypatch, [said(GOOD["now"]) if s.field == "now" else GOOD[s.field] for s in sources]
+                                    + [said(GOOD["now"])])
     write(sources, work.root, NOW)
     with sqlite3.connect(work.root / "board" / "plain.db") as db:  # what a cache from before lina#789 holds
         db.execute("UPDATE line SET text = NULL, error = 'longer than 40 characters' "

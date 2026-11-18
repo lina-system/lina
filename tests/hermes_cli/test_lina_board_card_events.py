@@ -120,7 +120,8 @@ def test_a_line_the_writer_stores_for_a_hermes_card_is_one_event_and_an_own_card
     assert _journal(work) == [("line", "hermes:t_run")]
 
     assert write(sources, work.root, NOW + 60)["called"] == 0  # nothing due: nothing stored, nothing announced
-    model.answers["now"] = "사진 크기를 맞추는 중"
+    from tests.hermes_cli.test_lina_board_plain import said
+    model.answers["now"] = said("사진 크기를 맞추는 중")
     write([sources[0]._replace(text="resizing the photos")], work.root, NOW + 120)
     assert _journal(work) == [("line", "hermes:t_run")] * 2
 

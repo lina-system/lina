@@ -26,6 +26,8 @@ from contextvars import copy_context
 from pathlib import Path
 from typing import Callable, Iterator, NamedTuple
 
+from hermes_cli import lina_board_plain_history as history
+
 TASK = "board_lines"
 PROFILE_SETTING = "worker.board_lines_profile"
 FIELDS = ("title", "now", "result")
@@ -60,6 +62,7 @@ class Source(NamedTuple):
     text: str
     board: str = ""  # a card's board (``board_key``); "" for runs. Card ids repeat across boards (an imported board)
     unfinished: bool = False  # a card that is not done: its fields queue ahead of done cards' and runs'
+    items: tuple = ()  # a card now source's timed steps ``(at, text)``, for its step record's backfill
 
 
 def board_key(slug: str | None) -> str:
@@ -228,10 +231,9 @@ def _names_doer(text: str, names: frozenset[str] | set[str] | tuple[str, ...]) -
     return None
 
 
-def check_now(text: str, names: frozenset[str] | set[str] | tuple[str, ...] = ()) -> str | None:
-    """At most 40 characters, one sentence, in the present progressive (~하는 중, ~고 있다) or a short noun
-    phrase, not saying who does the work (``_names_doer``, *names* from ``doer_names``), and a line the app shows
-    (``_app_hides``)."""
+def _step_line(text: str, names: frozenset[str] | set[str] | tuple[str, ...]) -> str | None:
+    """The rules a now line and its past tense share: at most 40 characters, one sentence, no word the app does
+    not show, not saying who does the work (``_names_doer``)."""
     reason = _common(text, LIMITS["now"])
     if reason:
         return reason
@@ -240,12 +242,33 @@ def check_now(text: str, names: frozenset[str] | set[str] | tuple[str, ...] = ()
     banned = next((w for w in NOW_BANNED if w in text), None)
     if banned:
         return f"contains the word {banned}, which the app does not show"
-    named = _names_doer(text, names)
-    if named:
-        return named
+    return _names_doer(text, names)
+
+
+def check_now(text: str, names: frozenset[str] | set[str] | tuple[str, ...] = ()) -> str | None:
+    """At most 40 characters, one sentence, in the present progressive (~하는 중, ~고 있다) or a short noun
+    phrase, not saying who does the work (``_names_doer``, *names* from ``doer_names``), and a line the app shows
+    (``_app_hides``)."""
+    reason = _step_line(text, names)
+    if reason:
+        return reason
     body = text.rstrip(_ENDERS).rstrip()
     if body.endswith(("다", "요")) and not body.endswith(("중이다", "고 있다", "중입니다", "고 있습니다")):
         return "not the present progressive or a noun phrase"
+    return _app_hides(text)
+
+
+_STILL_GOING = ("중", "중이다", "중입니다", "중임", "고 있다", "고 있습니다", "고 있음", "대기")
+
+
+def check_past(text: str, names: frozenset[str] | set[str] | tuple[str, ...] = ()) -> str | None:
+    """A step record line (``lina_board_plain_history``): a now line's rules (``check_now``) but in the past or
+    perfect tense (~함, ~했다, ~를 기다림), never still going (~하는 중, ~대기 중)."""
+    reason = _step_line(text, names)
+    if reason:
+        return reason
+    if text.rstrip(_ENDERS).rstrip().endswith(_STILL_GOING):
+        return "still in the present progressive: write what was done (~함, ~했다, ~를 기다림)"
     return _app_hides(text)
 
 
@@ -279,7 +302,12 @@ _PROMPTS = {
             "예) 원문: '시온이 실사에서 웹 서버 기동 단계를 알려줄 때까지 기다림' -> 웹 서버 기동 알림을 기다리는 중\n"
             "예) 원문: 'running the test suite on build-a, 120 of 400 passed' -> 시험 묶음을 돌리는 중\n"
             "예) 원문: '질문: 두 기기 중 어느 쪽을 먼저 비울까요?' -> 먼저 비울 기기를 묻는 중\n"
-            "예) 원문: 'waiting on background job: image resize batch' -> 사진 크기 일괄 변환 대기"),
+            "예) 원문: 'waiting on background job: image resize batch' -> 사진 크기 일괄 변환 대기\n"
+            "이 칸만은 두 줄로 답한다. 첫 줄은 위 규칙대로 쓴 지금 하는 일이고, 둘째 줄은 같은 일을 마친 뒤 기록에 남길 "
+            "과거형 한 문장이다. 둘째 줄도 40자 안에 같은 규칙을 지키고, '~함', '~했다', '~를 기다림' 꼴로 쓰며 "
+            "'~하는 중', '~대기 중'으로 끝내지 않는다. 글자만 바꾸지 말고 자연스러운 과거형으로 쓴다.\n"
+            "예) 원문: 'running the test suite on build-a' -> 첫 줄 '시험 묶음을 돌리는 중', 둘째 줄 '시험 묶음을 돌림'\n"
+            "예) 원문: '승인 대기' -> 첫 줄 '승인을 기다리는 중', 둘째 줄 '승인을 기다림'"),
     "result": ("끝난 작업의 결과를 80자 안의 한 문장으로 쓴다.\n"
                "예) 원문: '빌드 기기 두 대의 디스크를 비우고 경고를 없앴다.' -> 빌드 기기 두 대의 디스크를 비우고 경고를 없앴다.\n"
                "예) 원문: 'Added the weekly backup check; it passed on the first run.' -> 주간 백업 점검을 추가했고 첫 실행에서 통과했다.\n"
@@ -298,10 +326,11 @@ def ask(field: str, source: str, refused: list[tuple[str, str]] | None = None) -
     from agent.auxiliary_client import call_llm
     messages = [{"role": "system", "content": _SYSTEM + "\n\n" + _PROMPTS[field]},
                 {"role": "user", "content": "원문: " + source[:SOURCE_CHARS]}]
+    lines = "두 줄로" if field == "now" else "한 줄만"
     for answer, reason in refused or ():
         messages += [{"role": "assistant", "content": answer},
-                     {"role": "user", "content": f"이 답은 쓸 수 없다({reason}). 같은 규칙으로 한 줄만 다시 쓴다."}]
-    response = call_llm(task=TASK, max_tokens=120, temperature=0.2, messages=messages)
+                     {"role": "user", "content": f"이 답은 쓸 수 없다({reason}). 같은 규칙으로 {lines} 다시 쓴다."}]
+    response = call_llm(task=TASK, max_tokens=200 if field == "now" else 120, temperature=0.2, messages=messages)
     return _clean(response.choices[0].message.content or "")
 
 
@@ -309,7 +338,8 @@ def ask(field: str, source: str, refused: list[tuple[str, str]] | None = None) -
 # Version 2 keys a line by its board as well. Version 3 holds only lines that passed the 40-character ``now`` limit (G138):
 # a line is keyed by its source's hash, so one stored under the old 60-character limit would otherwise be served for as
 # long as its source stays the same. The cache is regenerable, so an older ``line`` table is dropped (the next pass
-# writes it again); the ``writer`` state is kept.
+# writes it again); the ``writer`` state is kept. The step record's tables (``history.SCHEMA``) came later without a
+# version: they are only added, so a version 3 cache gains them on its next write and keeps its lines.
 SCHEMA_VERSION = 3
 _SCHEMA = ("CREATE TABLE IF NOT EXISTS line (kind TEXT NOT NULL, board TEXT NOT NULL, id TEXT NOT NULL, "
            "field TEXT NOT NULL, source_hash TEXT NOT NULL, text TEXT, error TEXT, at INTEGER NOT NULL, "
@@ -317,7 +347,7 @@ _SCHEMA = ("CREATE TABLE IF NOT EXISTS line (kind TEXT NOT NULL, board TEXT NOT 
            "CREATE TABLE IF NOT EXISTS writer (key TEXT PRIMARY KEY, value INTEGER)",
            # When each field's model call was last made, answered or not: the order of the next pass's queue.
            "CREATE TABLE IF NOT EXISTS attempt (kind TEXT NOT NULL, board TEXT NOT NULL, id TEXT NOT NULL, "
-           "field TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (kind, board, id, field))")
+           "field TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (kind, board, id, field))", *history.SCHEMA)
 # How fields are asked, kept as the ``writer`` key ``ask_revision``. A refused line stays refused while its source
 # hash is unchanged, so a cache from an older revision has its refused ``now`` lines (and their attempts) dropped once
 # to be asked again. 1: a refused answer is asked again with its reason (lina#789); ``now`` lines refused before that
@@ -464,17 +494,45 @@ def _tell(root: Path, s: Source) -> None:
         announce(root, "cards", "line", s.id)
 
 
-def _answer(s: Source, deadline: float, names: frozenset[str]) -> tuple[str, str | None]:
-    """One field's answer and the reason its check refused it (None when it passed): a refused answer is sent back
-    with its reason and asked again, at most RETRIES times and only before *deadline*. Raises when a call fails."""
+def _now_and_past(answer: str) -> tuple[str, str | None]:
+    """A now answer's two lines, the line and its past tense; one line is a line with no past tense, and more than
+    two stay whole for ``check_now`` to refuse."""
+    rows = answer.split("\n")
+    if len(rows) != 2:
+        return answer, None
+    line, past = (row.strip("\"'“”‘’ ") for row in rows)
+    return line, past
+
+
+def _answer(s: Source, deadline: float, names: frozenset[str]) -> tuple[str, str | None, str | None]:
+    """One field's answer, the reason its check refused it (None when it passed) and, for a now line, its past tense
+    (``check_past``; None when none passed): a refused answer is sent back with its reason and asked again, at most
+    RETRIES times and only before *deadline*. A now line whose past tense alone was refused is kept, so when its
+    retries end refused the passing line is stored with no past tense, and so it is when a retry's call fails (the
+    failure logged). Raises when a call fails with no line kept."""
     refused: list[tuple[str, str]] = []
+    kept: str | None = None
     while True:
-        answer = ask(s.field, s.text.strip(), refused)
-        reason = _check(s.field, answer, names)
-        if not reason or len(refused) == RETRIES or _clock() >= deadline:
-            return answer, reason
-        log.debug("board line %s %s %s refused, asking again: %s", s.kind, s.id, s.field, reason)
-        refused.append((answer, reason))
+        try:
+            answer = ask(s.field, s.text.strip(), refused)
+        except Exception as exc:  # health: allow BLE001 -- any provider error; a kept now line is stored without its past tense
+            if not kept:
+                raise
+            _say_call_failed(s, exc)
+            return kept, None, None
+        line, past = _now_and_past(answer) if s.field == "now" else (answer, None)
+        reason = _check(s.field, line, names)
+        past_reason = None
+        if s.field == "now" and not reason:
+            past_reason = check_past(past, names) if past is not None else "no second line, the past tense"
+            kept = kept or (line if past_reason else None)
+        if not reason and not past_reason:
+            return line, None, past
+        if len(refused) == RETRIES or _clock() >= deadline:
+            return (kept, None, None) if kept else (line, reason, None)
+        why = reason or f"둘째 줄, 과거형: {past_reason}"
+        log.debug("board line %s %s %s refused, asking again: %s", s.kind, s.id, s.field, why)
+        refused.append((answer, why))
 
 
 def _due(s: Source, cached: tuple[str, str | None] | None, names: frozenset[str]) -> bool:
@@ -495,17 +553,23 @@ def write(sources: list[Source], root: Path | None = None, now: float | None = N
     they have waited: never attempted first, then the oldest last attempt (a failed call counts as an attempt), so
     sources that change on every pass cannot keep a field waiting for more than a few passes. A refused answer is
     asked again in its slot (``_answer``); *names* are the ones a now line may not give (``doer_names``). A Hermes
-    board card whose served line changes is announced (``_tell``). -> {called, failed, pending}."""
+    board card whose served line changes is announced (``_tell``). A stored now line, or one cleared, moves its
+    card's step record (``history.record``, ``history.end``), and what is left of the pass backfills the records of
+    cards not tried yet (``history.backfill``), its calls counted in ``called`` and ``failed``.
+    -> {called, failed, pending}."""
     now = int(time.time() if now is None else now)
     db = _open(root, write=True)
     try:
         with db:
             meta = _meta(db)
             db.execute("INSERT OR IGNORE INTO writer (key, value) VALUES ('first_run_at', ?)", (now,))
+            db.execute("INSERT OR IGNORE INTO writer (key, value) VALUES ('history_from', ?)", (now,))
             cached = {key[:4]: key[4:] for key in db.execute("SELECT kind, board, id, field, source_hash, text FROM line")}
             tried = {key[:4]: key[4] for key in db.execute("SELECT kind, board, id, field, at FROM attempt")}
             cleared = [s for s in sources if not s.text.strip()]
             for s in cleared:
+                if s.field == "now":
+                    history.end(db, s, now)
                 for table in ("line", "attempt"):
                     db.execute(f"DELETE FROM {table} WHERE kind = ? AND board = ? AND id = ? AND field = ?",
                                (s.kind, s.board, s.id, s.field))
@@ -523,7 +587,7 @@ def write(sources: list[Source], root: Path | None = None, now: float | None = N
                 db.execute("INSERT OR REPLACE INTO attempt (kind, board, id, field, at) VALUES (?, ?, ?, ?, ?)",
                            (*_key(s), now))
             try:
-                answer, reason = _answer(s, deadline, names)
+                answer, reason, past = _answer(s, deadline, names)
             except Exception as exc:  # health: allow BLE001 -- any provider error; logged once per distinct failure, the field is retried next pass
                 _say_call_failed(s, exc)
                 failed += 1
@@ -537,9 +601,13 @@ def write(sources: list[Source], root: Path | None = None, now: float | None = N
                            "source_hash = excluded.source_hash, text = excluded.text, error = excluded.error, "
                            "at = excluded.at",
                            (s.kind, s.board, s.id, s.field, _hash(s), None if reason else answer, reason, now))
+                if s.field == "now" and not reason:
+                    history.record(db, s, answer, past, now)
             if (None if reason else answer) != (cached.get(_key(s)) or (None, None))[1]:
                 _tell(_root(root), s)
         pending = len(due) - len(calls) + failed
+        filled, filled_failed = history.backfill(db, sources, now, names, lambda: _clock() < deadline,
+                                                 _say_call_failed, lambda s: _tell(_root(root), s)) if usable else (0, 0)
         with db:
             if calls and not failed:
                 db.execute("INSERT OR REPLACE INTO writer (key, value) VALUES ('last_success_at', ?)", (now,))
@@ -555,7 +623,7 @@ def write(sources: list[Source], root: Path | None = None, now: float | None = N
             db.execute("INSERT OR REPLACE INTO writer (key, value) VALUES ('pending', ?)", (pending,))
     finally:
         db.close()
-    return {"called": len(calls), "failed": failed, "pending": pending}
+    return {"called": len(calls) + filled, "failed": failed + filled_failed, "pending": pending}
 
 
 # ---------------------------------------------------------------- sources
@@ -689,14 +757,14 @@ def now_source(comments: list[tuple[str, str]], status: str, reason: str = "") -
 
 
 def _card_lines(card_id: str, board: str, title: str, body: str | None, status: str,
-                comments: list[tuple[str, str]], result: str, reason: str = "") -> list[Source]:
+                comments: list[tuple[str, str]], result: str, reason: str = "", steps: tuple = ()) -> list[Source]:
     """One work card's sources: title from the card title plus the issue it names, now from ``now_source`` (with the
-    card's ``block_reason``), result
+    card's ``block_reason``, and its timed *steps* from ``history.items``), result
     from *result* once it is done; a card that is not done queues first (``Source.unfinished``)."""
     issue = _ISSUE_REF.search(body or "")
     unfinished = status != "done"
     return [Source("card", card_id, "title", title + (f" {issue.group(0)}" if issue else ""), board, unfinished),
-            Source("card", card_id, "now", now_source(comments, status, reason), board, unfinished),
+            Source("card", card_id, "now", now_source(comments, status, reason), board, unfinished, steps),
             Source("card", card_id, "result", result if status == "done" else "", board, unfinished)]
 
 
@@ -716,16 +784,26 @@ def _board_cards(kanban_db, path: Path, board: str) -> list[Source]:
                 continue
             task_id = row["id"]
             task = kanban_db.get_task(conn, task_id)
-            comments = [(c.author or "", c.body or "") for c in kanban_db.list_comments(conn, task_id)]
+            listed = kanban_db.list_comments(conn, task_id)
+            comments = [(c.author or "", c.body or "") for c in listed]
             result = ""
             if task.status == "done":
                 runs = [r for r in kanban_db.list_runs(conn, task_id) if r.summary]
                 result = task.result or (runs[-1].summary if runs else "")
-            reason = block_reason([(e.kind, e.payload) for e in kanban_db.list_events(conn, task_id)])
-            out += _card_lines(task_id, board, task.title, task.body, task.status, comments, result or "", reason)
+            events = kanban_db.list_events(conn, task_id)
+            reason = block_reason([(e.kind, e.payload) for e in events])
+            steps = history.items([(c.created_at, c.author or "", c.body or "") for c in listed],
+                                  [(e.created_at, e.kind, e.payload) for e in events])
+            out += _card_lines(task_id, board, task.title, task.body, task.status, comments, result or "", reason,
+                               steps)
         return out
     finally:
         conn.close()
+
+
+def _epoch(value) -> int:
+    from hermes_cli.kanban_db import _to_epoch
+    return _to_epoch(value) or 0
 
 
 def hermes_card_sources() -> list[Source]:
@@ -736,15 +814,18 @@ def hermes_card_sources() -> list[Source]:
     out = []
     for show, _goal_mode in hermes.work_shows(hermes.last_cards() or []):
         task = show["task"]
-        comments = [(str(c.get("author") or ""), str(c.get("body") or ""))
-                    for c in show.get("comments") or [] if isinstance(c, dict)]
+        listed = [c for c in show.get("comments") or [] if isinstance(c, dict)]
+        comments = [(str(c.get("author") or ""), str(c.get("body") or "")) for c in listed]
         runs = [r for r in show.get("runs") or [] if isinstance(r, dict) and r.get("summary")]
         result = task.get("result") or (runs[-1]["summary"] if runs else "")
-        events = [(str(e.get("kind") or ""), e.get("payload") if isinstance(e.get("payload"), dict) else None)
-                  for e in show.get("events") or [] if isinstance(e, dict)]
+        timed = [(_epoch(e.get("created_at")), str(e.get("kind") or ""),
+                  e.get("payload") if isinstance(e.get("payload"), dict) else None)
+                 for e in show.get("events") or [] if isinstance(e, dict)]
+        steps = history.items([(_epoch(c.get("created_at")), comments[n][0], comments[n][1])
+                               for n, c in enumerate(listed)], timed)
         out += _card_lines(hermes.hermes_id(task["id"]), board_key(None), str(task.get("title") or ""),
                            task.get("body"), str(task.get("status") or ""), comments, str(result or ""),
-                           block_reason(events))
+                           block_reason([(kind, payload) for _at, kind, payload in timed]), steps)
     return out
 
 

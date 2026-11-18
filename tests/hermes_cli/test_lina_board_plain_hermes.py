@@ -70,7 +70,8 @@ def _served(shows: list[dict]) -> dict[str, dict]:
     from plugins.kanban.dashboard import work_api_hermes
     rows = {c["id"]: c["plain"] for c in work_api_hermes.cards(shows, NOW, None, None)["cards"]}
     for card_id, plain in rows.items():
-        assert work_api_hermes.card(shows, card_id, NOW)["plain"] == plain
+        detail = work_api_hermes.card(shows, card_id, NOW)["plain"]
+        assert detail == {**plain, "history": detail["history"]}
     return rows
 
 
