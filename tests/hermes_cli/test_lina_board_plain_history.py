@@ -6,13 +6,15 @@ at their sources' times, an older cache keeps its lines, and the card detail ser
 
 from __future__ import annotations
 
+import json
 import sqlite3
+from types import SimpleNamespace
 
 import pytest
 
 from tests.hermes_cli import test_lina_board_plain as plain_tests
 from tests.hermes_cli._work_env import NOW, WorkEnv
-from tests.hermes_cli.test_lina_board_plain import GOOD, _answering, _card, _rows, _valid
+from tests.hermes_cli.test_lina_board_plain import GOOD, _answering, _card, _rows, _valid, said
 
 pytestmark = pytest.mark.platforms("posix")
 
@@ -181,3 +183,50 @@ def test_the_card_detail_serves_the_record_newest_first_and_the_list_does_not(wo
                              "history": [{"at": NOW, "until": NOW + 60, "text": A_PAST}]}
     listed = _valid("work-client.yaml", "WorkCardList", client.get("/api/plugins/kanban/work/cards").json())["cards"]
     assert [c["plain"] for c in listed if c["id"] == tid] == [{"title": GOOD["title"], "now": B, "result": None}]
+
+
+def _journal(work) -> list[tuple[str, str]]:
+    from hermes_cli import lina_board_events
+    path = lina_board_events.journal(work.root, "cards")
+    return [(rec["kind"], rec["id"]) for rec in map(json.loads, path.read_text(encoding="utf-8").splitlines())]
+
+
+def test_a_card_backfilled_in_a_later_pass_is_announced_once_only_when_it_gained_lines(work, monkeypatch):
+    from hermes_cli import lina_board_plain_history as history
+    from hermes_cli.lina_board_plain import Source, write
+    filled = Source("card", "hermes:t_a1", "now", "checking the photo backup", "default", True,
+                    ((NOW - 100, "cleared the build disks"),))
+    refused = Source("card", "hermes:t_b1", "now", "rotating the disks", "default", True, ((NOW - 200, "reviewed"),))
+    _answering(monkeypatch, [said(A), said(B), "1. 빌드 기기 디스크를 비움", "1. Passed the review"])
+    monkeypatch.setattr(history, "BACKFILL_CALLS", 0)  # the pass's backfill calls went to other cards
+    write([filled, refused], work.root, NOW)
+    assert _journal(work) == [("line", "hermes:t_a1"), ("line", "hermes:t_b1")]
+    monkeypatch.setattr(history, "BACKFILL_CALLS", 3)
+
+    assert write([filled, refused], work.root, NOW + 60)["called"] == 2  # backfills only: the lines are unchanged
+
+    assert history.lookup("card", "hermes:t_a1", work.root, board="default") == [
+        {"at": NOW - 100, "until": None, "text": "빌드 기기 디스크를 비움"}]
+    assert _journal(work) == [("line", "hermes:t_a1"), ("line", "hermes:t_b1"), ("line", "hermes:t_a1")]
+    write([filled, refused], work.root, NOW + 120)
+    assert len(_journal(work)) == 3
+
+
+def test_a_now_line_kept_for_its_missing_past_tense_is_stored_when_the_retry_call_fails(work, monkeypatch, caplog):
+    from agent import auxiliary_client
+    from hermes_cli.lina_board_plain import write
+    sent: list[list[dict]] = []
+
+    def answer(task=None, *, messages, **_kwargs):
+        sent.append(messages)
+        if len(sent) > 1:
+            raise ConnectionError("the model is not reachable")
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=A))])  # no second line
+    monkeypatch.setattr(auxiliary_client, "call_llm", answer)
+
+    assert write([_now("checking last week's backup")], work.root, NOW) == {"called": 1, "failed": 0, "pending": 0}
+
+    assert len(sent) == 2 and "the model is not reachable" in caplog.text
+    assert _rows(work)[("card", CARD, "now")] == (A, None)
+    with sqlite3.connect(work.root / "board" / "plain.db") as db:
+        assert db.execute("SELECT now, past FROM history_open").fetchall() == [(A, None)]

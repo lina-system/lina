@@ -508,11 +508,18 @@ def _answer(s: Source, deadline: float, names: frozenset[str]) -> tuple[str, str
     """One field's answer, the reason its check refused it (None when it passed) and, for a now line, its past tense
     (``check_past``; None when none passed): a refused answer is sent back with its reason and asked again, at most
     RETRIES times and only before *deadline*. A now line whose past tense alone was refused is kept, so when its
-    retries end refused the passing line is stored with no past tense. Raises when a call fails."""
+    retries end refused the passing line is stored with no past tense, and so it is when a retry's call fails (the
+    failure logged). Raises when a call fails with no line kept."""
     refused: list[tuple[str, str]] = []
     kept: str | None = None
     while True:
-        answer = ask(s.field, s.text.strip(), refused)
+        try:
+            answer = ask(s.field, s.text.strip(), refused)
+        except Exception as exc:  # health: allow BLE001 -- any provider error; a kept now line is stored without its past tense
+            if not kept:
+                raise
+            _say_call_failed(s, exc)
+            return kept, None, None
         line, past = _now_and_past(answer) if s.field == "now" else (answer, None)
         reason = _check(s.field, line, names)
         past_reason = None
@@ -600,7 +607,7 @@ def write(sources: list[Source], root: Path | None = None, now: float | None = N
                 _tell(_root(root), s)
         pending = len(due) - len(calls) + failed
         filled, filled_failed = history.backfill(db, sources, now, names, lambda: _clock() < deadline,
-                                                 _say_call_failed) if usable else (0, 0)
+                                                 _say_call_failed, lambda s: _tell(_root(root), s)) if usable else (0, 0)
         with db:
             if calls and not failed:
                 db.execute("INSERT OR REPLACE INTO writer (key, value) VALUES ('last_success_at', ?)", (now,))

@@ -160,11 +160,14 @@ def lines(answer: str, steps: tuple, names: frozenset[str]) -> list[tuple[int, s
 
 
 def backfill(db: sqlite3.Connection, sources: list[Source], now: int, names: frozenset[str],
-             room: Callable[[], bool], said: Callable[[Source, Exception], None]) -> tuple[int, int]:
+             room: Callable[[], bool], said: Callable[[Source, Exception], None],
+             told: Callable[[Source], None]) -> tuple[int, int]:
     """Backfill the cards not tried yet (``history_backfill``), unfinished ones first, then done ones by their last
     step: from their steps before ``history_from``, at most ``BACKFILL_CALLS`` calls while *room* holds. A card with
     no such step, or a done card whose last one is older than ``BACKFILL_RECENT_S``, is marked without a call; a
-    failed call is told through *said* and tried again next pass. -> (calls, failed)."""
+    failed call is told through *said* and tried again next pass. A card that gained lines is announced through
+    *told* once they are committed: its now line may be unchanged, so nothing else tells an open detail.
+    -> (calls, failed)."""
     since = (db.execute("SELECT value FROM writer WHERE key = 'history_from'").fetchone() or (now,))[0]
     tried = set(db.execute("SELECT kind, board, id FROM history_backfill").fetchall())
     due = [s for s in sources if s.field == "now" and s.kind == "card" and _card(s) not in tried]
@@ -182,10 +185,13 @@ def backfill(db: sqlite3.Connection, sources: list[Source], now: int, names: fro
                 said(s, exc)
                 failed += 1
                 continue
+            rows = [(*_card(s), at, text) for at, text in lines(answer, steps, names)]
             with db:
                 db.executemany("INSERT INTO history (kind, board, id, at, until, text) VALUES (?, ?, ?, ?, NULL, ?)",
-                               [(*_card(s), at, text) for at, text in lines(answer, steps, names)])
+                               rows)
                 _prune(db, _card(s))
+            if rows:
+                told(s)
         with db:
             db.execute("INSERT OR REPLACE INTO history_backfill (kind, board, id, at) VALUES (?, ?, ?, ?)",
                        (*_card(s), now))
