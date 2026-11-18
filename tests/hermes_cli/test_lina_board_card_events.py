@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -170,6 +171,76 @@ def test_a_slow_reader_of_a_cut_journal_that_grew_past_its_position_resyncs(work
     _announce(work, 9)
     after, events, resync = stream.fetch(after)
     assert (resync, _card_ids(events)) == (False, ["hermes:t_09"])
+
+
+def _rotate(work: WorkEnv, *ns: int) -> None:
+    """A cut as ``announce`` makes one: the journal moved aside, then *ns* written to the new file."""
+    path = lina_board_events.journal(work.root, "cards")
+    os.replace(path, path.with_name(path.name + ".1"))
+    _announce(work, *ns)
+
+
+def _rotate_at_open(monkeypatch, work: WorkEnv, nth: int, *ns: int) -> None:
+    """A cut just before the journal is opened for the *nth* time from now: between two reads of one file that do not
+    share a handle."""
+    path, real, opened = lina_board_events.journal(work.root, "cards"), Path.open, [0]
+
+    def open_(self, *args, **kwargs):
+        if self == path:
+            opened[0] += 1
+            if opened[0] == nth:
+                _rotate(work, *ns)
+        return real(self, *args, **kwargs)
+    monkeypatch.setattr(Path, "open", open_)
+
+
+def _ids(ns) -> list[str]:
+    return [f"hermes:t_{n:02d}" for n in ns]
+
+
+def test_a_cut_while_the_tail_is_taken_never_pairs_the_old_file_s_offset_with_the_new_file(work, stream, monkeypatch):
+    _announce(work, *range(20))
+    _rotate_at_open(monkeypatch, work, 1, 20)
+    cursor = stream.tail()
+    _announce(work, *range(21, 41))
+
+    cursor, events, resync = stream.fetch(cursor)
+    assert (resync, _card_ids(events)) == (False, _ids(range(21, 41)))
+
+
+def test_a_cut_while_a_resync_takes_the_tail_again_never_pairs_offset_and_identity_of_two_files(work, stream, monkeypatch):
+    cursor = stream.tail()
+    _announce(work, *range(4))
+    cursor, events, resync = stream.fetch(cursor)
+    _rotate(work, *range(4, 9))
+    _rotate_at_open(monkeypatch, work, 2, 9)  # the read finds the cut above; the tail it takes again meets this one
+
+    cursor, events, resync = stream.fetch(cursor)
+    assert (resync, events) == (True, [])
+    _announce(work, *range(10, 15))
+    cursor, events, resync = stream.fetch(cursor)
+    assert (resync, _card_ids(events)) == (False, _ids(range(10, 15)))
+
+
+def test_a_cut_just_before_a_live_read_resyncs(work, stream, monkeypatch):
+    cursor = stream.tail()
+    _announce(work, *range(4))
+    cursor, events, resync = stream.fetch(cursor)
+    _announce(work, 4)
+    cards = stream.journals["cards"]
+    read = cards.events
+
+    def cut_then_read(*args):
+        monkeypatch.setattr(cards, "events", read)
+        _rotate(work, 5, 6, 7)
+        return read(*args)
+    monkeypatch.setattr(cards, "events", cut_then_read)
+
+    cursor, events, resync = stream.fetch(cursor)
+    assert (resync, events) == (True, [])
+    _announce(work, *range(8, 13))
+    cursor, events, resync = stream.fetch(cursor)
+    assert (resync, _card_ids(events)) == (False, _ids(range(8, 13)))
 
 
 def test_reads_of_the_cards_journal_without_a_cut_never_resync(work, stream):

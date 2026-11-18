@@ -25,8 +25,8 @@ Eight append-only stores are tailed, each by its own position, and the eight pos
   board pass finds changed since the last good pass (``kind`` ``added``, ``changed`` or ``removed``; the first pass of a
   reader only takes its baseline) and per card line the board lines writer stores changed (``kind`` ``line``,
   ``lina_board_plain.write``). It is the one journal its writer cuts: past ``CUT_BYTES`` it is moved aside to
-  ``cards.jsonl.1``, and a live socket whose position was taken in the file moved aside resyncs (``Stream.fetch``
-  compares the file's identity before each read, since the new file may have grown past the position already).
+  ``cards.jsonl.1``, and a socket whose position was taken in the file moved aside resyncs: every read of a
+  journal takes the file's identity from the handle it reads, never from a second open (``_Lines``).
 
 Not on the stream, on purpose: device status, quota and usage. They change by themselves all the time and the app
 reads them when a screen opens; do not add a poll for them in the app or a source for them here.
@@ -201,7 +201,7 @@ def announce(root: Path, source: str, kind: str, item: str, *, message_id: str |
 
 def _cut(path: Path) -> None:
     """Moves a journal of ``CUT`` aside once it holds ``CUT_BYTES``; the next line starts a new file (a new identity,
-    so a reconnecting cursor resyncs, and a live one too, ``Stream.fetch``). Only the last cut file is kept."""
+    so a reconnecting cursor resyncs, and a live one too, ``_Lines.events``). Only the last cut file is kept."""
     with _CUT_LOCK:
         if path.is_file() and path.stat().st_size >= CUT_BYTES:
             os.replace(path, path.with_name(path.name + ".1"))
@@ -216,35 +216,61 @@ def _worker_event(rec: dict) -> dict | None:
 class _Lines:
     """An append-only JSON-lines file tailed by byte offset (the worker's receipts, the journals); *event* turns one
     record into the event sent, None for one that is not sent. Identity: the file's inode and its first line (a
-    recreated or rotated file differs)."""
+    recreated or rotated file differs). The file can be moved aside and replaced at any moment (``_cut``), so each
+    method opens it once and takes its size, its identity and its lines from that one handle: a position and the
+    identity it travels with always come from the same file."""
 
     def __init__(self, path: Path, event):
         self.path, self.event = path, event
 
-    def size(self) -> int:
-        return self.path.stat().st_size if self.path.is_file() else 0
+    def _open(self):
+        try:
+            return self.path.open("rb")
+        except FileNotFoundError:
+            return None
 
-    def ident(self) -> str:
-        if not self.path.is_file():
-            return ""
-        with self.path.open("rb") as fh:
-            line = fh.readline()
-        return _digest(self.path.stat().st_ino, line) if line else ""
+    @staticmethod
+    def _state(fh) -> tuple[int, str]:
+        """The size and identity of the file behind *fh* ("" while it holds no line)."""
+        stat = os.fstat(fh.fileno())
+        fh.seek(0)
+        line = fh.readline()
+        return stat.st_size, _digest(stat.st_ino, line) if line else ""
 
-    def kept(self, position: int) -> bool:
-        """Not past the file's end, and on a line boundary."""
-        if position > self.size():
-            return False
-        if position:
-            with self.path.open("rb") as fh:
+    def snap(self) -> tuple[int, str]:
+        """The file's end and identity (``0, ""`` when there is no file)."""
+        fh = self._open()
+        if fh is None:
+            return 0, ""
+        with fh:
+            return self._state(fh)
+
+    def holds(self, position: int, known: str) -> bool:
+        """*position*, taken in the file of identity *known*, is in this file, not past its end, on a line boundary."""
+        fh = self._open()
+        if fh is None:
+            return not position
+        with fh:
+            size, ident = self._state(fh)
+            if (position and ident != known) or position > size:
+                return False
+            if position:
                 fh.seek(position - 1)
                 return fh.read(1) == b"\n"
-        return True
+            return True
 
-    def events(self, after: int) -> tuple[int, list[dict]]:
-        if not self.path.is_file():
-            return after, []
-        with self.path.open("rb") as fh:
+    def events(self, after: int, known: str) -> tuple[int, list[dict], str]:
+        """The events after *after*, the position past them and the file's identity, all from one handle. A position
+        taken in another file (*known* differs) is ``_Pruned``: the file it was taken in is gone."""
+        fh = self._open()
+        if fh is None:
+            if after:
+                raise _Pruned(after)
+            return after, [], ""
+        with fh:
+            _, ident = self._state(fh)
+            if after and ident != known:
+                raise _Pruned(after)
             fh.seek(after)
             data = fh.read()
         end = data.rfind(b"\n") + 1  # a line still being written waits for the next poll
@@ -257,7 +283,26 @@ class _Lines:
             found = self.event(rec) if isinstance(rec, dict) else None
             if found:
                 out.append(found)
-        return after + end, out
+        return after + end, out, ident
+
+
+class _Rows:
+    """A store read through separate calls (the work record, the kanban board, the work settings): nothing moves it
+    aside between them, so its position and identity are read one after the other, in the shape of ``_Lines``. Its
+    identity is read again only when the position moved or none was known."""
+
+    def __init__(self, name: str, at, ident, read, kept):
+        self.name, self.at, self.ident, self.read, self.kept = name, at, ident, read, kept
+
+    def snap(self) -> tuple[int, str]:
+        return self.at(), self.ident()
+
+    def holds(self, position: int, known: str) -> bool:
+        return (not position or known == self.ident()) and self.kept(position)
+
+    def events(self, after: int, known: str) -> tuple[int, list[dict], str]:
+        moved, found = self.read(after)
+        return moved, found, _try(self.name, self.ident, known) if moved != after or not known else known
 
 
 def _journal_event(source: str):
@@ -321,7 +366,8 @@ class Stream:
     # - work: the first event row (id, at). The table is append-only (nothing deletes from ``event``), so the first
     #   row stays while the store lives, and a new store starts with new rows. The store has no id of its own
     #   (``setting`` holds fixed defaults only).
-    # - worker, talk, notices, reports, cards: the file's inode and its first line (``_Lines``).
+    # - worker, talk, notices, reports, cards: the file's inode and its first line, read with the position from one
+    #   handle (``_Lines``).
     # - kanban: the database file's inode and the first task inserted (id, created_at; by rowid, since created_at
     #   ties within a second and task ids are random). Not the first ``task_events`` row, which pruning moves.
     #   Deleting that task changes the identity too: one spare resync, never a miss.
@@ -338,13 +384,14 @@ class Stream:
         return _digest(Path(kanban_db_path()).stat().st_ino, *oldest) if oldest else ""
 
     def _sources(self) -> tuple:
-        """Per source: name, position now, identity, events after a position, and whether a position is kept."""
-        lines = ((name, store.size, store.ident, store.events, store.kept) for name, store in self.journals.items())
-        return (("work", self._work_bounds, self._work_id, self._work_events, self._work_kept),
-                ("worker", self.receipts.size, self.receipts.ident, self.receipts.events, self.receipts.kept),
-                ("kanban", self._kanban_top, self._kanban_id, self._kanban_events, self._kanban_kept),
-                ("settings", self._settings_count, self._settings_id, self._settings_events, self._settings_kept),
-                *lines)
+        """Per source: its name and its store, which gives its position with its identity (``snap``), the events after a
+        position with the identity they were read in (``events``) and whether a position is still held (``holds``)."""
+        return (("work", _Rows("work", self._work_bounds, self._work_id, self._work_events, self._work_kept)),
+                ("worker", self.receipts),
+                ("kanban", _Rows("kanban", self._kanban_top, self._kanban_id, self._kanban_events, self._kanban_kept)),
+                ("settings", _Rows("settings", self._settings_count, self._settings_id, self._settings_events,
+                                   self._settings_kept)),
+                *self.journals.items())
 
     # ---------------------------------------------------------------- settings (lina#256)
     def _settings_lines(self) -> list[bytes]:
@@ -379,21 +426,18 @@ class Stream:
 
     def tail(self) -> Cursor:
         """Each source's tail, taken on its own: one that cannot be read gets position 0 and ``UNKNOWN``."""
-        taken = [_try(name, lambda at=at, ident=ident: (at(), ident()), (0, UNKNOWN))
-                 for name, at, ident, _, _ in self._sources()]
+        taken = [_try(name, store.snap, (0, UNKNOWN)) for name, store in self._sources()]
         return Cursor(*(p for p, _ in taken), ids=tuple(i for _, i in taken))
 
     def check(self, since: Cursor) -> Cursor | None:
         """*since* if the stores still hold everything after it (None: resync). A source that cannot be read now is
         not judged: it becomes ``UNKNOWN`` and is taken again, with one resync, once it reads."""
         ids = list(since.ids)
-        for i, (name, _, ident, _, kept) in enumerate(self._sources()):
+        for i, (name, store) in enumerate(self._sources()):
             if ids[i] == UNKNOWN:
                 continue
             try:
-                if since[i] and ids[i] != ident():  # a position 0 replays the whole store, whichever it is
-                    return None
-                if not kept(since[i]):
+                if not store.holds(since[i], ids[i]):  # a position 0 replays the whole store, whichever it is
                     return None
             except _FAILS as exc:
                 log.warning("lina events: %s source failed: %s", name, exc)
@@ -432,32 +476,26 @@ class Stream:
         """What each store holds after *since*, and whether the client must resync. A store that fails to read keeps
         its position and is tried again; an ``UNKNOWN`` one that reads now is taken at its tail, and that is a
         resync (the batch's events are dropped: the refetched snapshot has them). So is a kanban page with ids
-        missing after the position (``_contiguous``), or a cut journal (``CUT``) whose identity is no longer the one
-        its position was taken in: the source is taken at its tail and nothing past the gap is sent as if nothing was
-        lost. A cut journal's identity is read before its events, and that one is kept, so a cut between the two shows
-        on the next read."""
+        missing after the position (``_contiguous``), or a journal that is no longer the file its position was taken in
+        (a cut, ``_Lines.events``): the source is taken at its tail and nothing past the gap is sent as if nothing was
+        lost. Each position travels with the identity it was read in, so no cut can pair one file's offset with
+        another's identity."""
         positions, ids, events, resync = list(since[:SOURCES]), list(since.ids), [], False
-        for i, (name, at, ident, read, _) in enumerate(self._sources()):
+        for i, (name, store) in enumerate(self._sources()):
             try:
                 if ids[i] == UNKNOWN:
-                    positions[i], ids[i] = at(), ident()
+                    positions[i], ids[i] = store.snap()
                     resync = True
                     continue
-                seen = ident() if name in CUT else None
-                if seen is not None and positions[i] and seen != ids[i]:
-                    raise _Pruned(positions[i])
-                after, found = read(positions[i])
+                positions[i], found, ids[i] = store.events(positions[i], ids[i])
             except _Pruned:
-                positions[i], ids[i] = _try(name, lambda: (at(), ident()), (positions[i], ids[i]))
+                positions[i], ids[i] = _try(name, store.snap, (positions[i], ids[i]))
                 resync = True
                 continue
             except _FAILS as exc:
                 log.warning("lina events: %s source failed: %s", name, exc)
                 continue
             events += found
-            moved, positions[i] = after != positions[i], after
-            if moved or not ids[i]:  # a store that just got its first rows has its identity now
-                ids[i] = seen if seen is not None else _try(name, ident, ids[i])
         return Cursor(*positions, ids=tuple(ids)), [] if resync else events, resync
 
     def close(self) -> None:
