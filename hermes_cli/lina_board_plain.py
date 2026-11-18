@@ -410,6 +410,15 @@ def _say_call_failed(s: Source, exc: Exception) -> None:
     _said["call"] = problem
 
 
+def _tell(root: Path, s: Source) -> None:
+    """A connected Hermes board card's served line changed: one ``cards`` journal line (``lina_board_events``), so an
+    open app screen refetches the card. LINA's own cards' lines are not announced."""
+    from hermes_cli.lina_board_hermes import is_hermes
+    if s.kind == "card" and is_hermes(s.id):
+        from hermes_cli.lina_board_events import announce
+        announce(root, "cards", "line", s.id)
+
+
 def _answer(s: Source, deadline: float) -> tuple[str, str | None]:
     """One field's answer and the reason its check refused it (None when it passed): a refused answer is sent back
     with its reason and asked again, at most RETRIES times and only before *deadline*. Raises when a call fails."""
@@ -439,7 +448,8 @@ def write(sources: list[Source], root: Path | None = None, now: float | None = N
     writer counts as stopped. The due fields of unfinished cards queue first, then the rest; within each, by how long
     they have waited: never attempted first, then the oldest last attempt (a failed call counts as an attempt), so
     sources that change on every pass cannot keep a field waiting for more than a few passes. A refused answer is
-    asked again in its slot (``_answer``). -> {called, failed, pending}."""
+    asked again in its slot (``_answer``). A Hermes board card whose served line changes is announced (``_tell``).
+    -> {called, failed, pending}."""
     now = int(time.time() if now is None else now)
     db = _open(root, write=True)
     try:
@@ -448,11 +458,14 @@ def write(sources: list[Source], root: Path | None = None, now: float | None = N
             db.execute("INSERT OR IGNORE INTO writer (key, value) VALUES ('first_run_at', ?)", (now,))
             cached = {key[:4]: key[4:] for key in db.execute("SELECT kind, board, id, field, source_hash, text FROM line")}
             tried = {key[:4]: key[4] for key in db.execute("SELECT kind, board, id, field, at FROM attempt")}
-            for s in sources:
-                if not s.text.strip():
-                    for table in ("line", "attempt"):
-                        db.execute(f"DELETE FROM {table} WHERE kind = ? AND board = ? AND id = ? AND field = ?",
-                                   (s.kind, s.board, s.id, s.field))
+            cleared = [s for s in sources if not s.text.strip()]
+            for s in cleared:
+                for table in ("line", "attempt"):
+                    db.execute(f"DELETE FROM {table} WHERE kind = ? AND board = ? AND id = ? AND field = ?",
+                               (s.kind, s.board, s.id, s.field))
+        for s in cleared:
+            if (cached.get(_key(s)) or (None, None))[1] is not None:
+                _tell(_root(root), s)
         due = sorted((s for s in sources if s.text.strip() and _due(s, cached.get(_key(s)))),
                      key=lambda s: (not s.unfinished, tried.get(_key(s), -1)))  # stable: source order among equals
         calls, failed, deadline = [], 0, _clock() + PASS_S
@@ -478,6 +491,8 @@ def write(sources: list[Source], root: Path | None = None, now: float | None = N
                            "source_hash = excluded.source_hash, text = excluded.text, error = excluded.error, "
                            "at = excluded.at",
                            (s.kind, s.board, s.id, s.field, _hash(s), None if reason else answer, reason, now))
+            if (None if reason else answer) != (cached.get(_key(s)) or (None, None))[1]:
+                _tell(_root(root), s)
         pending = len(due) - len(calls) + failed
         with db:
             if calls and not failed:

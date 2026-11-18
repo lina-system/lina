@@ -1,6 +1,6 @@
 """One change stream for the app (lina#150): ``GET /api/lina/events`` upgraded to a WebSocket.
 
-Seven append-only stores are tailed, each by its own position, and the seven positions travel as one opaque cursor:
+Eight append-only stores are tailed, each by its own position, and the eight positions travel as one opaque cursor:
 
 - ``work``: the work record's ``event`` table (one row per record line and run hand-off), by event id.
 - ``worker``: ``lina worker``'s ``receipts.jsonl`` (the hub appends a receipt on every run state change, next to the
@@ -20,6 +20,12 @@ Seven append-only stores are tailed, each by its own position, and the seven pos
 - ``reports``: ``board/reports.jsonl`` (lina#263), by byte offset: ``kind`` ``created`` or ``updated`` and ``id`` the
   report, one line per version the ``report`` tool writes (``tools/report_tool.py``, from the agent's process); an
   open report viewer refetches ``GET /api/lina/reports/<id>``.
+- ``cards``: ``board/cards.jsonl``, by byte offset, sent as ``source`` ``kanban`` with ``id`` ``hermes:<card>``: the
+  connected Hermes board's cards (``lina_board_hermes``), which no ``task_events`` row carries. One line per card a
+  board pass finds changed since the last good pass (``kind`` ``added``, ``changed`` or ``removed``; the first pass of a
+  reader only takes its baseline) and per card line the board lines writer stores changed (``kind`` ``line``,
+  ``lina_board_plain.write``). It is the one journal its writer cuts: past ``CUT_BYTES`` it is moved aside to
+  ``cards.jsonl.1`` and a socket whose position is past the new file's end resyncs.
 
 Not on the stream, on purpose: device status, quota and usage. They change by themselves all the time and the app
 reads them when a screen opens; do not add a poll for them in the app or a source for them here.
@@ -44,7 +50,9 @@ import datetime
 import hashlib
 import json
 import logging
+import os
 import sqlite3
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
@@ -61,8 +69,13 @@ BATCH_SECONDS = 0.3
 # bind. Shorter than the 5 s the app's reconnects were seen at, less its 1 s first backoff.
 KEEPALIVE_SECONDS = 3.0
 PAGE = 200
-CURSOR_PREFIX = "c5."  # c1 had positions only, c2 no settings source, c3 no talk or notices, c4 no reports: resync
-JOURNALS = ("talk", "notices", "reports")  # the sources whose writers append through announce
+# c1 had positions only, c2 no settings source, c3 no talk or notices, c4 no reports, c5 no cards: resync
+CURSOR_PREFIX = "c6."
+JOURNALS = ("talk", "notices", "reports", "cards")  # the sources whose writers append through announce
+SENT_AS = {"cards": "kanban"}  # a journal whose events go out under another source; the others under their own
+CUT = frozenset({"cards"})  # the journals announce cuts: written on every board pass, they would grow without end
+CUT_BYTES = 1 << 20  # about 16,000 lines of a card event
+_CUT_LOCK = threading.Lock()
 UNKNOWN = "?"  # the identity of a source that could not be read when its position was taken
 _FAILS = (OSError, sqlite3.Error, RuntimeError)
 # Receipts that change nothing the board shows of a run (``worker/board.py``: state and reason from ``work_state``,
@@ -123,10 +136,11 @@ class Cursor(NamedTuple):
     talk: int = 0
     notices: int = 0
     reports: int = 0
-    ids: tuple[str, ...] = ("",) * 7  # the store identity each position was taken in ("" = empty store)
+    cards: int = 0
+    ids: tuple[str, ...] = ("",) * 8  # the store identity each position was taken in ("" = empty store)
 
 
-SOURCES = 7
+SOURCES = 8
 
 
 def encode(cursor: Cursor) -> str:
@@ -176,10 +190,20 @@ def announce(root: Path, source: str, kind: str, item: str, *, message_id: str |
     line = json.dumps(rec, ensure_ascii=False) + "\n"
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
+        if source in CUT:
+            _cut(path)
         with path.open("a", encoding="utf-8") as fh:  # one short line: one append, never interleaved
             fh.write(line)
     except OSError as exc:
         log.warning("lina events: the %s journal was not written: %s", source, exc)
+
+
+def _cut(path: Path) -> None:
+    """Moves a journal of ``CUT`` aside once it holds ``CUT_BYTES``; the next line starts a new file (a new identity,
+    so a reconnecting cursor resyncs, and a live one too, ``_Cut``). Only the last cut file is kept."""
+    with _CUT_LOCK:
+        if path.is_file() and path.stat().st_size >= CUT_BYTES:
+            os.replace(path, path.with_name(path.name + ".1"))
 
 
 def _worker_event(rec: dict) -> dict | None:
@@ -235,6 +259,16 @@ class _Lines:
         return after + end, out
 
 
+class _Cut(_Lines):
+    """A journal ``announce`` cuts (``_cut``): a position past the file's end is one in the file moved aside, so the
+    socket resyncs instead of waiting for the new file to grow past it."""
+
+    def events(self, after: int) -> tuple[int, list[dict]]:
+        if after > self.size():
+            raise _Pruned(after)
+        return super().events(after)
+
+
 def _journal_event(source: str):
     def event(rec: dict) -> dict | None:
         if rec.get("kind") and rec.get("id"):
@@ -245,7 +279,7 @@ def _journal_event(source: str):
 
 
 class Stream:
-    """The seven stores of one socket. Every method runs on the socket's own thread (connections are thread-bound)."""
+    """The eight stores of one socket. Every method runs on the socket's own thread (connections are thread-bound)."""
 
     def __init__(self, root: Path):
         from hermes_cli.worker import settings
@@ -254,7 +288,9 @@ class Stream:
         # The receipts are the worker's own state, so they come from the root the worker writes (lina#269): the
         # board's root serves the work record and the read marks, and is not where the worker's hub lives.
         self.receipts = _Lines(Store(settings.root(_worker_base())).receipts, _worker_event)
-        self.journals = {source: _Lines(journal(root, source), _journal_event(source)) for source in JOURNALS}
+        self.journals = {source: (_Cut if source in CUT else _Lines)(journal(root, source),
+                                                                    _journal_event(SENT_AS.get(source, source)))
+                         for source in JOURNALS}
         from hermes_cli.lina_work_settings_store import Store as SettingsStore
         self.audit = SettingsStore().audit  # the work settings' own root, as their writers use (lina#256)
         self.work_db: Any = None
@@ -295,7 +331,7 @@ class Stream:
     # - work: the first event row (id, at). The table is append-only (nothing deletes from ``event``), so the first
     #   row stays while the store lives, and a new store starts with new rows. The store has no id of its own
     #   (``setting`` holds fixed defaults only).
-    # - worker, talk, notices, reports: the file's inode and its first line (``_Lines``).
+    # - worker, talk, notices, reports, cards: the file's inode and its first line (``_Lines``).
     # - kanban: the database file's inode and the first task inserted (id, created_at; by rowid, since created_at
     #   ties within a second and task ids are random). Not the first ``task_events`` row, which pruning moves.
     #   Deleting that task changes the identity too: one spare resync, never a miss.
@@ -406,8 +442,8 @@ class Stream:
         """What each store holds after *since*, and whether the client must resync. A store that fails to read keeps
         its position and is tried again; an ``UNKNOWN`` one that reads now is taken at its tail, and that is a
         resync (the batch's events are dropped: the refetched snapshot has them). So is a kanban page with ids
-        missing after the position (``_contiguous``): the source is taken at its tail and nothing past the gap is
-        sent as if nothing was lost."""
+        missing after the position (``_contiguous``), or a cut journal shorter than the position (``_Cut``): the
+        source is taken at its tail and nothing past the gap is sent as if nothing was lost."""
         positions, ids, events, resync = list(since[:SOURCES]), list(since.ids), [], False
         for i, (name, at, ident, read, _) in enumerate(self._sources()):
             try:

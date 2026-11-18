@@ -25,7 +25,9 @@ app's done window (``lina_board.DONE_WINDOW_S``); every other done card is its `
 ``detail: false``. Each command starts a Hermes CLI (about 1.4 s of CPU on the hub), so the reader keeps every card's
 last ``show`` (:class:`Memo`, lina#573) and shows a card again only when its ``list`` row changed or ``kanban watch``
 named it; a pass cut by its limit leaves the replies it got to the next. A pass woken by ``kanban watch`` does not
-read the old record again before :data:`PASS_EVERY_S` (the watch says nothing about it). Nothing is written to disk. Items from this source carry ids prefixed ``hermes:`` and
+read the old record again before :data:`PASS_EVERY_S` (the watch says nothing about it). Nothing is written to disk but
+the change stream's ``cards`` journal (``lina_board_events``): a pass that ends well names each card changed since the
+last good pass there (:func:`announce_changes`), so an open app screen refetches it. Items from this source carry ids prefixed ``hermes:`` and
 ``readOnly: true``; LINA's write routes refuse such ids with 409 (:data:`READ_ONLY`). The checked card lines
 (``lina_board_plain``) of the served work cards (:func:`work_shows`) are written by the board lines writer of the
 process that runs the reader, from the same last good pass (:func:`last_cards`).
@@ -34,6 +36,7 @@ process that runs the reader, from the same last good pass (:func:`last_cards`).
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
 import logging
 import re
@@ -51,6 +54,9 @@ DEFAULT_TIMEOUT_S = 10.0
 SHOW_WORKERS = 4
 PASS_EVERY_S = 15.0
 PASS_LIMIT_S = 120.0
+# Cards one pass names on the change stream at most. Every kanban event has the app refetch its card lists, so the
+# cards past it only leave an open card's own screen stale until that card changes again.
+ANNOUNCE_MAX = 50
 WATCH_POLL_S = 2.0
 FIRST_PASS = "the first read of the Hermes board has not ended yet"
 READ_ONLY = "read only: this item is on the Hermes board or in the old work record; change it there"
@@ -416,7 +422,10 @@ class _Reader:
                 self._parts[name] = Part(old.value, old.at, message)
             return
         with self._cond:
+            last = self._parts[name].value
             self._parts[name] = Part(value, time.time(), None)
+        if name == "cards" and last is not None:  # the reader's first good pass only takes the baseline
+            announce_changes(self.root, last, value)
 
     def _watch_loop(self) -> None:
         """``kanban watch``: every event line it prints names its card to :attr:`memo` and starts the next pass now.
@@ -454,6 +463,30 @@ class _Reader:
                     proc.kill()
                     proc.wait()
             self._stopped.wait(PASS_EVERY_S)
+
+
+def _digest(show: dict) -> str:
+    return hashlib.sha256(json.dumps(show, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def changes(before: list[dict], after: list[dict]) -> list[tuple[str, str]]:
+    """``(kind, raw id)`` of every card that differs between two passes' cards: ``added``, ``changed`` (anything in its
+    ``show`` reply: row, comments, events, runs, links) or ``removed``, in *after*'s order, removed ones last."""
+    old = {str(show["task"]["id"]): _digest(show) for show in before}
+    new = {str(show["task"]["id"]): _digest(show) for show in after}
+    return ([("changed" if raw in old else "added", raw) for raw, digest in new.items() if old.get(raw) != digest]
+            + [("removed", raw) for raw in old if raw not in new])
+
+
+def announce_changes(root: Path, before: list[dict], after: list[dict]) -> None:
+    """One ``cards`` journal line per card :func:`changes` finds, at most :data:`ANNOUNCE_MAX`; none when nothing
+    changed."""
+    from hermes_cli.lina_board_events import announce
+    found = changes(before, after)
+    if len(found) > ANNOUNCE_MAX:
+        logger.info("hermes board: %d cards changed in one pass; the first %d are announced", len(found), ANNOUNCE_MAX)
+    for kind, raw in found[:ANNOUNCE_MAX]:
+        announce(root, "cards", kind, hermes_id(raw))
 
 
 _EVENT = re.compile(r"\[[^\]]*\]\s+(\S+)\s")
