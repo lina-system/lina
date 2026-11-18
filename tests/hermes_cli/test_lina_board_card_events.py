@@ -136,6 +136,52 @@ def test_a_cursor_from_before_the_cards_source_gets_one_resync_and_then_card_eve
         assert _next_events(ws, pool) == [("kanban", "changed", "hermes:t_a1")]
 
 
+@pytest.fixture
+def stream(work):
+    s = lina_board_events.Stream(work.root)
+    yield s
+    s.close()
+    s.executor.shutdown(wait=True)
+
+
+def _announce(work: WorkEnv, *ns: int) -> None:
+    for n in ns:
+        lina_board_events.announce(work.root, "cards", "changed", f"hermes:t_{n:02d}")
+
+
+def _card_ids(events: list[dict]) -> list[str]:
+    return [e["id"] for e in events if e["source"] == "kanban"]
+
+
+def test_a_slow_reader_of_a_cut_journal_that_grew_past_its_position_resyncs(work, stream, monkeypatch):
+    cursor = stream.tail()
+    _announce(work, *range(4))
+    cursor, events, resync = stream.fetch(cursor)
+    assert not resync and _card_ids(events) == [f"hermes:t_{n:02d}" for n in range(4)]
+
+    monkeypatch.setattr(lina_board_events, "CUT_BYTES", 1)
+    _announce(work, 4)  # cut first: the new file holds this line alone
+    monkeypatch.setattr(lina_board_events, "CUT_BYTES", 1 << 20)
+    _announce(work, *range(5, 9))
+    assert lina_board_events.journal(work.root, "cards").stat().st_size >= cursor.cards
+
+    after, events, resync = stream.fetch(cursor)
+    assert (resync, events) == (True, [])
+    _announce(work, 9)
+    after, events, resync = stream.fetch(after)
+    assert (resync, _card_ids(events)) == (False, ["hermes:t_09"])
+
+
+def test_reads_of_the_cards_journal_without_a_cut_never_resync(work, stream):
+    cursor, seen = stream.tail(), []
+    for batch in (range(3), range(3, 4), (), range(4, 9)):
+        _announce(work, *batch)
+        cursor, events, resync = stream.fetch(cursor)
+        assert not resync
+        seen += _card_ids(events)
+    assert seen == [f"hermes:t_{n:02d}" for n in range(9)]
+
+
 def test_the_cards_journal_is_cut_and_a_live_socket_past_its_end_resyncs(work, client, pool, monkeypatch):
     monkeypatch.setattr(lina_board_events, "CUT_BYTES", 200)
     path: Path = lina_board_events.journal(work.root, "cards")

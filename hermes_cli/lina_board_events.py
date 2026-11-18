@@ -25,7 +25,8 @@ Eight append-only stores are tailed, each by its own position, and the eight pos
   board pass finds changed since the last good pass (``kind`` ``added``, ``changed`` or ``removed``; the first pass of a
   reader only takes its baseline) and per card line the board lines writer stores changed (``kind`` ``line``,
   ``lina_board_plain.write``). It is the one journal its writer cuts: past ``CUT_BYTES`` it is moved aside to
-  ``cards.jsonl.1`` and a socket whose position is past the new file's end resyncs.
+  ``cards.jsonl.1``, and a live socket whose position was taken in the file moved aside resyncs (``Stream.fetch``
+  compares the file's identity before each read, since the new file may have grown past the position already).
 
 Not on the stream, on purpose: device status, quota and usage. They change by themselves all the time and the app
 reads them when a screen opens; do not add a poll for them in the app or a source for them here.
@@ -200,7 +201,7 @@ def announce(root: Path, source: str, kind: str, item: str, *, message_id: str |
 
 def _cut(path: Path) -> None:
     """Moves a journal of ``CUT`` aside once it holds ``CUT_BYTES``; the next line starts a new file (a new identity,
-    so a reconnecting cursor resyncs, and a live one too, ``_Cut``). Only the last cut file is kept."""
+    so a reconnecting cursor resyncs, and a live one too, ``Stream.fetch``). Only the last cut file is kept."""
     with _CUT_LOCK:
         if path.is_file() and path.stat().st_size >= CUT_BYTES:
             os.replace(path, path.with_name(path.name + ".1"))
@@ -259,16 +260,6 @@ class _Lines:
         return after + end, out
 
 
-class _Cut(_Lines):
-    """A journal ``announce`` cuts (``_cut``): a position past the file's end is one in the file moved aside, so the
-    socket resyncs instead of waiting for the new file to grow past it."""
-
-    def events(self, after: int) -> tuple[int, list[dict]]:
-        if after > self.size():
-            raise _Pruned(after)
-        return super().events(after)
-
-
 def _journal_event(source: str):
     def event(rec: dict) -> dict | None:
         if rec.get("kind") and rec.get("id"):
@@ -288,8 +279,7 @@ class Stream:
         # The receipts are the worker's own state, so they come from the root the worker writes (lina#269): the
         # board's root serves the work record and the read marks, and is not where the worker's hub lives.
         self.receipts = _Lines(Store(settings.root(_worker_base())).receipts, _worker_event)
-        self.journals = {source: (_Cut if source in CUT else _Lines)(journal(root, source),
-                                                                    _journal_event(SENT_AS.get(source, source)))
+        self.journals = {source: _Lines(journal(root, source), _journal_event(SENT_AS.get(source, source)))
                          for source in JOURNALS}
         from hermes_cli.lina_work_settings_store import Store as SettingsStore
         self.audit = SettingsStore().audit  # the work settings' own root, as their writers use (lina#256)
@@ -442,8 +432,10 @@ class Stream:
         """What each store holds after *since*, and whether the client must resync. A store that fails to read keeps
         its position and is tried again; an ``UNKNOWN`` one that reads now is taken at its tail, and that is a
         resync (the batch's events are dropped: the refetched snapshot has them). So is a kanban page with ids
-        missing after the position (``_contiguous``), or a cut journal shorter than the position (``_Cut``): the
-        source is taken at its tail and nothing past the gap is sent as if nothing was lost."""
+        missing after the position (``_contiguous``), or a cut journal (``CUT``) whose identity is no longer the one
+        its position was taken in: the source is taken at its tail and nothing past the gap is sent as if nothing was
+        lost. A cut journal's identity is read before its events, and that one is kept, so a cut between the two shows
+        on the next read."""
         positions, ids, events, resync = list(since[:SOURCES]), list(since.ids), [], False
         for i, (name, at, ident, read, _) in enumerate(self._sources()):
             try:
@@ -451,6 +443,9 @@ class Stream:
                     positions[i], ids[i] = at(), ident()
                     resync = True
                     continue
+                seen = ident() if name in CUT else None
+                if seen is not None and positions[i] and seen != ids[i]:
+                    raise _Pruned(positions[i])
                 after, found = read(positions[i])
             except _Pruned:
                 positions[i], ids[i] = _try(name, lambda: (at(), ident()), (positions[i], ids[i]))
@@ -462,7 +457,7 @@ class Stream:
             events += found
             moved, positions[i] = after != positions[i], after
             if moved or not ids[i]:  # a store that just got its first rows has its identity now
-                ids[i] = _try(name, ident, ids[i])
+                ids[i] = seen if seen is not None else _try(name, ident, ids[i])
         return Cursor(*positions, ids=tuple(ids)), [] if resync else events, resync
 
     def close(self) -> None:
