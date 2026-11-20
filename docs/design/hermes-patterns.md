@@ -67,8 +67,8 @@ Each pattern has four fields: Habit, Worked, Hurt and LINA form. LINA form names
 
 - **Habit.** A completion event wakes the party that owns the work.
 - **Worked.** Deterministic ids with the generation in them. A cursor moved after hand-off. A reconcile pass behind the events. Before judging a "finished" notice, checking the run's state and its commit against the reported result. A pause accepted only when its reason names what ends it, such as a run id. A paused card spends no model turn and resumes in the same session on the run's end notice. In the first day after the move, 14 runs ended and every card got its end comment. A card closes only when every run it started has a verdict.
-- **Hurt.** Wakes were at most once, so a crashed worker was never retried. A "finished" notice arrived just after a new round started and carried the previous round's result. Goal cards could not pause, so waits ran as shell loops. While the old tool stayed configured, one card retried its wake for more than four hours. A run's end notice woke the card before the drive parked it, which cost an extra session each time.
-- **LINA form.** Process completion notices (`tools/process_registry_notifications.py`) and board watchers (`gateway/kanban_watchers.py`). Item state recomputed on write: #36. A finish notice that carries its round and a result fingerprint: not built. Parks and wakes run by the hub (`hermes_cli/worker/goal_drive.py`, #461). Closing refused while a run has no verdict (`hermes_cli/kanban_db_verdicts.py`, #295).
+- **Hurt.** Wakes were at most once, so a crashed worker was never retried. A "finished" notice arrived just after a new round started and carried the previous round's result. Goal cards could not pause, so waits ran as shell loops. While the old tool stayed configured, one card retried its wake for more than four hours. A run's end notice woke the card before the drive parked it, which cost an extra session each time. After review closed one card, a comment on it got no reply. Another card went to triage after repeated blocks of the same kind, and an ordinary wake left it there.
+- **LINA form.** Process completion notices (`tools/process_registry_notifications.py`) and board watchers (`gateway/kanban_watchers.py`). Item state recomputed on write: #36. A finish notice that carries its round and a result fingerprint: not built. Parks and wakes run by the hub (`hermes_cli/worker/goal_drive.py`, #461). Closing refused while a run has no verdict (`hermes_cli/kanban_db_verdicts.py`, #295). `hermes_cli/kanban_db.py` records comments without reopening closed cards. It sends recurring non-dependency blocks of the same kind to triage. An unblock resumes blocked or scheduled cards. Specifying a triaged card moves it back to todo.
 
 ### P10. Delegated coding
 
@@ -101,16 +101,16 @@ Each pattern has four fields: Habit, Worked, Hurt and LINA form. LINA form names
 ### P14. Short reports that separate verified from guessed
 
 - **Habit.** Reports are short, say what was checked, and never mix fact and guess in one sentence.
-- **Worked.** Honest status words: "tried" is not "done", and unknown is a legal answer. Re-measuring each serious finding of a read-only audit with one command before it entered the report: six of the workers' main conclusions changed.
-- **Hurt.** All of it was prose, and nothing checked it. Logs named green held a failing exit code.
-- **LINA form.** `agent/verification_evidence.py` records what a coding turn proved. A checked outcome line: not built.
+- **Worked.** Honest status words: "tried" is not "done", and unknown is a legal answer. Re-measuring each serious finding of a read-only audit with one command before it entered the report: six of the workers' main conclusions changed. The development lead checked a write by opening the result file and comparing it with the previous run. For long reports the lead read the file directly.
+- **Hurt.** All of it was prose, and nothing checked it. Logs named green held a failing exit code, and a successful pipeline hid a failed list command. A write command exited successfully but produced zero bytes where the previous runner had written nine. The cause is unknown. A long report pasted into a journal was cut short.
+- **LINA form.** `agent/verification_evidence.py` records what a coding turn proved. A checked outcome line: not built. `hermes_cli/worker/notice.py` points the reviewer to the report, and `hermes_cli/worker/report.py` reads the file to check its handoff section.
 
 ### P15. Work across several machines
 
 - **Habit.** Work runs on several devices as one.
 - **Worked.** A map from tool name to remote command, with unmapped names refused. No remote machine gates startup. Heavy runs (full test suites, builds, repeated runs) handed to build hosts through the worker queue, which counts them against per-host caps set from measured daemon and runner memory.
-- **Hurt.** Reachability was the only precondition. Agent sessions ran tests, builds and SSH loops straight on the shared host, 175 runs and 663 SSH calls in one day, while the build hosts' queues stood empty. The shared host, which also serves every agent session and the backups, once reached a load of 115. One unthrottled scan of storage snapshots pushed the storage host's load to 260, dropped remote shells and ended in an out-of-memory kill.
-- **LINA form.** LINA Helper holds the Mac permissions (`helper/macos/`, #45). Registered devices with grants: not built. Bids pass a node that is short of memory or keeps failing quickly (`hermes_cli/worker/bidding.py`, #456).
+- **Hurt.** Reachability was the only precondition. Agent sessions ran tests, builds and SSH loops straight on the shared host, 175 runs and 663 SSH calls in one day, while the build hosts' queues stood empty. The shared host, which also serves every agent session and the backups, once reached a load of 115. One unthrottled scan of storage snapshots pushed the storage host's load to 260, dropped remote shells and ended in an out-of-memory kill. One request stayed queued for 21 hours because no host could run it.
+- **LINA form.** LINA Helper holds the Mac permissions (`helper/macos/`, #45). Registered devices with grants: not built. Bids pass a node that is short of memory or keeps failing quickly (`hermes_cli/worker/bidding.py`, #456). With no eligible bid, `hermes_cli/worker/hub.py` leaves the request queued with a receipt, no rejection. Automatic rejection or expiry for lack of bids: not built.
 
 ### P16. Shared file rules
 
@@ -137,8 +137,8 @@ Each pattern has four fields: Habit, Worked, Hurt and LINA form. LINA form names
 
 - **Habit.** A deferred step has an owner and a check that it happened.
 - **Worked.** Attaching an executor in the same turn as the deferral. A checker that tells the owning agent when a wait has no running work. A weekly direction check that found dropped review findings and filed them.
-- **Hurt.** "Add the host once X lands" was recorded, and X had no worker. The fastest host sat idle while others were overloaded. Review findings left as "follow-up by hand" were never filed, and six vanished.
-- **LINA form.** Deadlines on goals and reminders that name the next command: #36. A check on every step left to be done by hand: not built.
+- **Hurt.** "Add the host once X lands" was recorded, and X had no worker. The fastest host sat idle while others were overloaded. Review findings left as "follow-up by hand" were never filed, and six vanished. A card waited two weeks after the device recorder that should have woken it disappeared.
+- **LINA form.** Deadlines on goals and reminders that name the next command: #36. A check on every step left to be done by hand: not built. `hermes_cli/kanban_db_park.py` marks a parked card as wake overdue when a named worker run has no record: #604.
 
 ### P20. A host order that only broke ties
 
@@ -200,8 +200,8 @@ Each pattern has four fields: Habit, Worked, Hurt and LINA form. LINA form names
 
 - **Habit.** Keep what changes between runs out of the cached prefix.
 - **Worked.** Moving per-run skill pointers from the end of the system message to the first line of the turn message. First-request cache reads went back to 99 to 100 percent. Reading cache reads and writes per request from the provider's usage counts. Measuring that the cache lived an hour, so 412 of 421 calls after 5 to 60 minute gaps still hit: the rewrites came from prefix changes, not from gaps.
-- **Hurt.** 42 of 45 relaunches with a changed set missed the cache, about a quarter of that day's cache-write cost. It was found from cost, a day later. Editing the shared persona rebuilt every live chat session's prompt on its next turn, 300,000 to 650,000 tokens each. A change of account behind the proxy emptied the cache, and every conversation wrote it once more.
-- **LINA form.** `agent/prompt_caching.py` and `agent/prompt_cache_boundary.py`. A fixed context order with a prefix test: #21. Measured against the baseline: #25. An alarm on a drop in first-request cache reads: not built.
+- **Hurt.** 42 of 45 relaunches with a changed set missed the cache, about a quarter of that day's cache-write cost. It was found from cost, a day later. Editing the shared persona rebuilt every live chat session's prompt on its next turn, 300,000 to 650,000 tokens each. A change of account behind the proxy emptied the cache, and every conversation wrote it once more. Sampling 21 consecutive calls gave an optimistic hit rate of 97.84 percent. The full sample of 51 calls better reflected normal use at 79.755 percent, rising to 85.608 percent when first calls after a restart or section change were excluded. Most calls with zero cache reads followed more than five idle minutes.
+- **LINA form.** `agent/prompt_cache_boundary.py` records the stable prefix so `agent/prompt_caching.py` can place a cache breakpoint there. A fixed context order with a prefix test: #21. `hermes_cli/cache_measure.py` computes a token-weighted hit rate from recorded usage and compares it with a baseline: #25. An alarm on a drop in first-request cache reads: not built.
 
 ### P29. A display mask used where the exact value is needed
 
@@ -210,9 +210,9 @@ Merged into P12.
 ### P30. A shared tool that took one agent's home as everyone's
 
 - **Habit.** A shared tool sees every agent, whichever agent runs it.
-- **Worked.** The tool reads the shared root from its own setting and ignores the per-agent value. A configured agent whose store is missing fails the run by name. A temporary home is given to one command only (`env` or a subshell), never exported. LINA keeps a calling agent's home as the owner of the run, not as its root.
-- **Hurt.** Run from one agent's shell, the collector took that agent's home as the root, found none of the other seven, and exited successfully. An exported test home stayed in a terminal, and later hand-offs went out under another agent's name. The same mistake came back a week later and an acceptance did not go through. A test run on the shared host with no home of its own installed its runtime into the live agent home, and the live agent re-synced its dependencies on its next start. On macOS an end-to-end test escaped its isolation and left 22 jobs in the account's service manager.
-- **LINA form.** `get_hermes_home()` in `hermes_constants.py` and `_get_profiles_root()` in `hermes_cli/profiles.py`. LINA's own home: #30. Failing by name on a missing agent: not built. The caller's home kept as `LINA_CALLER_HERMES_HOME` (`docs/switch-callers.md`, #434). End-to-end children kept out of the account's service manager: #372.
+- **Worked.** The tool reads the shared root from its own setting and ignores the per-agent value. A configured agent whose store is missing fails the run by name. A temporary home is given to one command only (`env` or a subshell), never exported. LINA keeps a calling agent's home as the owner of the run, not as its root. Selecting the destination home before install completion or owner backfill made the scope explicit. A dry run showed backfill counts by profile.
+- **Hurt.** Run from one agent's shell, the collector took that agent's home as the root, found none of the other seven, and exited successfully. An exported test home stayed in a terminal, and later hand-offs went out under another agent's name. The same mistake came back a week later and an acceptance did not go through. A test run on the shared host with no home of its own installed its runtime into the live agent home, and the live agent re-synced its dependencies on its next start. On macOS an end-to-end test escaped its isolation and left 22 jobs in the account's service manager. Install completion from a test checkout re-synced the live profiles because the live home was still selected. Choosing one active profile also left the other profiles in scope for owner backfill.
+- **LINA form.** `get_hermes_home()` in `hermes_constants.py` and `_get_profiles_root()` in `hermes_cli/profiles.py`. LINA's own home: #30. Failing by name on a missing agent: not built. The caller's home kept as `LINA_CALLER_HERMES_HOME` (`docs/switch-callers.md`, #434). End-to-end children kept out of the account's service manager: #372. `hermes_cli/source_completion.py` runs post-build maintenance, and `hermes_cli/update_cmd_maint.py` syncs bundled skills across profiles. `hermes_cli/store_owner_backfill.py` checks each profile with a state database and reports counts before an operator applies the changes.
 
 ### P31. A provider outage that stopped scheduled duties
 
@@ -225,8 +225,8 @@ Merged into P12.
 
 - **Habit.** A run counts as finished when its work is done, whether or not its session says so.
 - **Worked.** Ending a run whose session record has not moved for a grace period: done when its report is in, stalled when it is not. The grace came from measurement. Across 14,947 assistant turns on three build hosts, the longest gap after a tool result was 304 seconds, so the grace is 600. Before that fix, a worker that had written its results was closed five minutes after it went quiet.
-- **Hurt.** The coding engine kept sessions "running, streaming" for hours after the commit and the report, and the settle step read that as work. One run sat open for six hours after its report, and its next round did the same. A run whose engine had finished but left a helper process alive ended only at the 12-hour hard timeout.
-- **LINA form.** `hermes_cli/worker/runners/omo_settle.py` (`frozen_done`) with `stall_grace_s` in `hermes_cli/worker/device.py`: #404.
+- **Hurt.** The coding engine kept sessions "running, streaming" for hours after the commit and the report, and the settle step read that as work. One run sat open for six hours after its report, and its next round did the same. A run whose engine had finished but left a helper process alive ended only at the 12-hour hard timeout. A runner trial returned the expected answer but failed when the process stayed alive past its deadline. The cause is unknown.
+- **LINA form.** `hermes_cli/worker/runners/omo_settle.py` (`frozen_done`) with `stall_grace_s` in `hermes_cli/worker/device.py`: #404. `hermes_cli/lina_runner_sync_trial.py` fails a command trial that times out even if its output contains the expected answer.
 
 ### P33. Switching the model proxy under load
 
@@ -238,11 +238,33 @@ Merged into P12.
 ### P34. A deploy checked on disk instead of in the running process
 
 - **Habit.** A change is live when the running process uses it.
-- **Worked.** Restarting the services and rewriting the launch shims after each pin, then reading the running process's environment or mapped files for the pinned version. Pinning idle nodes first, and busy nodes once their runs ended.
-- **Hurt.** Services and shims pinned the code path by version, so moving the "current" link alone left the old code running. A launch flag reached a service only through a restart, and a missed restart left it out. A long-running session kept the plugin code it started with after the checkout changed.
-- **LINA form.** The services restart in `hermes_cli/lina_services.py`. A check that compares the running version with the pinned one: not built.
+- **Worked.** Restarting the services and rewriting the launch shims after each pin, then reading the running process's environment or mapped files for the pinned version. Pinning idle nodes first, and busy nodes once their runs ended. After a model protocol change, the system role waited for active runs to finish before restarting the runner host, then checked both files from a write task and the protocol in its usage record. When an installed runner appeared behind, comparing the channels showed its version matched stable while latest had advanced.
+- **Hurt.** Services and shims pinned the code path by version, so moving the "current" link alone left the old code running. A launch flag reached a service only through a restart, and a missed restart left it out. A long-running session kept the plugin code it started with after the checkout changed. The runner host likewise kept its old model settings in memory, so the worker stayed on a route that exposed only its first forced tool and finished without writing its files.
+- **LINA form.** The services restart in `hermes_cli/lina_services.py`. A check that compares the running version with the pinned one: not built. For runner version checks, `hermes_cli/lina_runner_sync_sources.py` reads the version from the configured release channel.
+
+### P35. A list command that ran a storage migration
+
+- **Habit.** Prepare the schema before an interactive command needs it.
+- **Worked.** On an isolated store, the system role timed the same list command twice. It timed out after 60.1 seconds waiting for a lock and returned the list in 0.09 seconds with the schema ready.
+- **Hurt.** A list request took 169 seconds. Opening the store started a pending backfill that hit the database client's deadline before the query ran. A further 108 seconds elapsed between the tool result and the next model request. The cause of that delay is unknown.
+- **LINA form.** When a list command opens the store, `hermes_cli/work/store_pg.py` applies pending migrations, including the speaker backfill in `services/store/migrations/0013_speaker.sql`. Moving migrations out of the list command is still open: #814.
+
+### P36. One login per collection round
+
+- **Habit.** A collector reads all rooms on a consumer messaging service through one session per round.
+- **Worked.** One process logged in once per round and read up to a set number of rooms. After each read it checked that the session was still open and ended the round on disconnect. A rejected login blocked further attempts until an operator cleared it.
+- **Hurt.** Each room read started a new login. The service limited the account after 85 calls in six minutes while reading 63 rooms. A socket that closed during a read returned an empty list. Recording that as a quiet room could lose messages.
+- **LINA form.** The collector lives outside this repository. `hermes_cli/external_messages.py` reads events from its spool and imports them into the shared memory store.
 
 ## Open
+
+- A test reportedly reached a real account when its fake helper was missing. Whether the test stops before the real helper can log in is not yet confirmed.
+- An auxiliary model route reportedly still named a retired proxy, and one host was missing from the rollout. Recovery on that host is not yet confirmed in usage records.
+- Whether regenerating the model catalog preserves the protocol verified after the runner host restarted is still open.
+- A data job used one run's elapsed time and a memory peak that included file cache as acceptance criteria. A repeatable time bound and a measure of the job's own memory use are not yet confirmed.
+- Upstream replay and compaction reports resembled stalls on the fork. A shared cause and the fixes present in the intended release tag are not yet confirmed.
+- The test copy's services were enabled for startup. Recovery of the working copy after a reboot is not yet confirmed.
+- The intended handler was written in a work note while the assignment option was unavailable. Assignment through the installed command is not yet confirmed.
 
 - Agents rewrite skills, memory and conversation memory hundreds of times a day with no reviewable history. A daily card of what was learned, with ok, fix and drop, is being built.
 - A hold or drain carries its own expiry and releases itself when the session that set it dies. Deployed; no real expiry has happened yet.
