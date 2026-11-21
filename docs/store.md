@@ -529,6 +529,38 @@ A state.db write that adds text writes it to Postgres first, in a transaction th
 SQLite's; a rollback or retry of the SQLite write rolls it back too. A crash between the two commits
 leaves a text row nothing points at, never a placement row without text.
 
+### Splitting legacy persona files
+
+Preview the split before starting the destination profiles. Supply one read-only UTF-8 file per
+home and use `default` for the installation's root profile.
+
+```sh
+lina migrate persona --home /path/to/new-install \
+  --source default=/path/to/copies/root.md \
+  --source profile-1=/path/to/copies/first.md \
+  --source profile-2=/path/to/copies/second.md
+```
+
+The default dry run prints a JSON summary and one ledger row per source unit. Blank lines separate
+paragraphs. A top-level `- ` starts a list item with its continuation lines and indented sublists.
+Lists, headings, and blank lines inside a fenced code block stay with the unit that opens it.
+Headings stay with retained content. Comparison collapses whitespace. A unit shared by at least
+three homes and at least two thirds of the input homes moves to the common file. Partly shared
+units stay in each persona. The ledger flags near matches to single-home units at a `difflib`
+ratio of 0.90 or above, taking the larger ratio of the two directions.
+
+Add `--apply` to write `SOUL.common.md`, the remaining `SOUL.md`, and `persona-ledger.jsonl`
+in each destination home. `SOUL.common.md` contains that home's common units in source order,
+with their original heading chains. The stable prompt loads it before `SOUL.md` and
+`SOUL.overlay.md`. Both persona files travel with the profile when it is cloned, renamed,
+or exported and imported. Source files must be outside the destination. An identical rerun is safe.
+An existing destination persona can be split if its bytes still match its source. Conflicting
+destination files stop the apply before any persona is written.
+
+By default all units are retained. To approve a drop, pass `--drop FILE` with one
+`<normalized-sha256>:<reason>` per line, using the digest from the preview. Approval covers each
+occurrence of that normalized unit. Each dropped occurrence carries the reason in its ledger row.
+
 ### Copying legacy memory into a new agent
 
 ```sh

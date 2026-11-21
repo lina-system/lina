@@ -15,7 +15,7 @@ from hermes_cli.archive_safe import archive_root_dirs, make_targz, normalize_arc
 
 logger = logging.getLogger("hermes_cli.profiles")
 
-from hermes_constants import LOCAL_RUNTIME_ROOT_DIRS
+from hermes_constants import COMMON_PERSONA_FILE, LOCAL_RUNTIME_ROOT_DIRS
 
 # Infrastructure excluded from --clone-all ONLY when the source is the default profile
 # (``~/.hermes``): git checkout (+ ~3 GB venv), worktrees, sibling profiles, shared bins,
@@ -56,19 +56,20 @@ def _clone_all_copytree_ignore(source_dir: Path):
     only when the source is the default profile (see the two exclude sets above)."""
     from hermes_cli.profiles import _get_default_hermes_home
     source_resolved = source_dir.resolve()
+    default_root = _get_default_hermes_home().resolve()
     root_exclude = set(_CLONE_ALL_HISTORY_EXCLUDE_ROOT)
-    if source_resolved == _get_default_hermes_home().resolve():
+    if source_resolved == default_root:
         root_exclude |= _CLONE_ALL_DEFAULT_EXCLUDE_ROOT
 
     def _ignore(directory: str, names: list[str]) -> set:
+        ignored = _non_exportable_entries(directory, names)
         try:
-            at_root = Path(directory).resolve() == source_resolved
+            current = Path(directory).resolve()
         except (OSError, ValueError):
             # resolve() can fail on odd FS layouts (broken symlinks, missing parents).
             # Fail open — better to over-copy than silently drop user data.
-            at_root = False
-        ignored = _non_exportable_entries(directory, names)
-        if at_root:
+            return ignored
+        if current == source_resolved:
             ignored.update(root_exclude & set(names))
         return ignored
 
@@ -205,7 +206,7 @@ _DEFAULT_EXPORT_EXCLUDE_ROOT = DEFAULT_EXPORT_EXCLUDE_ROOT = frozenset({
 # (#58394). Add new artifacts here when introduced in ``hermes_constants``.
 _DEFAULT_EXPORT_INCLUDE_ROOT = frozenset({
     # Configuration / persona
-    "config.yaml", "SOUL.md", "MEMORY.md", "USER.md", "todo.json",
+    "config.yaml", "SOUL.md", COMMON_PERSONA_FILE, "MEMORY.md", "USER.md", "todo.json",
     "system_prompt.md", "AGENTS.md", "CLAUDE.md", ".cursorrules",
     # Desktop appearance overlay (written/applied by the desktop app's export/import).
     "desktop.json",

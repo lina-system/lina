@@ -568,17 +568,21 @@ def _memory_parts(agent: Any) -> list[str]:
     return parts
 
 
-def _identity_parts(agent: Any, ctx_len: Optional[int]) -> tuple[list[str], bool]:
-    """SOUL.md (primary identity; cron keeps the persona while skipping cwd
-    instructions, scoped to the agent's OWN home) or the default identity, then a
-    migrated copy's work-record overlay, which supersedes the copied persona's status
-    lines. Returns ``(parts, soul_loaded)``."""
+def _identity_parts(agent: Any, ctx_len: Optional[int]) -> tuple[list[str | None], bool]:
+    """Shared persona and profile SOUL.md, then the copy overlay.
+
+    Use the default identity when neither persona supplied content. Cron keeps
+    these identity sections while skipping project context.
+    Returns ``(parts, soul_loaded)``.
+    """
     wants_soul = agent.load_soul_identity or not agent.skip_context_files
     if not wants_soul:
         return [DEFAULT_AGENT_IDENTITY], False
     home = _agent_home(agent)
+    common = _pb.load_common_persona(ctx_len, home_override=home)
     _soul_content = _pb.load_soul_md(ctx_len, home_override=home)
-    parts = [_soul_content or DEFAULT_AGENT_IDENTITY, _pb.load_copy_overlay(ctx_len, home_override=home)]
+    local_identity = _soul_content or (None if common else DEFAULT_AGENT_IDENTITY)
+    parts = [common, local_identity, _pb.load_copy_overlay(ctx_len, home_override=home)]
     return parts, bool(_soul_content)
 
 

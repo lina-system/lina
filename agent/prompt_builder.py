@@ -16,7 +16,8 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from hermes_constants import (
-    get_hermes_home, get_scratch_dir, get_skills_dir, is_wsl, reset_hermes_home_override, set_hermes_home_override,
+    COMMON_PERSONA_FILE, get_hermes_home, get_scratch_dir, get_skills_dir,
+    is_wsl, reset_hermes_home_override, set_hermes_home_override,
 )
 
 from agent.model_metadata import CHARS_PER_TOKEN
@@ -51,7 +52,7 @@ def _get_context_file_read_timeout() -> float:
 
 
 def _read_text_with_timeout(
-    path: Path, timeout: Optional[float] = None, encoding: str = "utf-8-sig"
+    path: Path, timeout: Optional[float] = None, encoding: str = "utf-8-sig", *, preserve_newlines: bool = False
 ) -> Optional[str]:
     """``path.read_text()`` on a daemon thread so a slow file can't stall startup.
 
@@ -66,7 +67,8 @@ def _read_text_with_timeout(
 
     def _reader() -> None:
         try:
-            result.put((True, path.read_text(encoding=encoding)))
+            text = path.read_bytes().decode(encoding) if preserve_newlines else path.read_text(encoding=encoding)
+            result.put((True, text))
         except Exception as exc:  # re-raised on the caller thread
             result.put((False, exc))
 
@@ -1515,6 +1517,18 @@ def _omitted_headings(content: str, start: int, end: int, limit: int = 15) -> li
     return headings[:limit] + (["..."] if len(headings) > limit else [])
 
 
+def _soul_is_user_authored(home: Path) -> bool:
+    """A distribution owns the whole payload unless it lists individual files."""
+    from hermes_cli.profile_distribution import read_manifest
+
+    try:
+        manifest = read_manifest(home)
+        return manifest is None or (bool(manifest.distribution_owned) and "SOUL.md" not in manifest.distribution_owned)
+    except Exception as exc:  # An unreadable distribution manifest must still fail closed.
+        logger.debug("Could not read distribution manifest in %s: %s", home, exc)
+        return False
+
+
 def load_soul_md(context_length: Optional[int] = None, home_override: Path | None = None) -> Optional[str]:
     """SOUL.md from HERMES_HOME (identity slot #1), or None.
 
@@ -1547,23 +1561,42 @@ def load_soul_md(context_length: Optional[int] = None, home_override: Path | Non
             content = strip_legacy_protocol(content).strip()
         if not content:
             return None
-        # `hermes profile install <git-url>` / `profile update` plant a third-party SOUL.md into a
-        # distribution profile (hermes_cli/profile_distribution.py, DEFAULT_DIST_OWNED) with no scan and no
-        # approval gate, so it is NOT the user's own file: when distribution.yaml owns SOUL.md (a manifest
-        # with no `distribution_owned` list owns the whole payload) a scanner hit keeps BLOCKING.
-        from hermes_cli.profile_distribution import read_manifest
-        try:
-            manifest = read_manifest(soul_path.parent)
-            user_authored = manifest is None or (bool(manifest.distribution_owned)
-                                                 and "SOUL.md" not in manifest.distribution_owned)
-        except Exception as e:  # unparseable manifest is still a distribution: fail closed
-            logger.debug("Could not read distribution manifest next to %s: %s", soul_path, e)
-            user_authored = False
+        user_authored = _soul_is_user_authored(soul_path.parent)
         return _truncate_content(_scan_context_content(content, "SOUL.md", user_authored=user_authored), "SOUL.md",
                                  context_length=context_length, read_path=str(soul_path))
     except Exception as e:
         logger.debug("Could not read SOUL.md from %s: %s", soul_path, e)
         return None
+
+
+def load_common_persona(context_length: int | None = None, home_override: Path | None = None) -> str | None:
+    """Load the owning profile's ordered shared persona as one prompt section."""
+    from agent.safe_worker_policy import safe_worker_enabled
+
+    if safe_worker_enabled():
+        return None
+
+    home = Path(home_override) if home_override is not None else get_hermes_home()
+    path = home / COMMON_PERSONA_FILE
+    try:
+        content = _read_text_with_timeout(path, encoding="utf-8", preserve_newlines=True)
+    except FileNotFoundError:
+        return None
+    except (OSError, UnicodeError) as exc:
+        logger.debug("Could not read %s: %s", path, type(exc).__name__)
+        return None
+
+    if not content:
+        return None
+    from tools.bot_mode_probe import strip_legacy_protocol
+    content = strip_legacy_protocol(content)
+    if not content.strip():
+        return None
+    scanned = _scan_context_content(content, path.name, user_authored=_soul_is_user_authored(home))
+    # The context scanner drops a leading BOM, but it belongs to the raw unit.
+    if scanned == content.removeprefix("\ufeff"):
+        scanned = content
+    return _truncate_content(scanned, path.name, context_length=context_length, read_path=str(path))
 
 
 # Written by `lina migrate memory` into a migrated copy's home (hermes_cli/migrate_memory_overlay.py) and loaded
