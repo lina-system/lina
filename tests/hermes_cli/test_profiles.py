@@ -1202,6 +1202,19 @@ class TestRenameProfile:
 
         assert read_user_config_raw(new_dir / "config.yaml")["terminal"]["cwd"] == "/srv/elsewhere"
 
+    def test_rename_publishes_the_profile_gateway_key_under_the_new_name(self, profile_env):
+        tmp_path = profile_env
+        create_profile("oldname", no_alias=True)
+        root = tmp_path / ".hermes"
+        old_dir = root / "profiles" / "oldname"
+        (old_dir / ".env").write_text("API_SERVER_KEY=key-one\n", encoding="utf-8")
+        (root / ".env").write_text("LINA_GATEWAY_KEY_OLDNAME=key-one\n", encoding="utf-8")
+
+        with patch("hermes_cli.profiles.check_alias_collision", return_value="skip"):
+            rename_profile("oldname", "newname")
+
+        assert "LINA_GATEWAY_KEY_NEWNAME=key-one" in (root / ".env").read_text(encoding="utf-8")
+
     def test_renames_root_honcho_host_without_changing_ai_peer(self, profile_env):
         tmp_path = profile_env
         create_profile("ssi_health", no_alias=True)

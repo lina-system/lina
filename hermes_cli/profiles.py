@@ -1875,6 +1875,16 @@ def _retarget_terminal_cwd(new_dir: Path, old_dir: Path) -> None:
         logger.warning("could not retarget terminal.cwd of %s after the rename", new_dir, exc_info=True)
 
 
+def _publish_gateway_key(new_dir: Path, new_name: str) -> None:
+    """Best-effort: a profile without a key, or an unwritable root ``.env``, leaves the rename done."""
+    try:
+        from hermes_cli.lina_gateway_key import publish_web_server_key
+
+        publish_web_server_key(new_dir.parent.parent, new_name, new_dir)
+    except Exception:
+        logger.warning("could not publish the gateway key of %s after the rename", new_dir, exc_info=True)
+
+
 def rename_profile(old_name: str, new_name: str) -> Path:
     """Rename a profile: directory, wrapper script, service, active_profile. The default
     profile's home IS the installation root, so "renaming" it sets a presentation-only
@@ -1956,6 +1966,10 @@ def rename_profile(old_name: str, new_name: str) -> Path:
     # 2c. A profile copied by ``migrate memory`` pins ``terminal.cwd`` to its own directory; after the move that
     # path no longer exists and every terminal command would start in a missing directory.
     _retarget_terminal_cwd(new_dir, old_dir)
+
+    # 2d. The web server finds an agent's gateway key under ``LINA_GATEWAY_KEY_<NAME>`` in the root ``.env``; the
+    # variable written for the old name no longer names anyone, so publish the profile's key under the new one.
+    _publish_gateway_key(new_dir, new_canon)
 
     # 3. Update profile-scoped Honcho host blocks, preserving aiPeer identity
     from hermes_cli.profiles_honcho import migrate_honcho_profile_host
