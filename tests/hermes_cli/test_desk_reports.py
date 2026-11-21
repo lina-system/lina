@@ -44,6 +44,7 @@ def register(root, capsys):
     return doc, url.split("/")[-2], url
 
 
+@pytest.mark.platforms("posix")  # registration needs os.O_NOFOLLOW and os.fwalk
 def test_register_refreshes_the_same_page(desk, capsys):
     doc, report_id, url = register(desk[0], capsys)
     doc.write_text("# Second\n\nEdited", encoding="utf-8")
@@ -54,6 +55,7 @@ def test_register_refreshes_the_same_page(desk, capsys):
         assert reports.get(conn, report_id, 1).title == "First"
 
 
+@pytest.mark.platforms("posix")  # registration needs os.O_NOFOLLOW and os.fwalk
 @pytest.mark.parametrize(("kind", "reason"), [
     ("outside", "allowed"), ("restricted", "deny"), ("legacy", "deny"), ("marked", "personal"), ("link", "link"),
 ])
@@ -77,6 +79,7 @@ def test_register_refuses_without_copying(desk, capsys, kind, reason):
         assert conn.execute("SELECT count(*) FROM reports.report").fetchone() == (0,)
 
 
+@pytest.mark.platforms("posix")  # registration needs os.O_NOFOLLOW and os.fwalk
 @pytest.mark.parametrize("change", ["changed", "moved", "gone", "denied", "error"])
 def test_sync_updates_each_source_independently(desk, capsys, change):
     root, policy = desk
@@ -108,3 +111,13 @@ def test_sync_updates_each_source_independently(desk, capsys, change):
     if change == "moved":
         assert run("register", str(doc)) == 0
         assert capsys.readouterr().out.strip().splitlines()[-1] == url
+
+
+@pytest.mark.platforms("windows")  # no O_NOFOLLOW / fwalk: refuse before reading anything
+def test_register_is_refused_where_links_cannot_be_avoided(desk, capsys):
+    doc = desk[0] / "2_Areas" / "demo.md"
+    doc.write_text("# First", encoding="utf-8")
+    assert run("register", str(doc)) == 2
+    assert "without following links" in capsys.readouterr().err
+    with closing(reports.owner_connection()) as conn:
+        assert conn.execute("SELECT count(*) FROM reports.report").fetchone() == (0,)
