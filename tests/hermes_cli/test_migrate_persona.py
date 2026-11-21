@@ -7,7 +7,8 @@ import json
 import pytest
 
 from agent.prompt_builder import load_common_persona
-from hermes_cli.profiles import create_profile
+from hermes_cli.profiles import create_profile, delete_profile, rename_profile
+from hermes_cli.profiles_archive import export_profile, import_profile
 from hermes_cli.subcommands.migrate import build_migrate_parser
 from hermes_constants import COMMON_PERSONA_FILE
 
@@ -47,17 +48,19 @@ def test_dry_run_then_apply_to_copies(tmp_path, capsys):
         name = source.stem
         home = root if name == "default" else root / "profiles" / name
         assert (home / "SOUL.md").read_bytes().strip() == f"- {name}".encode()
+        assert (home / "SOUL.common.md").read_bytes() == b"- Shared item\r\n"
         ledger = [json.loads(line) for line in (home / "persona-ledger.jsonl").read_text().splitlines()]
         assert ledger == [row for row in preview["ledger"] if row["home"] == name]
         assert any(row.get("reason") == "superseded" for row in ledger)
         assert source.read_bytes() == raw
 
 
-def test_conflict_is_detected_before_any_persona_is_written(tmp_path, capsys):
+@pytest.mark.parametrize("filename", ["SOUL.md", "SOUL.common.md"])
+def test_conflict_is_detected_before_any_persona_is_written(tmp_path, capsys, filename):
     source = tmp_path / "source.md"
     source.write_text("Copied paragraph\n")
     root = tmp_path / "install"
-    existing = root / "profiles" / "second" / "SOUL.md"
+    existing = root / "profiles" / "second" / filename
     existing.parent.mkdir(parents=True)
     existing.write_text("Local edits\n")
     args = ["--home", root, "--source", f"first={source}"]
@@ -69,8 +72,8 @@ def test_conflict_is_detected_before_any_persona_is_written(tmp_path, capsys):
     assert not (root / "profiles" / "first").exists()
 
 
-@pytest.mark.parametrize(("source", "full"), [("first", False), ("default", True)])
-def test_clone_keeps_migrated_persona(tmp_path, monkeypatch, capsys, source, full):
+@pytest.fixture
+def migrated(tmp_path, monkeypatch, capsys):
     root = tmp_path / "install"
     args = ["--home", root, "--apply"]
     for name in ("default", "first", "second"):
@@ -82,20 +85,47 @@ def test_clone_keeps_migrated_persona(tmp_path, monkeypatch, capsys, source, ful
     assert code == 0, report
     monkeypatch.setenv("HERMES_HOME", str(root))
     monkeypatch.setenv("LINA_HOME", str(root))
-    home = root if full else root / "profiles" / source
+    monkeypatch.setenv("HOME", str(tmp_path))
+    return root
+
+
+@pytest.mark.parametrize(("source", "full"), [("first", False), ("second", False), ("default", True)])
+def test_clone_keeps_migrated_persona(migrated, source, full):
+    home = migrated if source == "default" else migrated / "profiles" / source
     expected = f"# Rules\n## {source}\n- First rule\n\n- Next rule\n"
     assert load_common_persona(home_override=home) == expected
-    common_file = root / COMMON_PERSONA_FILE
-    units = json.loads(common_file.read_bytes())["units"]
-
     clone = create_profile("copy", clone_from=source, clone_all=full, no_alias=True)
 
     assert load_common_persona(home_override=clone) == expected
     assert (clone / "SOUL.md").read_bytes() == (home / "SOUL.md").read_bytes()
-    assert json.loads(common_file.read_bytes())["units"] == units
-    assert not (clone / COMMON_PERSONA_FILE).exists()
+    assert (clone / "SOUL.common.md").read_bytes() == expected.encode()
     fresh = create_profile("fresh", no_skills=True, no_alias=True)
     assert load_common_persona(home_override=fresh) is None
+
+
+def test_renamed_profile_keeps_common_persona(migrated):
+    renamed = rename_profile("first", "renamed")
+    assert load_common_persona(home_override=renamed) == "# Rules\n## first\n- First rule\n\n- Next rule\n"
+
+
+def test_recreated_profile_has_no_deleted_persona(migrated):
+    assert load_common_persona(home_override=migrated / "profiles" / "first")
+    delete_profile("first", yes=True)
+    fresh = create_profile("first", no_skills=True, no_alias=True)
+    assert load_common_persona(home_override=fresh) is None
+
+
+@pytest.mark.parametrize("source", ["first", "second", "default"])
+def test_export_import_preserves_persona_in_another_install(migrated, tmp_path, monkeypatch, source):
+    home = migrated if source == "default" else migrated / "profiles" / source
+    persona = (home / "SOUL.md").read_bytes()
+    archive = export_profile(source, str(tmp_path / "export.tar.gz"))
+    destination = tmp_path / "other"
+    monkeypatch.setenv("LINA_HOME", str(destination))
+    monkeypatch.setenv("HERMES_HOME", str(destination))
+    imported = import_profile(str(archive), "imported")
+    assert (imported / "SOUL.md").read_bytes() == persona
+    assert load_common_persona(home_override=imported) == f"# Rules\n## {source}\n- First rule\n\n- Next rule\n"
 
 
 def test_clone_without_shared_file_keeps_local_bytes(tmp_path, monkeypatch):

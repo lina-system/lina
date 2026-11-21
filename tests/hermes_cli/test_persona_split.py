@@ -56,17 +56,14 @@ def test_split_preserves_the_multiset_and_order_of_each_homes_units() -> None:
         "reviewer": sources["reviewer"],
         "empty": "",
     }
-    assert {
-        home: [entry["unit"] for entry in entries] for home, entries in result.common["homes"].items()
-    } == {
-        "builder": [_sha(shared), _sha(second), _sha(shared)],
-        "operator": [_sha(second), _sha(shared)],
-        "planner": [_sha(shared_variant), _sha(second)],
-        "auditor": [_sha(second), _sha(shared)],
-        "reviewer": [],
-        "empty": [],
+    assert result.common == {
+        "builder": "# Orchard\r\n## Routine\r\n" + shared + "\n" + second + "\n" + shared,
+        "operator": second + "\n" + shared,
+        "planner": shared_variant + "\n" + second,
+        "auditor": second + "\n" + shared,
+        "reviewer": "",
+        "empty": "",
     }
-    assert result.common["units"] == {_sha(unit): unit for unit in (shared, shared_variant, second)}
     assert result.ledger[0]["location"] == {"start_line": 3, "end_line": 4}
     assert result.ledger[0]["normalized_sha256"] == _sha("- Check stock - Count crates")
 
@@ -80,22 +77,21 @@ def test_split_preserves_the_multiset_and_order_of_each_homes_units() -> None:
             key=lambda line: bool(line.strip()) and not line.startswith("#"),
         )
         persona_units = ["".join(lines) for is_unit, lines in runs if is_unit]
-        entries = result.common["homes"][home]
-        common_units = [result.common["units"][entry["unit"]] for entry in entries]
+        common_lines = result.common[home].splitlines(keepends=True)
+        common_runs = groupby(common_lines, key=lambda line: bool(line.strip()) and not line.startswith("#"))
+        common_units = ["".join(lines) for is_unit, lines in common_runs if is_unit]
         source_lines = sources[home].splitlines(keepends=True)
         # Source positions count a heading shared by several rows or outputs once.
         headings = {}
         personal_heading_lines = set()
-        common_entries = iter(entries)
+        common_heading_lines = set()
         dropped_units = []
         for row in result.ledger:
             if row["home"] != home:
                 continue
             positions = row.get("heading_lines", [])
             if row["disposition"] == "common":
-                for pos, text in zip(positions, next(common_entries)["headings"], strict=True):
-                    assert text == source_lines[pos - 1]
-                    headings[pos] = text
+                common_heading_lines.update(positions)
             elif row["disposition"] == "persona":
                 personal_heading_lines.update(positions)
             else:
@@ -106,6 +102,8 @@ def test_split_preserves_the_multiset_and_order_of_each_homes_units() -> None:
                 assert row["reason"] == "Owner retired it"
                 dropped_units.append(raw)
         personal_headings = [line for line in result.personas[home].splitlines(keepends=True) if line.startswith("#")]
+        common_headings = [line for line in common_lines if line.startswith("#")]
+        headings.update(zip(sorted(common_heading_lines), common_headings, strict=True))
         headings.update(zip(sorted(personal_heading_lines), personal_headings, strict=True))
         original_headings = [line for line in source_lines if line.startswith("#")]
         assert Counter(persona_units + common_units + dropped_units + list(headings.values())) == Counter(
@@ -167,7 +165,7 @@ def test_near_single_uses_maximum_directional_ratio_against_all_other_homes() ->
             for match in row["near_matches"]
         ] == expected_matches
     assert result.personas == sources
-    assert result.common["units"] == {}
+    assert result.common == dict.fromkeys(sources, "")
     shared_rows = [row for row in result.ledger if row["normalized_sha256"] == _sha(shared)]
     assert [row["membership"] for row in shared_rows] == ["partly_shared"] * 3
     assert result.summary["near"] == 4
@@ -199,7 +197,7 @@ def test_drops_override_common_membership_for_all_raw_variants() -> None:
     dropped = split_personas(sources, {normalized_sha: "Retired rule"})
 
     assert dropped.personas == dict.fromkeys(sources, "")
-    assert dropped.common == {"units": {}, "homes": {home: [] for home in sources}}
+    assert dropped.common == dict.fromkeys(sources, "")
     assert [
         (row["raw_sha256"], row["membership"], row["disposition"], row["reason"])
         for row in dropped.ledger
@@ -226,6 +224,21 @@ def test_only_dash_space_starts_a_new_item_and_indented_items_stay_nested() -> N
     result = split_personas({"one": source + "- Next item"}, {})
 
     assert [row["raw_sha256"] for row in result.ledger] == [_sha(source), _sha("- Next item")]
+
+
+@pytest.mark.parametrize("block", [
+    "Example:\n```text\n- Do not run this command\n```\n",
+    "Example:\n   ````text\n\n```\n# Still code\n`````\n",
+    "Example:\n```\n~~~\n\n- Unclosed\n",
+    "Example:\n  ~~~text\n- Code\n\n  ~~~~\n",
+])
+def test_fenced_example_stays_one_unit(block):
+    sources = {name: f"- Private {name}\n\n{block}" for name in ("one", "two", "three")}
+    result = split_personas(sources, {})
+    moved = [row for row in result.ledger if row["disposition"] == "common"]
+    assert [row["raw_sha256"] for row in moved] == [_sha(block)] * 3
+    for name in sources:
+        assert result.personas[name] == f"- Private {name}\n\n"
 
 
 def test_near_matching_preserves_difflib_default_popular_character_handling() -> None:

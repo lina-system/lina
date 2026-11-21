@@ -57,7 +57,6 @@ def _clone_all_copytree_ignore(source_dir: Path):
     from hermes_cli.profiles import _get_default_hermes_home
     source_resolved = source_dir.resolve()
     default_root = _get_default_hermes_home().resolve()
-    common_file = default_root / COMMON_PERSONA_FILE
     root_exclude = set(_CLONE_ALL_HISTORY_EXCLUDE_ROOT)
     if source_resolved == default_root:
         root_exclude |= _CLONE_ALL_DEFAULT_EXCLUDE_ROOT
@@ -70,8 +69,6 @@ def _clone_all_copytree_ignore(source_dir: Path):
             # resolve() can fail on odd FS layouts (broken symlinks, missing parents).
             # Fail open — better to over-copy than silently drop user data.
             return ignored
-        if current == common_file.parent:
-            ignored.add(common_file.name)
         if current == source_resolved:
             ignored.update(root_exclude & set(names))
         return ignored
@@ -209,7 +206,7 @@ _DEFAULT_EXPORT_EXCLUDE_ROOT = DEFAULT_EXPORT_EXCLUDE_ROOT = frozenset({
 # (#58394). Add new artifacts here when introduced in ``hermes_constants``.
 _DEFAULT_EXPORT_INCLUDE_ROOT = frozenset({
     # Configuration / persona
-    "config.yaml", "SOUL.md", "MEMORY.md", "USER.md", "todo.json",
+    "config.yaml", "SOUL.md", COMMON_PERSONA_FILE, "MEMORY.md", "USER.md", "todo.json",
     "system_prompt.md", "AGENTS.md", "CLAUDE.md", ".cursorrules",
     # Desktop appearance overlay (written/applied by the desktop app's export/import).
     "desktop.json",

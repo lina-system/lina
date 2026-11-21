@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from hermes_constants import (
-    COMMON_PERSONA_FILE, get_default_hermes_root, get_hermes_home, get_scratch_dir, get_skills_dir,
+    COMMON_PERSONA_FILE, get_hermes_home, get_scratch_dir, get_skills_dir,
     is_wsl, reset_hermes_home_override, set_hermes_home_override,
 )
 
@@ -52,7 +52,7 @@ def _get_context_file_read_timeout() -> float:
 
 
 def _read_text_with_timeout(
-    path: Path, timeout: Optional[float] = None, encoding: str = "utf-8-sig"
+    path: Path, timeout: Optional[float] = None, encoding: str = "utf-8-sig", *, preserve_newlines: bool = False
 ) -> Optional[str]:
     """``path.read_text()`` on a daemon thread so a slow file can't stall startup.
 
@@ -67,7 +67,8 @@ def _read_text_with_timeout(
 
     def _reader() -> None:
         try:
-            result.put((True, path.read_text(encoding=encoding)))
+            text = path.read_bytes().decode(encoding) if preserve_newlines else path.read_text(encoding=encoding)
+            result.put((True, text))
         except Exception as exc:  # re-raised on the caller thread
             result.put((False, exc))
 
@@ -1576,32 +1577,15 @@ def load_common_persona(context_length: int | None = None, home_override: Path |
         return None
 
     home = Path(home_override) if home_override is not None else get_hermes_home()
+    path = home / COMMON_PERSONA_FILE
     try:
-        root = get_default_hermes_root(home=home)
-        relative = home.resolve().relative_to(root.resolve())
-    except (OSError, RuntimeError, ValueError):
-        return None
-    match relative.parts:
-        case ():
-            profile = "default"
-        case ("profiles", name) if not name.startswith("."):
-            profile = name
-        case _:
-            return None
-
-    path = root / COMMON_PERSONA_FILE
-    try:
-        raw = _read_text_with_timeout(path)
-        if not raw:
-            return None
-        data = json.loads(raw)
+        content = _read_text_with_timeout(path, encoding="utf-8", preserve_newlines=True)
     except FileNotFoundError:
         return None
-    except (OSError, UnicodeError, json.JSONDecodeError, RecursionError) as exc:
+    except (OSError, UnicodeError) as exc:
         logger.debug("Could not read %s: %s", path, type(exc).__name__)
         return None
 
-    content = _render_common_persona(data, profile)
     if not content:
         return None
     from tools.bot_mode_probe import strip_legacy_protocol
@@ -1613,40 +1597,6 @@ def load_common_persona(context_length: int | None = None, home_override: Path |
     if scanned == content.removeprefix("\ufeff"):
         scanned = content
     return _truncate_content(scanned, path.name, context_length=context_length, read_path=str(path))
-
-
-def _render_common_persona(data: object, profile: str) -> str | None:
-    match data:
-        case {"units": dict() as units, "homes": dict() as homes}:
-            membership = homes.get(profile)
-        case _:
-            return None
-    if not isinstance(membership, list):
-        return None
-    parts: list[str] = []
-    previous_headings: list[str] = []
-    for entry in membership:
-        match entry:
-            case str() as key:  # Shared files written before heading context was recorded.
-                headings = []
-            case {"unit": str() as key, "headings": list() as headings} if all(isinstance(h, str) for h in headings):
-                pass
-            case _:
-                return None
-        if not isinstance(unit := units.get(key), str) or not unit:
-            return None
-        if headings != previous_headings:
-            unit = "".join(headings) + unit
-            previous_headings = headings
-        if parts:
-            # Count existing boundary newlines without changing either raw unit.
-            left = parts[-1][-4:].replace("\r\n", "\n")
-            right = unit[:4].replace("\r\n", "\n")
-            newlines = len(left) - len(left.rstrip("\n")) + len(right) - len(right.lstrip("\n"))
-            parts.append("\n" * max(0, 2 - newlines))
-        parts.append(unit)
-    content = "".join(parts)
-    return content if content.strip() else None
 
 
 # Written by `lina migrate memory` into a migrated copy's home (hermes_cli/migrate_memory_overlay.py) and loaded

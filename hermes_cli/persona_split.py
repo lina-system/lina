@@ -6,25 +6,16 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 from hashlib import sha256
 from io import StringIO
-from itertools import chain
+from collections.abc import Iterator
 from typing import Final, Literal, NotRequired, TypedDict
 
 
 _HEADING: Final = re.compile(r" {0,3}(#{1,6})(?=[ \t\r\n]|$)")
+_FENCE: Final = re.compile(r" {0,3}(`{3,}|~{3,})([^\r\n]*)")
 _NEAR_RATIO: Final = 0.90
 
 Membership = Literal["common", "partly_shared", "single"]
 Disposition = Literal["common", "persona", "dropped"]
-
-
-class CommonEntry(TypedDict):
-    unit: str
-    headings: list[str]
-
-
-class CommonBlock(TypedDict):
-    units: dict[str, str]
-    homes: dict[str, list[CommonEntry]]
 
 
 class Location(TypedDict):
@@ -81,7 +72,7 @@ class SplitSummary(TypedDict):
 @dataclass(frozen=True, slots=True)
 class PersonaSplitResult:
     personas: dict[str, str]
-    common: CommonBlock
+    common: dict[str, str]
     ledger: list[LedgerRow]
     summary: SplitSummary
 
@@ -107,13 +98,28 @@ def _digest(text: str) -> str:
     return sha256(text.encode("utf-8")).hexdigest()
 
 
+def _structural_lines(lines: list[str]) -> Iterator[tuple[int, str]]:
+    """Only the opening line of a fenced block participates in unit boundaries."""
+    fence = ""
+    for index, line in enumerate(lines):
+        marker = _FENCE.match(line)
+        if fence:
+            if marker and marker[1].startswith(fence) and not marker[2].strip(" \t"):
+                fence = ""
+            continue
+        if marker and (marker[1][0] == "~" or "`" not in marker[2]):
+            fence = marker[1]
+        yield index, line
+    yield len(lines), ""  # Flush the final unit, including an unclosed fence.
+
+
 def _parse(home: str, lines: list[str], empty_sections: set[int]) -> list[_Unit]:
     """Collect units and their active ATX heading ancestors by source line."""
     units: list[_Unit] = []
     headings: list[tuple[int, int]] = []
     heading_without_body = False
     start: int | None = None
-    for index, line in enumerate(chain(lines, ("",))):
+    for index, line in _structural_lines(lines):
         blank = not line.strip()
         heading = _HEADING.match(line)
         if start is not None and (blank or heading or line.startswith("- ")):
@@ -200,17 +206,36 @@ def _summarize_groups(groups: dict[str, _Group], summary: SplitSummary) -> None:
         bin_stats["characters"] += sum(len(unit.raw) for unit in group.units)
 
 
-def _render_persona(lines: list[str], keep: set[int]) -> str:
+def _render_persona(lines: list[str], keep: set[int], removed: set[int]) -> str:
     if not keep:
         return ""
     parts: list[str] = []
     for index, line in enumerate(lines):
-        if index in keep or not line.strip():
+        if index in keep or (not line.strip() and index not in removed):
             # A bare CR and a formerly non-adjacent blank LF must stay two
             # line endings, or the neighboring retained unit changes on read.
             if line == "\n" and parts and parts[-1].endswith("\r"):
                 parts.append(" ")
             parts.append(line)
+    return "".join(parts)
+
+
+def _render_common(lines: list[str], units: list[_Unit]) -> str:
+    parts: list[str] = []
+    previous_headings: list[str] = []
+    for unit in units:
+        text = unit.raw
+        headings = [lines[i] for i in unit.headings]
+        if headings != previous_headings:
+            text = "".join(headings) + text
+            previous_headings = headings
+        if parts:
+            # Count existing boundary newlines without changing either raw unit.
+            left = parts[-1][-4:].replace("\r\n", "\n")
+            right = text[:4].replace("\r\n", "\n")
+            newlines = len(left) - len(left.rstrip("\n")) + len(right) - len(right.lstrip("\n"))
+            parts.append("\n" * max(0, 2 - newlines))
+        parts.append(text)
     return "".join(parts)
 
 
@@ -236,7 +261,7 @@ def split_personas(sources: dict[str, str], drops: dict[str, str]) -> PersonaSpl
     }
     result = PersonaSplitResult(
         personas={},
-        common={"units": {}, "homes": {}},
+        common={},
         ledger=[],
         summary={
             "distinct": len(groups),
@@ -251,15 +276,14 @@ def split_personas(sources: dict[str, str], drops: dict[str, str]) -> PersonaSpl
         },
     )
     for home, units in units_by_home.items():
-        common_entries: list[CommonEntry] = []
-        result.common["homes"][home] = common_entries
+        common_units: list[_Unit] = []
         keep = empty_sections[home]
+        removed: set[int] = set()
         membership_counts: Counter[Membership] = Counter()
         counts: Counter[Disposition] = Counter()
         characters: Counter[Disposition] = Counter()
         for unit in units:
             membership = groups[unit.normalized].membership
-            raw_sha = unit.identity["raw_sha256"]
             reason = drops.get(unit.identity["normalized_sha256"])
             row = LedgerRow(
                 **unit.identity,
@@ -274,19 +298,21 @@ def split_personas(sources: dict[str, str], drops: dict[str, str]) -> PersonaSpl
                 row["reason"] = reason
             elif membership == "common":
                 row["disposition"] = "common"
-                result.common["units"][raw_sha] = unit.raw
-                common_entries.append({"unit": raw_sha, "headings": [lines_by_home[home][i] for i in unit.headings]})
+                common_units.append(unit)
             else:
                 keep.update(unit.span)
                 keep.update(unit.headings)
+            if row["disposition"] != "persona":
+                removed.update(unit.span)
             result.ledger.append(row)
             membership_counts[membership] += 1
             counts[row["disposition"]] += 1
             characters[row["disposition"]] += len(unit.raw)
         # Blank lines are separators outside units. Keep them in surviving
         # personas so removal cannot join adjacent paragraphs.
-        persona = _render_persona(lines_by_home[home], keep)
+        persona = _render_persona(lines_by_home[home], keep, removed)
         result.personas[home] = persona
+        result.common[home] = _render_common(lines_by_home[home], common_units)
         result.summary["homes"][home] = HomeStats(
             source_chars=len(sources[home]),
             persona_chars=characters["persona"],

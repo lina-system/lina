@@ -438,16 +438,17 @@ lina migrate persona --home /path/to/new-install \
 
 The default dry run prints a JSON summary and one ledger row per source unit. Blank lines separate
 paragraphs. A top-level `- ` starts a list item with its continuation lines and indented sublists.
+Lists, headings, and blank lines inside a fenced code block stay with the unit that opens it.
 Headings stay with retained content. Comparison collapses whitespace. A unit shared by at least
 three homes and at least two thirds of the input homes moves to the common file. Partly shared
 units stay in each persona. The ledger flags near matches to single-home units at a `difflib`
 ratio of 0.90 or above, taking the larger ratio of the two directions.
 
-Add `--apply` to write `shared/SOUL.common.json` beside `shared/OWNER.md` under the destination
-installation data root. This generated file stores the exact shared text and each home's ordered
-references to it. The stable prompt loads that home's common units before its `SOUL.md` and
-`SOUL.overlay.md`. Each destination home receives its remaining `SOUL.md` and a
-`persona-ledger.jsonl`. Source files must be outside the destination. An identical rerun is safe.
+Add `--apply` to write `SOUL.common.md`, the remaining `SOUL.md`, and `persona-ledger.jsonl`
+in each destination home. `SOUL.common.md` contains that home's common units in source order,
+with their original heading chains. The stable prompt loads it before `SOUL.md` and
+`SOUL.overlay.md`. Both persona files travel with the profile when it is cloned, renamed,
+or exported and imported. Source files must be outside the destination. An identical rerun is safe.
 An existing destination persona can be split if its bytes still match its source. Conflicting
 destination files stop the apply before any persona is written.
 
