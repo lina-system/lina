@@ -86,7 +86,9 @@ def _read_prefix(stream: _ArchiveStream, path: str, limit: int) -> tuple[str, by
 
 def _stop_archive(process: subprocess.Popen[bytes]) -> None:
     # Stop the transport as well as Git so the server sees the connection close.
-    with suppress(ProcessLookupError):
+    # macOS answers EPERM, not ESRCH, when the group holds only an exited Git
+    # that has not been waited for yet; there is nothing left to signal.
+    with suppress(ProcessLookupError, PermissionError):
         os.killpg(process.pid, signal.SIGKILL)  # windows-footgun: ok — preview only starts Git on POSIX
     try:
         process.wait(timeout=1)

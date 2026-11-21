@@ -125,6 +125,20 @@ def test_preview_reports_unsupported_transport() -> None:
     assert error.value.status in {501, 502}
 
 
+def test_stop_archive_tolerates_eperm_from_an_exited_group_leader(monkeypatch: pytest.MonkeyPatch) -> None:
+    from hermes_cli.work import forge_preview
+
+    process = subprocess.Popen([sys.executable, "-c", "pass"], start_new_session=True)
+    process.wait()
+
+    def eperm(*_args: object) -> None:
+        raise PermissionError(1, "Operation not permitted")
+
+    monkeypatch.setattr(forge_preview.os, "killpg", eperm)
+    forge_preview._stop_archive(process)
+    assert process.returncode == 0
+
+
 def test_preview_times_out_when_archive_server_stalls(
     repository: Repository, archive_helper: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
