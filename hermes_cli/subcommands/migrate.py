@@ -42,6 +42,18 @@ def build_migrate_parser(subparsers) -> None:
     migrate_parser.set_defaults(func=cmd_migrate)
     _build_memory_parser(migrate_subparsers)
     _build_cron_parser(migrate_subparsers)
+    persona = migrate_subparsers.add_parser("persona", help="Split legacy persona files into shared and personal units")
+    persona.add_argument("--source", action="append", required=True, metavar="PROFILE=FILE",
+                         help="Destination profile and read-only persona file (repeat for each home)")
+    persona.add_argument("--home", required=True, help="Destination installation data root, separate from the inputs")
+    persona.add_argument("--drop", metavar="FILE", help="Approved drops, one normalized sha256:reason per line")
+    persona.add_argument("--apply", action="store_true", help="Write the split and ledgers (default: dry run)")
+    persona.set_defaults(func=_cmd_migrate_persona)
+
+
+def _cmd_migrate_persona(args) -> None:
+    from hermes_cli.migrate_persona import run
+    raise SystemExit(run(args))
 
 
 def _build_memory_parser(subparsers) -> None:

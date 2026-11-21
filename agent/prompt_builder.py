@@ -16,7 +16,8 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from hermes_constants import (
-    get_hermes_home, get_scratch_dir, get_skills_dir, is_wsl, reset_hermes_home_override, set_hermes_home_override,
+    COMMON_PERSONA_FILE, get_default_hermes_root, get_hermes_home, get_scratch_dir, get_skills_dir,
+    is_wsl, reset_hermes_home_override, set_hermes_home_override,
 )
 
 from agent.model_metadata import CHARS_PER_TOKEN
@@ -1564,6 +1565,67 @@ def load_soul_md(context_length: Optional[int] = None, home_override: Path | Non
     except Exception as e:
         logger.debug("Could not read SOUL.md from %s: %s", soul_path, e)
         return None
+
+
+def load_common_persona(context_length: int | None = None, home_override: Path | None = None) -> str | None:
+    """Load the owning profile's ordered shared persona as one prompt section."""
+    from agent.safe_worker_policy import safe_worker_enabled
+
+    if safe_worker_enabled():
+        return None
+
+    home = Path(home_override) if home_override is not None else get_hermes_home()
+    try:
+        root = get_default_hermes_root(home=home)
+        relative = home.resolve().relative_to(root.resolve())
+    except (OSError, RuntimeError, ValueError):
+        return None
+    match relative.parts:
+        case ():
+            profile = "default"
+        case ("profiles", name) if not name.startswith("."):
+            profile = name
+        case _:
+            return None
+
+    path = root / COMMON_PERSONA_FILE
+    try:
+        raw = _read_text_with_timeout(path)
+        if not raw:
+            return None
+        data = json.loads(raw)
+    except FileNotFoundError:
+        return None
+    except (OSError, UnicodeError, json.JSONDecodeError, RecursionError) as exc:
+        logger.debug("Could not read %s: %s", path, type(exc).__name__)
+        return None
+
+    match data:
+        case {"units": dict() as units, "homes": dict() as homes}:
+            membership = homes.get(profile)
+        case _:
+            return None
+    if not isinstance(membership, list):
+        return None
+    parts: list[str] = []
+    for key in membership:
+        if not isinstance(key, str) or not isinstance(unit := units.get(key), str) or not unit:
+            return None
+        if parts:
+            # Count existing boundary newlines without changing either raw unit.
+            left = parts[-1][-4:].replace("\r\n", "\n")
+            right = unit[:4].replace("\r\n", "\n")
+            newlines = len(left) - len(left.rstrip("\n")) + len(right) - len(right.lstrip("\n"))
+            parts.append("\n" * max(0, 2 - newlines))
+        parts.append(unit)
+    content = "".join(parts)
+    if not content.strip():
+        return None
+    scanned = _scan_context_content(content, path.name)
+    # The context scanner drops a leading BOM, but it belongs to the raw unit.
+    if scanned == content.removeprefix("\ufeff"):
+        scanned = content
+    return _truncate_content(scanned, path.name, context_length=context_length, read_path=str(path))
 
 
 # Written by `lina migrate memory` into a migrated copy's home (hermes_cli/migrate_memory_overlay.py) and loaded
