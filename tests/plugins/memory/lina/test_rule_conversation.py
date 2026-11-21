@@ -158,3 +158,30 @@ def test_pasted_previous_assistant_reply_cannot_become_a_rule(rule_chat, memory_
     (denied,) = rule_results(result)
     assert denied.get("error") == OWNER_REFUSAL
     assert memory_store_sql("SELECT source_uid FROM memory.standing_rules") == []
+
+
+@pytest.mark.parametrize(("words", "place"), [
+    ("In the review channel, reply in English.", "channel:review"),
+    ("For source:inbox, keep replies brief.", "source:inbox"),
+    ("goal:sprint에서는 결론부터 써.", "goal:sprint"),
+])
+def test_named_place_lookup_through_conversation(rule_chat, words, place):
+    def call(text, **args):
+        (result,) = rule_results(rule_chat.say(text, calls=[args], reply="OK."))
+        return result
+
+    local = call("In this room, use two lines.", action="record")["rule_id"]
+    named = call(words, action="record")["rule_id"]
+    current = call("List the rules here.", action="list")["rules"]
+    assert [row["rule_id"] for row in current] == [local]
+    assert current[0]["place_ref"].startswith("channel:conv:")
+
+    request = {"action": "list", "place_ref": place}
+    active = call(f"List rules for {place}.", **request)
+    assert [(row["rule_id"], row["place_ref"]) for row in active["rules"]] == [(named, place)]
+    assert call("End that rule.", action="end", rule_id=named)["version"] == 2
+    assert call(f"List rules for {place}.", **request)["rules"] == []
+    history = call(f"Show the rule history for {place}.", **request, history=True)
+    assert [(row["rule_id"], row["version"], row["status"]) for row in history["rules"]] == [
+        (named, 1, "replaced"), (named, 2, "ended"),
+    ]

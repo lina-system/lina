@@ -12,7 +12,7 @@ from psycopg.types.json import Jsonb
 
 from hermes_state_store import StoreUnavailableError
 
-from .rule_sentences import interpret
+from .rule_sentences import NAMED_PLACE_REF, interpret
 
 TOOL = "standing_rule"
 _PROPERTIES = {
@@ -20,6 +20,11 @@ _PROPERTIES = {
     "rule_id": {"type": "string", "description": "Rule to change or end."},
     "offer_id": {"type": "string"},
     "history": {"type": "boolean"},
+    "place_ref": {
+        "type": "string",
+        "description": "For list only. Show rules for this exact named place, e.g. channel:review, "
+                       "source:inbox, or goal:sprint. Omit to list rules applicable here.",
+    },
     "kind": {"enum": ["conduct", "filter"]},
 }
 SCHEMA = {
@@ -71,12 +76,19 @@ def _pasted(cur, words):
     return cur.fetchone()["pasted"]
 
 
-def _listing(cur, history, place):
+def _listing(cur, args, current_place):
+    named = "place_ref" in args
+    place = args.get("place_ref", current_place)
+    if named:
+        if not isinstance(place, str) or not re.fullmatch(NAMED_PLACE_REF, place, re.IGNORECASE):
+            raise ValueError("조회할 장소를 channel:이름, source:이름 또는 goal:이름으로 알려 주세요.")
+        kind, key = place.split(":", 1)
+        place = f"{kind.lower()}:{key}"
     cur.execute(
         """SELECT rule_id, version, status, scope, agent_id, place_ref, kind, statement,
                   said_at, replaced_at, replaced_by, shared_rule_id, filtered_count
-           FROM memory.standing_rules WHERE (scope <> 'place' OR place_ref = %s)
-             AND (status = 'active' OR %s) ORDER BY rule_id, version""", (place, history),
+           FROM memory.standing_rules WHERE ((%s AND scope <> 'place') OR place_ref = %s)
+             AND (status = 'active' OR %s) ORDER BY rule_id, version""", (not named, place, args.get("history") is True),
     )
     return {"rules": cur.fetchall()}
 
@@ -172,6 +184,8 @@ def handle(provider, args):
 
     if args.keys() - _PROPERTIES.keys():
         return tool_error(_OWNER_ONLY)
+    if "place_ref" in args and args.get("action") != "list":
+        return tool_error("place_ref는 규칙 목록을 조회할 때만 쓸 수 있어요.")
     try:
         uid = provider._rule_source_uid
         if not uid:
@@ -181,7 +195,7 @@ def handle(provider, args):
             source = _owner_turn(cur, uid, provider._session_id)
             place = _place(source["conversation_id"], provider._init.get("gateway_session_key"))
             if action == "list":
-                result = _listing(cur, args.get("history") is True, place)
+                result = _listing(cur, args, place)
             elif action in {"record", "change", "end"}:
                 if _pasted(cur, source["content"]):
                     raise ValueError(_OWNER_ONLY)

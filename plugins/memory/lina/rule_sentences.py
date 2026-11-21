@@ -23,6 +23,7 @@ class Interpretation:
 
 
 _ID: Final = r"[A-Za-z0-9가-힣][A-Za-z0-9가-힣_-]{0,63}"
+NAMED_PLACE_REF: Final = rf"(?:channel|source|goal):{_ID}"
 _SEP: Final = r"(?: *, *| +)"
 _ALL: Final = re.compile(
     r"(?:everyone|all of you|(?:all|every) agents?|모두|다들|모든 에이전트(?:는|에게)?)"
@@ -39,7 +40,7 @@ _PLACE: Final = re.compile(
     rf"the (?P<name>{_ID}) (?P<kind>room|channel|goal|source|mail account))|"
     rf"(?:이 (?P<here>방|채널|목표|소스)|(?P<ko_name>{_ID}) (?P<ko_kind>방|채널|목표|소스))에서(?:는|만)?|"
     # Match the Korean locative particle before consuming it as part of the ID.
-    rf"(?:(?:in|on|for) )?(?P<ref>(?:channel|source|goal):{_ID}?)(?:에서(?:는|만)?)?)"
+    rf"(?:(?:in|on|for) )?(?P<ref>{NAMED_PLACE_REF}?)(?:에서(?:는|만)?)?)"
     + _SEP, re.IGNORECASE,
 )
 _KINDS: Final = {
