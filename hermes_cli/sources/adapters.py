@@ -217,10 +217,11 @@ def _composio(tool, params, account):
 
 class _NoRedirects:
     @staticmethod
-    def request(method, url, *, headers, json, timeout):
+    def request(method, url, *, headers=None, json=None, timeout=None):
         import requests
 
-        return requests.request(method, url, headers=headers, json=json, timeout=timeout, allow_redirects=False)
+        return requests.request(method, url, headers=headers, json=json,
+                                timeout=30 if timeout is None else timeout, allow_redirects=False)
 
 
 def _connector(tool, params, account):
