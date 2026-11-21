@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from hermes_cli.brain.page import GRADES, alias_key
+from hermes_state_source_visibility import visible_ref
 
 ANALYZERS = ("kiwi", "bigram")
 LEGS = ("semantic", "keyword")
@@ -362,9 +363,12 @@ class BrainReader:
         names = [alias for (alias,) in conn.execute(
             "SELECT alias FROM brain.aliases WHERE slug = %s AND origin <> 'slug' ORDER BY origin, alias", (slug,))]
         limit = max(1, min(MAX_TIMELINE_ENTRIES, int(timeline_limit)))
-        total = conn.execute("SELECT count(*) FROM brain.timeline WHERE page_slug = %s", (slug,)).fetchone()[0]
+        visible = visible_ref("source_ref")
+        total = conn.execute(f"SELECT count(*) FROM brain.timeline WHERE page_slug = %s AND {visible}",
+                             (slug,)).fetchone()[0]
         entries = conn.execute(
             "SELECT entry_date, grade, source_ref, text FROM brain.timeline WHERE page_slug = %s"
+            f" AND {visible}"
             " ORDER BY entry_date DESC NULLS LAST, line DESC LIMIT %s", (slug, limit)).fetchall()
         return {"slug": hit.slug, "title": hit.title, "type": hit.type, "path": hit.path, "root": row[7],
                 "dated": hit.dated.isoformat() if hit.dated else None, "names": names, "grade": hit.grade,
@@ -394,7 +398,8 @@ class BrainReader:
         for level in range(1, int(depth) + 1):
             args = [frontier] * (2 if direction == "both" else 1) + ([list(relations)] if relations else [])
             rows = conn.execute(
-                f"SELECT from_slug, to_slug, type, source_ref FROM brain.edges WHERE {ends}{by_type}"
+                f"SELECT from_slug, to_slug, type, source_ref FROM brain.edges WHERE ({ends}){by_type}"
+                f" AND {visible_ref('source_ref')}"
                 " AND (valid_until IS NULL OR valid_until >= current_date) ORDER BY from_slug, to_slug, type",
                 args).fetchall()
             reached = []

@@ -59,6 +59,12 @@ def _wiki(root: Path) -> Path:
 
 def _messages(dsn: str, rows: dict) -> None:
     from hermes_state_store import ExternalMessage, _put_external_message
+    from hermes_constants import get_default_hermes_root
+    from utils import atomic_roundtrip_yaml_update
+
+    if any(conversation.startswith("messages:mail:") for conversation, *_ in rows.values()):
+        atomic_roundtrip_yaml_update(get_default_hermes_root() / "config.yaml",
+                                     "memory.external_messages.sources.mail.enabled", True)
     with psycopg.connect(dsn) as conn:
         for uid, (conversation, author, ts, text) in rows.items():
             digest = hashlib.sha256(f"{uid}:{text}".encode()).hexdigest()

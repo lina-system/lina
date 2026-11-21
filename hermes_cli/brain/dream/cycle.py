@@ -55,9 +55,12 @@ class Lock:
 def _write(conn, writes: list[Atoms | Proposal], phase: str, agent_id: str, cycle_id: int, counts: Counter,
            ids: list[int]) -> None:
     from psycopg.types.json import Jsonb
+    from hermes_state_source_visibility import visible_atom
+
     for write in writes:
         if isinstance(write, Atoms):
-            conn.execute("DELETE FROM brain.atoms WHERE page_slug = %s", (write.slug,))
+            conn.execute(f"DELETE FROM brain.atoms WHERE page_slug = %s AND {visible_atom('source_ref')}",
+                         (write.slug,))
             for claim, grade, ref in write.claims:
                 conn.execute("INSERT INTO brain.atoms (page_slug, claim, grade, source_ref) VALUES (%s, %s, %s, %s)",
                              (write.slug, claim, grade, ref))

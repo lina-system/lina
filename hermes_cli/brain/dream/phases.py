@@ -91,18 +91,25 @@ class Atoms:
 
 def load(conn) -> Brain:
     """The brain as the store holds it now; read once per phase, so a phase sees the atoms of the one before."""
+    from hermes_state_source_visibility import visible_atom, visible_ref
+
+    visible = visible_ref("source_ref")
     pages = {row[0]: PageRow(*row) for row in conn.execute(
         "SELECT slug, path, title, type, dated, compiled_truth FROM brain.pages ORDER BY slug")}
     timeline: dict[str, list[Item]] = defaultdict(list)
     for slug, path, line, day, grade, ref, entry in conn.execute(
             "SELECT page_slug, path, line, entry_date, grade, source_ref, text FROM brain.timeline "
+            f"WHERE {visible} "
             "ORDER BY page_slug, entry_date NULLS FIRST, line"):
         timeline[slug].append(Item(ref or f"{path}#L{line}", grade, day.isoformat() if day else None, entry))
     atoms = [Atom(*row) for row in conn.execute(
-        "SELECT atom_id, page_slug, claim, grade, source_ref, created_at FROM brain.atoms ORDER BY atom_id")]
+        "SELECT atom_id, page_slug, claim, grade, source_ref, created_at FROM brain.atoms "
+        f"WHERE {visible_atom('source_ref')} "
+        "ORDER BY atom_id")]
     open_edges = conn.execute(
         "SELECT from_slug, to_slug, type, source_ref, valid_from FROM brain.edges "
-        "WHERE type <> 'mentions' AND valid_until IS NULL ORDER BY from_slug, type, to_slug, source_ref").fetchall()
+        f"WHERE type <> 'mentions' AND valid_until IS NULL AND {visible} "
+        "ORDER BY from_slug, type, to_slug, source_ref").fetchall()
     same_names = conn.execute(
         "SELECT DISTINCT a.slug, b.slug FROM brain.aliases AS a "
         "JOIN brain.aliases AS b ON b.alias_key = a.alias_key AND a.slug < b.slug "
@@ -455,8 +462,11 @@ class PromotePhase(Phase):
     def loaded(cls, conn, settings: Settings, agent_id: str) -> Phase:
         phase = cls(load(conn), settings)
         lines: dict[str, list[tuple]] = defaultdict(list)
+        from hermes_state_source_visibility import visible_ref
+
         for slug, day, ref, entry in conn.execute(
                 "SELECT page_slug, entry_date, source_ref, text FROM brain.timeline WHERE grade = 'external' "
+                f"AND {visible_ref('source_ref')} "
                 "AND source_ref IS NOT NULL AND source_ref <> '' ORDER BY page_slug, entry_date NULLS FIRST, line"):
             lines[slug].append((day, ref, entry))
         refs = sorted({ref for found in lines.values() for _, ref, _ in found})

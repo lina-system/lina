@@ -27,6 +27,7 @@ from typing import Any, Optional
 
 from hermes_cli.brain import page as pages
 from hermes_cli.brain.store import BrainStoreError
+from hermes_state_source_visibility import visible_ref
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +69,7 @@ class Conclusion:
     created_at: Optional[datetime] = None
 
 
-def page_of(conn, person_id: str) -> Optional[PersonPage]:
+def page_of(conn, person_id: str, *, prompt: bool = False) -> Optional[PersonPage]:
     """The indexed person page that names *person_id*; None when no page does, or when several do (a guess must not
     become a fact: the owner fixes the frontmatter)."""
     rows = conn.execute(
@@ -83,6 +84,7 @@ def page_of(conn, person_id: str) -> Optional[PersonPage]:
     slug, title, compiled, root, path = rows[0]
     entries = conn.execute(
         "SELECT entry_date, grade, source_ref, text FROM brain.timeline WHERE page_slug = %s "
+        f"AND {visible_ref('source_ref', prompt=prompt)} "
         "ORDER BY entry_date DESC NULLS LAST, line DESC", (slug,)).fetchall()
     return PersonPage(slug, title, compiled, Path(root) / path, tuple(TimelineLine(*row) for row in entries))
 
@@ -127,7 +129,8 @@ def card(page: PersonPage, limit: int = CARD_CHARS) -> str:
 
 def card_for(conn, person_id: str, limit: int = CARD_CHARS) -> Optional[str]:
     """The card of *person_id*'s page, or None when the person has no page."""
-    found = page_of(conn, person_id)
+    # A session card is a cached system-prompt component, even when live source reads are enabled.
+    found = page_of(conn, person_id, prompt=True)
     return card(found, limit) if found is not None else None
 
 

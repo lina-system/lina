@@ -30,6 +30,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
+from hermes_state_source_visibility import hidden_message, platform_sql, visible_chunk
+
 logger = logging.getLogger(__name__)
 
 CONTENT_JSON_PREFIX = "\x00json:"
@@ -519,7 +521,8 @@ class MessageStore:
         found: dict[str, TextRow] = {}
         missing = []
         for uid in wanted:
-            row = self._cached(uid)
+            # Transcript rows are immutable. A collector uid's visibility can change between calls.
+            row = self._cached(uid) if uid.startswith("agent:") else None
             if row is None:
                 missing.append(uid)
             else:
@@ -527,10 +530,12 @@ class MessageStore:
         for start in range(0, len(missing), 1000):
             chunk = missing[start:start + 1000]
             with self._cursor() as cur:
-                cur.execute("SELECT uid, content, native FROM memory.messages WHERE uid = ANY(%s)", (chunk,))
+                cur.execute("SELECT uid, content, native FROM memory.messages m WHERE uid = ANY(%s)"
+                            f" AND NOT {hidden_message('m')}", (chunk,))
                 for uid, content, native in cur.fetchall():
                     row = TextRow(uid, _values_from_row(content, native or {}))
-                    self._remember(row)
+                    if uid.startswith("agent:"):
+                        self._remember(row)
                     found[uid] = row
         return found
 
@@ -544,8 +549,9 @@ class MessageStore:
         """The rows first written by *session_id*, in write order: the shape the other engines (LCM,
         Honcho) read, without Hermes's placement state."""
         with self._cursor() as cur:
-            cur.execute("SELECT uid, role, content, tool_name, tool_call_id, ts, seq_in_session FROM memory.messages "
-                        "WHERE session_id = %s AND forgotten_at IS NULL ORDER BY seq_in_session, message_id",
+            cur.execute("SELECT uid, role, content, tool_name, tool_call_id, ts, seq_in_session FROM memory.messages m "
+                        f"WHERE session_id = %s AND NOT {hidden_message('m')} AND forgotten_at IS NULL "
+                        "ORDER BY seq_in_session, message_id",
                         (session_id,))
             names = [d.name for d in cur.description]
             return [dict(zip(names, row)) for row in cur.fetchall()]
@@ -579,7 +585,8 @@ class MessageStore:
         """The stored speaker kind of each of *uids* this agent may read."""
         wanted = list(dict.fromkeys(u for u in uids if u))
         with self._cursor() as cur:
-            cur.execute("SELECT uid, speaker FROM memory.messages WHERE uid = ANY(%s)", (wanted,))
+            cur.execute("SELECT uid, speaker FROM memory.messages m WHERE uid = ANY(%s)"
+                        f" AND NOT {hidden_message('m')}", (wanted,))
             return dict(cur.fetchall())
 
     def set_conversation(self, uids: Iterable[str], conversation_id: str) -> int:
@@ -700,12 +707,12 @@ class MessageStore:
 
     def count(self) -> int:
         with self._cursor() as cur:
-            cur.execute("SELECT count(*) FROM memory.messages")
+            cur.execute(f"SELECT count(*) FROM memory.messages m WHERE NOT {hidden_message('m')}")
             return int(cur.fetchone()[0])
 
     def all_uids(self) -> set[str]:
         with self._cursor() as cur:
-            cur.execute("SELECT uid FROM memory.messages")
+            cur.execute(f"SELECT uid FROM memory.messages m WHERE NOT {hidden_message('m')}")
             return {row[0] for row in cur.fetchall()}
 
     # ── search ──
@@ -732,7 +739,8 @@ class MessageStore:
             return []
         below = "" if before_id is None else "message_id < %s AND "
         of_source = "" if source is None else "source = %s AND "
-        sql = (f"SELECT message_id, uid FROM memory.messages WHERE {below}{of_source}forgotten_at IS NULL AND "
+        sql = (f"SELECT message_id, uid FROM memory.messages m WHERE NOT {hidden_message('m')} "
+               f"AND {below}{of_source}forgotten_at IS NULL AND "
                f"({' OR '.join(group_sql)}) ORDER BY message_id DESC LIMIT %s")
         args = (([] if before_id is None else [int(before_id)]) + ([] if source is None else [source]) + params
                 + [int(limit)])
@@ -790,7 +798,8 @@ class MessageStore:
     def has_memory_vectors(self, *, model: str, sources: Sequence[str]) -> bool:
         with self._cursor() as cur:
             cur.execute("SELECT 1 FROM vec.embeddings e JOIN vec.chunks c ON c.chunk_id = e.item_id"
-                        " WHERE e.kind = 'chunk' AND e.model = %s AND c.source = ANY(%s) LIMIT 1", (model, list(sources)))
+                        " WHERE e.kind = 'chunk' AND e.model = %s AND c.source = ANY(%s)"
+                        f" AND {visible_chunk()} LIMIT 1", (model, list(sources)))
             return cur.fetchone() is not None
 
     def search_memory_vectors(self, embedding: Sequence[float], *, model: str, sources: Sequence[str],
@@ -808,6 +817,7 @@ class MessageStore:
         with self._cursor() as cur:
             projection, parameters = _memory_search_projection(cur)
             # Its own transaction (a savepoint inside a write) so the HNSW settings end with the query (lina#387).
+            chunk_filter = visible_chunk()
             with cur.connection.transaction():
                 for setting in HNSW_FILTERED_SEARCH:
                     cur.execute(setting)
@@ -816,6 +826,7 @@ class MessageStore:
                     cur.execute(
                         "SELECT c.message_ids FROM vec.embeddings e JOIN vec.chunks c ON c.chunk_id = e.item_id"
                         " WHERE e.kind = 'chunk' AND e.model = %s AND c.source = ANY(%s)"
+                        f" AND {chunk_filter}"
                         + ("" if speakers is None else " AND EXISTS (SELECT 1 FROM memory.messages m"
                            " WHERE m.message_id = ANY(c.message_ids) AND m.speaker = ANY(%s))")
                         + " ORDER BY e.embedding <=> %s::vector LIMIT %s OFFSET %s",
@@ -839,7 +850,8 @@ class MessageStore:
         """The row *uid*, when this agent may read it (forgotten rows too: ``forgotten`` says so and the text is
         withheld); None when there is no such row or it is another agent's."""
         with self._cursor() as cur:
-            cur.execute(f"SELECT {_MEMORY_COLUMNS} FROM memory.messages WHERE uid = %s", (uid,))
+            cur.execute(f"SELECT {_MEMORY_COLUMNS} FROM (SELECT m.*, {platform_sql('m')} AS platform "
+                        f"FROM memory.messages m WHERE uid = %s AND NOT {hidden_message('m')}) item", (uid,))
             row = cur.fetchone()
         if row is None:
             return None
@@ -861,7 +873,7 @@ class MessageStore:
         hit_sum = " + ".join(["(p.content ILIKE %s)::int"] * len(patterns))
         any_hit = " OR ".join(["p.content ILIKE %s"] * len(patterns))
         sql = (f"SELECT {_PART_COLUMNS} FROM memory.message_parts AS p JOIN memory.messages AS m USING (message_id)"
-               " WHERE m.forgotten_at IS NULL"
+               f" WHERE m.forgotten_at IS NULL AND NOT {hidden_message('m')}"
                f" AND (p.tsv @@ plainto_tsquery('simple', %s) OR {any_hit})"
                f" ORDER BY ts_rank(p.tsv, plainto_tsquery('simple', %s), 1) + ({hit_sum})::float / %s DESC,"
                " at DESC LIMIT %s")
@@ -882,7 +894,8 @@ class MessageStore:
     def open_part(self, part_id: int) -> Optional[PartRow]:
         with self._cursor() as cur:
             cur.execute(f"SELECT {_PART_COLUMNS} FROM memory.message_parts AS p JOIN memory.messages AS m"
-                        " USING (message_id) WHERE p.part_id = %s AND m.forgotten_at IS NULL", (int(part_id),))
+                        " USING (message_id) WHERE p.part_id = %s AND m.forgotten_at IS NULL"
+                        f" AND NOT {hidden_message('m')}", (int(part_id),))
             row = cur.fetchone()
         return None if row is None else PartRow(*row)
 
@@ -926,9 +939,10 @@ _INJECTED_TURN_RE = (
     r"|ASYNC DELEGATION|Planning state preserved)")
 _MEMORY_COLUMNS = ("message_id, uid, source, role, author, agent_id, conversation_id, session_id,"
                    " coalesce(ts, observed_at) AS at, content, forgotten_at IS NOT NULL AS forgotten, speaker,"
-                   " speaker_ref, grade, source_id")
+                   " speaker_ref, grade, source_id, platform, native->>'native_id' AS native_id,"
+                   " native->>'display_url' AS display_url, native->>'permalink' AS permalink")
 _MEMORY_FIELDS = ("message_id, uid, source, role, author, agent_id, conversation_id, session_id, at, content,"
-                  " forgotten, speaker, speaker_ref, grade, source_id")
+                  " forgotten, speaker, speaker_ref, grade, source_id, platform, native_id, display_url, permalink")
 
 
 def _memory_search_projection(cur) -> tuple[str, list]:
@@ -942,17 +956,20 @@ def _memory_search_projection(cur) -> tuple[str, list]:
                 " WHERE source = 'agent' AND role = 'user' AND forgotten_at IS NULL AND content LIKE %s",
                 (SKILL_SCAFFOLD_SQL_LIKE,))
     skills = cur.fetchall()
+    visible = f"WHERE NOT {hidden_message('m')}"
+    platform = platform_sql("m")
     if not skills:
-        return "WITH searchable_messages AS (SELECT * FROM memory.messages) ", []
+        return f"WITH searchable_messages AS (SELECT m.*, {platform} AS platform FROM memory.messages m {visible}) ", []
     ids = [row[0] for row in skills]
     instructions = [extract_user_instruction_from_skill_message(row[1]) for row in skills]
     content = "CASE WHEN s.skill_message_id IS NULL THEN content ELSE s.instruction END"
-    columns = _MEMORY_COLUMNS.replace(" content,", f" {content} AS content,")
+    columns = ("m.message_id, uid, source, role, author, agent_id, conversation_id, session_id, "
+               f"{content} AS content, speaker, speaker_ref, grade, source_id, native, {platform} AS platform")
     return (
         f"WITH searchable_messages AS (SELECT {columns}, scope, ts, observed_at, forgotten_at,"
         " CASE WHEN s.skill_message_id IS NULL THEN m.tsv ELSE to_tsvector('simple', s.instruction) END AS tsv"
         " FROM memory.messages m LEFT JOIN unnest(%s::bigint[], %s::text[])"
-        " AS s(skill_message_id, instruction) ON m.message_id = s.skill_message_id) ",
+        f" AS s(skill_message_id, instruction) ON m.message_id = s.skill_message_id {visible}) ",
         [ids, instructions],
     )
 
@@ -979,6 +996,7 @@ class MemoryRow:
     speaker_ref: Optional[str] = None
     grade: str = "external"  # owner | agent | external (migration 0018, lina#440)
     source_id: Optional[str] = None
+    native_refs: Optional[dict[str, str]] = None
 
 
 @dataclass(frozen=True)
@@ -999,7 +1017,17 @@ def _memory_row(row: Sequence[Any]) -> MemoryRow:
     values = list(row[:15])
     if values[10]:
         values[9] = None
-    return MemoryRow(*values)
+    if values[2] != "messages" or len(row) < 19 or row[15] not in ("mail", "slack"):
+        return MemoryRow(*values)
+    from agent.redact import redact_sensitive_text
+
+    platform, native_id, display_url, permalink = row[15:19]
+    url_key, url = ("display_url", display_url) if platform == "mail" else ("permalink", permalink)
+    refs = {"platform": platform}
+    for key, value in (("native_id", native_id), (url_key, url)):
+        if value:
+            refs[key] = redact_sensitive_text(value, force=True, redact_url_credentials=True)
+    return MemoryRow(*values, native_refs=refs)
 
 
 @dataclass(frozen=True)
@@ -1640,7 +1668,8 @@ def external_messages_status() -> tuple[int, Optional[str]]:
     """Stored external row count and latest collection timestamp, without collector identifiers."""
     with _owner_connection() as conn:
         count, collected_at = conn.execute(
-            "SELECT count(*), max(observed_at) FROM memory.messages WHERE source = 'messages'"
+            "SELECT count(*), max(observed_at) FROM memory.messages m WHERE source = 'messages'"
+            f" AND NOT {hidden_message('m')}"
         ).fetchone()
     return count, collected_at.isoformat() if collected_at is not None else None
 
