@@ -1369,6 +1369,11 @@ def stage_text_restore(incoming_db: Path, destination_db: Path, sidecar: Optiona
         store.close()
     return staged
 
+# uid prefixes that carry an agent name: its own turns, its heart journal, and the messages the Honcho import copied
+# (``migrate memory`` writes ``honcho:<agent>:<public id>``). A move that skipped the last left them on the old name.
+AGENT_UID_PREFIXES = (SOURCE_AGENT, "heart", "honcho")
+
+
 def _agent_prefixes(old_agent: str, new_agent: str, source: str = SOURCE_AGENT) -> tuple[str, str]:
     return f"{source}:{old_agent}:", f"{source}:{new_agent}:"
 
@@ -1384,7 +1389,7 @@ def check_agent_move(old_agent: str, new_agent: str) -> None:
     import psycopg
     conn = _owner_connection()
     try:
-        for source in (SOURCE_AGENT, "heart"):
+        for source in AGENT_UID_PREFIXES:
             old_prefix, new_prefix = _agent_prefixes(old_agent, new_agent, source)
             clash = conn.execute(
                 "SELECT count(*), min(n.uid) FROM memory.messages o JOIN memory.messages n ON n.uid = %s || substr(o.uid, %s)"
@@ -1501,7 +1506,7 @@ def _remap_heart_evidence(cur, uids: Sequence[str], from_agent: str, to_agent: s
 
 def _remap_source_ids(cur, uids: Sequence[str], from_agent: str, to_agent: str) -> None:
     """Remap whole msg: reference prefixes, preserving list order and unrelated references."""
-    for source in (SOURCE_AGENT, "heart"):
+    for source in AGENT_UID_PREFIXES:
         from_prefix, to_prefix = _agent_prefixes(from_agent, to_agent, source)
         # Padding makes the first token follow the same space boundary as every later token.
         cur.execute(
@@ -1524,7 +1529,7 @@ def move_agent_rows(old_agent: str, new_agent: str) -> MovedRows:
     try:
         with conn.transaction(), conn.cursor() as cur:
             moved = MovedRows()
-            for source in (SOURCE_AGENT, "heart"):
+            for source in AGENT_UID_PREFIXES:
                 old_prefix, new_prefix = _agent_prefixes(old_agent, new_agent, source)
                 cur.execute(
                     "UPDATE memory.messages o SET agent_id = %s, uid = %s || substr(o.uid, %s),"
@@ -1559,7 +1564,7 @@ def return_agent_rows(uids: Sequence[str], old_agent: str, new_agent: str) -> No
     try:
         with conn.transaction(), conn.cursor() as cur:
             restored = []
-            for source in (SOURCE_AGENT, "heart"):
+            for source in AGENT_UID_PREFIXES:
                 old_prefix, new_prefix = _agent_prefixes(old_agent, new_agent, source)
                 cur.execute("UPDATE memory.messages SET agent_id = %s, uid = %s || substr(uid, %s),"
                             " speaker_ref = CASE WHEN speaker_ref = %s THEN %s ELSE speaker_ref END"
