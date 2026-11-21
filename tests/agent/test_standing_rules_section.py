@@ -116,3 +116,20 @@ def test_session_store_without_goal_registry_or_message_store_reads_rules_from_o
     agent = SimpleNamespace(_session_db=object(), session_id="s1", _gateway_session_key="g1", _agent_home=tmp_path)
     assert rules.read_rule_lines(agent) == ("- all (2026-01-01): Show both units.",)
     assert seen["places"] == ["channel:g1"] and seen["closed"]
+
+
+def test_modes_without_the_api_content_sidecar_never_get_a_rules_notice(monkeypatch):
+    # MoA and codex_app_server turns never stamp api_content, so a notice sent once could not be read
+    # back from the transcript and would be announced again on every later turn.
+    from agent import standing_rules_section as rules
+    from agent.system_prompt import restore_plugin_prompt_sections
+
+    line = "- all (2026-01-01): Show both units."
+    monkeypatch.setattr(rules, "read_rule_lines", lambda agent: (line,))
+    for extra in ({"provider": "moa"}, {"api_mode": "codex_app_server"}):
+        agent = SimpleNamespace(_cached_system_prompt="You are helpful.", **extra)
+        restore_plugin_prompt_sections(agent, agent._cached_system_prompt)
+        assert rules.standing_rules_note(agent, []) == ""
+    agent = SimpleNamespace(_cached_system_prompt="You are helpful.", provider="anthropic", api_mode="chat_completions")
+    restore_plugin_prompt_sections(agent, agent._cached_system_prompt)
+    assert line in rules.standing_rules_note(agent, [])

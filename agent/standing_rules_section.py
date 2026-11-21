@@ -76,6 +76,11 @@ def standing_rules_note(agent: Any, history: list) -> str:
     # A built or restored prompt can have an empty snapshot, which is a valid baseline.
     if snapshot is None or safe_worker_enabled():
         return ""
+    # MoA and codex_app_server turns never stamp the api_content sidecar, so a sent notice could not be
+    # read back from history and would repeat on every later turn (and replay would drop it from the
+    # cached prefix). Those modes skip it, as stage_skills_index_note does.
+    if getattr(agent, "provider", None) == "moa" or getattr(agent, "api_mode", None) == "codex_app_server":
+        return ""
     try:
         current = read_rule_lines(agent)
     except Exception as exc:
