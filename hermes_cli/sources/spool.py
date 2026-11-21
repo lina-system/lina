@@ -7,7 +7,7 @@ import json
 import os
 import stat
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -21,7 +21,7 @@ def append_message(path: Path, message: dict) -> None:
     import fcntl
 
     event = {"version": 1, "event_id": uuid.uuid4().hex,
-             "ingested_at": datetime.now(timezone.utc).isoformat(), "messages": [message]}
+             "ingested_at": datetime.now(UTC).isoformat(), "messages": [message]}
     line = (json.dumps(event, ensure_ascii=False, separators=(",", ":")) + "\n").encode()
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     directory = os.open(path.parent, os.O_DIRECTORY | os.O_NOFOLLOW)
@@ -32,7 +32,7 @@ def append_message(path: Path, message: dict) -> None:
         fd = os.open(path.name, flags, 0o600, dir_fd=directory)
         with os.fdopen(fd, "a+b") as stream:
             info = os.fstat(fd)
-            if not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o600:
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or stat.S_IMODE(info.st_mode) != 0o600:
                 raise ValueError("spool must be a regular file with mode 0600")
             fcntl.flock(fd, fcntl.LOCK_EX)
             if stream.seek(0, os.SEEK_END):
