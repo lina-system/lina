@@ -52,7 +52,7 @@ def session(tmp_path, monkeypatch, lina_env, memory_store_sql):
     db.close()
 
 
-def seed(home, platforms=CANARY):
+def ingest_messages(home, platforms):
     messages = []
     refs = {}
     for platform in platforms:
@@ -68,6 +68,11 @@ def seed(home, platforms=CANARY):
     spool = home / "events.jsonl"
     spool.write_text(json.dumps({"version": 1, "event_id": "c" * 32, "messages": messages}) + "\n", encoding="utf-8")
     assert ingest(spool).inserted == len(messages)
+    return refs
+
+
+def seed(home):
+    refs = ingest_messages(home, CANARY)
     records = [extract.Record("Finch", date(2026, 11, 1), f"derived {CANARY[kind]}", ref) for kind, ref in refs.items()]
     with owner_connection() as conn:
         written = extract.write_records(conn, records, home)
@@ -196,6 +201,7 @@ def test_reembed_picks_up_an_older_source_row_after_reenable(session):
 def test_rebuilt_session_prompt_and_notes_are_byte_identical_after_collection_and_extraction(session):
     from agent.prompt_builder import NOTES_END, NOTES_HEADING
     from agent.system_prompt import build_system_prompt
+    from tests.hermes_cli.test_brain_extract import FakeExtractor
 
     agent, _, home = session
 
@@ -208,7 +214,15 @@ def test_rebuilt_session_prompt_and_notes_are_byte_identical_after_collection_an
         return prompt, notes
 
     before = snapshot()
-    seed(home, platforms=LINK)
+    refs = ingest_messages(home, LINK)
+    answers = {ref: {"who": "Finch", "when": "2026-11-01", "what": f"derived {CANARY[kind]}"}
+               for kind, ref in refs.items()}
+    with owner_connection() as conn:
+        result = extract.extract(conn, FakeExtractor(answers), home)
+    assert result["lines_by_page"] == {"finch": 2}
+    timeline = (home.parent / "wiki" / "finch.md").read_text(encoding="utf-8")
+    for kind, ref in refs.items():
+        assert f"| external | {ref} | derived {CANARY[kind]}" in timeline
     for enabled in (True, False, True):
         for platform in LINK:
             switch(home, platform, enabled)
