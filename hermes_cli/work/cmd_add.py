@@ -34,6 +34,8 @@ def _links(a, by: str):
 def _check_args(a, kind: str, by: str) -> bool:
     if not kind:
         die(t("종류는 영역|목표|할일|메모 (이슈는 work link로 붙인다)"))
+    if a.repo is not None and kind != TODO:
+        die("--repo is only supported for to-dos")
     if by == owner() and kind != TODO:
         die(t("주인은 할 일만 맡는다(work add 할 일 --by {owner} --from <요청한 에이전트>)", owner=owner()))
     board = bool(a.via)
@@ -152,7 +154,7 @@ def todo_args(*, by: str, goal: str, title: str, why: str, done: str, check: str
     return argparse.Namespace(
         kind="할 일", by=by, goal=goal, title=title, why=why, done=done, check=check, link=[link], area=None,
         project=None, from_=None, due=None, basis=None, parent=None, session=None, omo=None, promise=False, said=None,
-        every=None, stall=None, note=None, via=None)
+        every=None, stall=None, note=None, via=None, repo=None)
 
 
 def add(a, *, write: bool = True) -> dict | None:
@@ -174,6 +176,8 @@ def add(a, *, write: bool = True) -> dict | None:
             die(t("--why는 할 일에만 쓴다"))
         guard_text("진행 메모", a.note)
         rec = _record(a, kind, recs, by, basis, parent, links, due)
+        if a.repo is not None:
+            ledger.set_repo(rec, a.repo)
         if not write:
             return rec
         if kind == TODO and omo_next and not any(link.startswith("omo:") for link in links):

@@ -94,6 +94,7 @@ def _add(sp) -> None:
     p.add_argument("--stall", type=float)
     p.add_argument("--note")
     p.add_argument("--why", help="required on a new to-do: what gets better for the owner when it is done")
+    p.add_argument("--repo", help="repository ID (area-id/name), for a to-do")
     p.add_argument("--via", choices=VIAS, help="board/app: a memo the owner handed out from the dashboard or the app")
     p.set_defaults(fn=_fn("cmd_add", "cmd_add"))
 
@@ -185,6 +186,7 @@ def _edit(sp) -> None:
     p.add_argument("--said")
     p.add_argument("--decide")
     p.add_argument("--due", help="due date YYYY-MM-DD; empty clears it")
+    p.add_argument("--repo", help="repository ID (area-id/name), empty clears it")
     p.add_argument("--stall", type=float)
     _as(p)
     p.set_defaults(fn=_fn("cmd_edit", "cmd_edit"))

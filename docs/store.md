@@ -94,6 +94,84 @@ Honcho migrates `ltm` itself. Schemas `memory`, `ctx` and `vec` belong to LINA: 
 pending ones before Honcho's job (`hermes_cli/store_migrations.py`); running them again changes nothing. A new
 migration is a new file with the next number; a file that has run is never edited.
 
+## Work repositories
+
+A repository belongs to a work area and can hold the results of many goals. Git owns the files and
+history. `work.repo` records the stable area ID, repository name and Git remote in `area_id`, `name`
+and `forge_url`. Its primary key is `<area-id>/<name>`. A work area's display name can change without
+changing that key. The SQLite work backend uses the same registry.
+
+Set `work.forge` in the root `config.yaml`. The forge operator supplies the provisioning program.
+For example, an installation with an internal SSH forge might use:
+
+```yaml
+work:
+  forge:
+    url: "ssh://git@forge.example:2222/results/{repo}.git"
+    create_command: ["/opt/forge/bin/ensure-repo", "{repo}", "{url}"]
+```
+
+The command runs on the LINA host with separate arguments. `{repo}` expands to the canonical ID
+and `{url}` to the Git remote. The program must return zero only when that exact bare repository
+is ready, including when it already exists. It must be safe to repeat after an interruption between
+provisioning and the database commit. A nonzero exit or the 60-second command timeout rolls back the
+registration. Keep credentials out of the URL and the argument list. Git over SSH serves existing
+repositories; the operator chooses how the provisioning program requests a new one.
+
+For a disposable local forge, use `file:///absolute/path/to/forge/{repo}.git` as the URL and
+`[git, init, --bare, "/absolute/path/to/forge/{repo}.git"]` as the command. A `file://` URL also
+exercises Git's network protocol during local clone tests.
+
+```sh
+lina repo create A1/album
+lina work edit T1 --repo A1/album
+```
+
+Use an existing area ID and a slug of 1–63 lowercase ASCII letters, digits, underscores or hyphens,
+starting with a letter or digit. The agent tool `repo_create` takes `{"repo":"A1/album"}` when the
+forge is configured. The CLI and tool both return the registered row as JSON. Repeating either call
+returns the same row and remote. New tasks can take `--repo` on `lina work add`. `work.todo_repo`
+links a task to at most one result repository. Existing tasks keep their IDs and have no link until
+assigned. Use a work database copy when moving a registry and its assignments together.
+
+### Cloning repositories with large media
+
+Keep masters under directories such as `audio/`, `video/` and `design/`. Use Git partial clone
+with sparse checkout so a working copy can read the top-level files immediately:
+
+```sh
+git clone --filter=blob:none --sparse "$forge_url" album
+git -C album sparse-checkout add audio
+```
+
+The first command fetches the history, trees and blobs needed for the root checkout. The second
+fetches `audio/` on demand. A full clone transfers the media. A blob filter alone also downloads
+the files needed for a full checkout, even when they exceed a `blob:limit` threshold. For a repo
+that already has large top-level files, start without a checkout and select paths explicitly:
+
+```sh
+git clone --filter=blob:none --no-checkout "$forge_url" album
+git -C album sparse-checkout set --no-cone '/README.md'
+git -C album checkout
+```
+
+Enable `uploadpack.allowFilter=true` on the forge. If `receive.maxInputSize` is set, allow enough
+space for the **incoming pack**, including overhead and other objects in the push. The server needs
+disk space for the full Git objects and their history. A filter-disabled server can fall back to
+a full transfer. For an installation check, run `git rev-list --objects --all --missing=print`
+in the initial clone and look for `?` followed by the large blob's object ID.
+
+This uses the existing Git SSH transport without an additional storage service. Git LFS, including
+its pure SSH transfer mode, needs a server-side LFS implementation to serve the objects. The opt-in
+`tests/hermes_cli/test_work_repo_large_clone.py` comparison creates a registered bare repo, pushes
+1 GB of synthetic audio, measures full and sparse partial clones, and verifies the bytes fetched on
+demand. Run it with `HERMES_RUN_E2E=1 scripts/run_tests.sh --files tests/hermes_cli/test_work_repo_large_clone.py`.
+
+On Git 2.53.0 over `file://`, a full clone of a README and a 1,000,000,000-byte random master took
+19.26 s and stored 1,000,306,664 bytes under `.git/objects`. The sparse partial clone took 0.079 s,
+stored 2,840 object bytes and checked out the 24-byte README. Adding `audio/` took 18.95 s and
+restored the master with its original SHA-256. These are single-run local times.
+
 ## Messages (`memory.messages`)
 
 Every message is one row in `memory.messages`, the one copy every engine reads. `hermes_state_store.py`

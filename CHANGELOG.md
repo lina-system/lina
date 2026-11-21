@@ -201,6 +201,8 @@ Hermes Agent upstream changes are not listed here; see the upstream history on t
 - The hub's own health checks: each check that runs outside the core writes `<LINA root>/status/<name>.json` (`{name, ok, line, at, stale_after}`) and the app reads them from `GET /api/lina/status/checks`, newest first, stale past `stale_after`, a malformed file as one error row (`docs/api/board-client.yaml`).
 - `lina worker` takes runs from a Hermes card and reports back on that card (`worker.card_link: {kind: hermes, command: [hermes]}`): the start, the end and `report.md` land on the card through Hermes's own `kanban` command, with no chat notice; `lina worker submit --card <id> --board <slug>` names the card, and `lina worker wait` parks it until the first run end wakes it (see [docs/worker-card-session.md](docs/worker-card-session.md)).
 
+- `lina repo create` and the `repo_create` agent tool register a Git repository under a work area. Tasks can name their result repository with `--repo`, and sparse partial clones can fetch its media on demand.
+
 ### Changed
 
 - LINA pins omo-ai 5.1.69 (was 5.1.66): `lina omo install` and the omo runner use it with its engine `@code-yeongyu/senpi` 2026.11.10-2; the model assignment (`~/.omo/omo.jsonc`, the ocx-omo policy) is unchanged, and `lina omo upgrade` moves an installed device to it.

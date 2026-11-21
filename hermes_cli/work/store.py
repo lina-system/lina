@@ -22,8 +22,8 @@ from hermes_cli.work.kinds import OLD_TODO, TODO, current
 TABLE = {"영역": "area", "목표": "goal", TODO: "todo", OLD_TODO: "todo", "메모": "todo"}
 PREFIX_TABLE = {"A": "area", "G": "goal", "T": "todo", "M": "todo"}
 ITEM_ID = "COALESCE(area_id, goal_id, todo_id)"
-TABLES = ("actor", "setting", "status_label", "area", "project", "goal", "todo", "run", "run_todo", "wait",
-          "decision", "link", "artifact", "event", "outbox")
+TABLES = ("actor", "setting", "status_label", "area", "repo", "project", "goal", "todo", "todo_repo", "run",
+          "run_todo", "wait", "decision", "link", "artifact", "event", "outbox")
 EPOCH = "1970-01-01T00:00:00Z"
 OP_KIND = {"add": "created", "edit": "edited", "archive": "edited", "unlink": "edited", "seed-writer": "edited",
            "quote": "said", "basis": "said", "note": "note", "evidence": "evidence", "comment": "comment",
@@ -202,6 +202,14 @@ def add_run_todo(db, run_id, todo_id, who, at):
                "ON CONFLICT DO NOTHING", (run_id, todo_id, 1, who, at))
 
 
+def set_todo_repo(db, todo_id: str, repo_id: str | None) -> None:
+    if repo_id is None:
+        db.execute("DELETE FROM todo_repo WHERE todo_id = ?", (todo_id,))
+    else:
+        db.execute("INSERT INTO todo_repo (todo_id, repo_id) VALUES (?, ?) "
+                   "ON CONFLICT (todo_id) DO UPDATE SET repo_id = excluded.repo_id", (todo_id, repo_id))
+
+
 def upsert(db, table, i, row, keep=()):
     cols = list(row)
     update = [c for c in cols if c not in keep]
@@ -316,6 +324,8 @@ def project_item(db, r, info, prev=None):
         row.update(goal_id=parent if exists(db, "goal", parent) else None,
                    relayed_by=actor(db, r["from"]) if r.get("from") else None)
     upsert(db, table, i, row, keep=("created_by",))
+    if table == "todo":
+        set_todo_repo(db, i, r.get("repo_id"))
     writer = _project_links(db, r, table, info, at)
     _project_runs(db, r, table, prev, writer, info.get("link_at") or {}, at)
     _project_wait(db, r, table + "_id", at)

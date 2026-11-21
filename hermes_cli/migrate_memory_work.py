@@ -37,7 +37,9 @@ def migrate_work(copied_db: Path, destination_home: Path, profile: str, agent: s
         with closing(Source(copied_db)) as source:
             if source.db is None:
                 raise ValueError("work migration requires a copied SQLite store")
-            all_rows = rows(source.db)
+            optional = {"repo": [], "todo_repo": []}
+            kinds = tuple(kind for kind in KINDS if kind not in optional or kind in source.tables)
+            all_rows = optional | rows(source.db, kinds)
             source_counts = source.counts()
         with closing(_destination_db()) as db:
             with store.transaction(db):

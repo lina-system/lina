@@ -27,6 +27,15 @@ CREATE TABLE IF NOT EXISTS area (
     archived_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS repo (
+    id TEXT PRIMARY KEY NOT NULL,
+    area_id TEXT NOT NULL REFERENCES area (id),
+    name TEXT NOT NULL,
+    forge_url TEXT NOT NULL,
+    UNIQUE (area_id, name),
+    CHECK (id = area_id || '/' || name)
+);
+
 CREATE TABLE IF NOT EXISTS project (
     id TEXT PRIMARY KEY,
     area_id TEXT NOT NULL REFERENCES area (id),
@@ -107,6 +116,12 @@ CREATE TABLE IF NOT EXISTS todo (
 );
 CREATE INDEX IF NOT EXISTS todo_goal_id ON todo (goal_id);
 CREATE INDEX IF NOT EXISTS todo_owner_id ON todo (owner_id) WHERE closed_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS todo_repo (
+    todo_id TEXT PRIMARY KEY NOT NULL REFERENCES todo (id),
+    repo_id TEXT NOT NULL REFERENCES repo (id)
+);
+CREATE INDEX IF NOT EXISTS todo_repo_repo_id ON todo_repo (repo_id);
 
 CREATE TABLE IF NOT EXISTS run_todo (
     run_id TEXT NOT NULL REFERENCES run (id) ON DELETE CASCADE,
