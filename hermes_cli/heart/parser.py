@@ -8,6 +8,7 @@ import sys
 
 TARGET_KINDS = ("topic", "task_type", "tone", "tool", "method", "media", "other")
 ROUTES = ("reaction", "outcome", "exposure")
+DEFAULT_CANDIDATE_LIMIT = 40
 
 
 def _fn(module: str, name: str):
@@ -39,10 +40,10 @@ def build(subparsers) -> None:
     since.set_defaults(heart_fn=_fn("journal", "listing"), json=False)
     candidates = subparsers.add_parser("candidates", help="Owner messages and subsequent replies")
     candidates.add_argument("--date")
-    candidates.add_argument("--limit", type=int, default=40)
+    candidates.add_argument("--limit", type=int, default=DEFAULT_CANDIDATE_LIMIT)
     candidates.add_argument("--json", action="store_true")
     candidates.set_defaults(heart_fn=_fn("evidence", "candidates"))
-    review = subparsers.add_parser("review-input", help="Journal, self-note and recent edits for daily review")
+    review = subparsers.add_parser("review-input", help="Conversations, journal, self-note and recent edits for daily review")
     review.add_argument("--date")
     review.set_defaults(heart_fn=_fn("journal", "review_input"))
     apply = subparsers.add_parser("self-apply", help="Apply a checked self-note candidate")

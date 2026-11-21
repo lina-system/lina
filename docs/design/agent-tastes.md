@@ -1,5 +1,24 @@
 # Agent tastes in the store, the pipeline and the context engine
 
+## Architecture
+
+```text
+Taste input ──► Taste refiner ──► Taste store ──► Taste picker and placement
+                                                   ├─ core: frozen self-note section
+                                                   └─ per turn: found-memory result
+```
+
+| Part | Responsibility and code home |
+| --- | --- |
+| Taste input (#356) | The agent's own turns and its `heart` journal rows live in `memory.messages`. `hermes_cli/heart/evidence.py` checks cited turns and `hermes_cli/heart/rows.py` stores the journal. |
+| Taste refiner (#358) | The daily review scores the evidence routes and moves candidates to active tastes. The weekly review decides core promotion. The review gets its inputs from `hermes_cli/heart/journal.py` and follows `skills/autonomous-ai-agents/bot-heart/templates/heart-review.md`. |
+| Taste store (#357) | The planned tables in `services/store/migrations/` keep each agent's tastes and evidence under row-level security. An append-only event log records changes. |
+| Taste picker and placement (#359) | Core lines share the frozen section in `agent/self_note_section.py`. Up to three active tastes picked for an owner turn go into the found-memory result in `agent/turn_context.py`. |
+
+Forgetting (#360) crosses the store and placement boundaries to retire a taste and its derived copies.
+The expression rules (#361) limit when the picker may voice a taste. The measurements (#362) exercise
+all four parts for consistency, divergence, protected topics and prompt-cache stability.
+
 Design note for #307. It settles where an agent's own likes and dislikes (tastes, #49) live once the memory
 pipeline (#198) and LCM-X on the one store (#16) are the base. It replaces the placement part of the 11-02
 design (its placement part) and the M0/M1 issue drafts that came with it. Nothing is built from this

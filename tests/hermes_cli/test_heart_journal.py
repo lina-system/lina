@@ -152,10 +152,12 @@ def test_write_stores_one_heart_row_only_its_agent_reads(sandbox, memory_store_s
     assert (sandbox["alpha"] / "heart").stat().st_mode & 0o777 == 0o700
 
 
-def test_write_refuses_another_agents_row_by_row_level_security(sandbox, memory_store_sql, monkeypatch):
+@pytest.mark.parametrize("scope", ["agent", "agents"])
+def test_write_refuses_another_agents_row(sandbox, memory_store_sql, monkeypatch, scope):
     database(sandbox["alpha"])
     monkeypatch.setenv("HERMES_HOME", str(sandbox["beta"]))
     theirs = database(sandbox["beta"])[0]
+    memory_store_sql("UPDATE memory.messages SET scope = %s WHERE uid = %s", (scope, theirs))
     monkeypatch.setenv("HERMES_HOME", str(sandbox["alpha"]))
     code, _, error = write("--messages", theirs)
     assert code == 2
@@ -169,6 +171,20 @@ def test_write_refuses_a_forgotten_row(sandbox, memory_store_sql):
     code, _, error = write("--messages", owner)
     assert code == 2
     assert f"Forgotten messages cannot be cited: {owner}" in error
+    assert heart_rows(memory_store_sql) == []
+
+
+@pytest.mark.parametrize(("kind", "ref"), [("agent", "agent:beta"), ("outside", "chat:relay")])
+def test_write_refuses_another_agents_speech(sandbox, memory_store_sql, kind, ref):
+    home = sandbox["alpha"]
+    owner, relayed = database(home, [ROWS[0], ("owner", "user", "Synthetic relay", NOW)])
+    with closing(MessageStore("alpha")) as store:
+        store.set_speakers([(relayed, kind, ref)])
+
+    code, _, error = write("--messages", f"{owner},{relayed}")
+
+    assert code == 2, error
+    assert relayed in error
     assert heart_rows(memory_store_sql) == []
 
 
@@ -275,6 +291,9 @@ def test_candidates_pair_until_next_owner_and_fold(sandbox, tmp_path, build):
     assert found[0]["reply"] == {"uid": uid_of[24], "text": "Reply line"}
     assert found[1]["reply"] is None
     assert found[2]["reply"] == {"uid": uid_of[27], "text": "y" * 300}
+    code, review, error = invoke("review-input", "--date", DAY)
+    assert code == 0, error
+    assert invoke("candidates", "--date", DAY)[1].strip() in review
 
 
 def test_candidates_leave_out_forgotten_rows(sandbox, tmp_path, memory_store_sql):

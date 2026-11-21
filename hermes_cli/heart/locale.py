@@ -21,6 +21,8 @@ COPY: Final = {
     "ids": ("--messages에 쉼표로 나눈 메시지 uid가 필요하다", "--messages requires comma-separated message uids"),
     "missing_ids": ("이 봇의 대화에 없는 uid: {ids}", "Not a message of this agent: {ids}"),
     "forgotten_ids": ("잊은 메시지는 인용할 수 없다: {ids}", "Forgotten messages cannot be cited: {ids}"),
+    "foreign_speaker": ("다른 발화자의 메시지는 인용할 수 없다: {ids}",
+                        "Cannot cite messages attributed to another speaker: {ids}"),
     "pref": ("--pref-target, --pref-kind, --pref-dir, --pref-route는 함께 준다",
              "--pref-target, --pref-kind, --pref-dir and --pref-route go together"),
     "owner_required": ("인용한 줄에 {owner} 메시지가 없다", "Citations contain no message from {owner}"),

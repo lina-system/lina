@@ -60,13 +60,20 @@ def lookup(value: str, *, reaction: bool) -> tuple[str, ...]:
     selected = uids(value)
     with rows.open_store(storage.home()) as store:
         found = {uid: store.open_memory(uid) for uid in selected}
-    # Row-level security hides another agent's row: it reads exactly like a uid that does not exist.
-    missing = [uid for uid, row in found.items() if row is None or row.source != "agent"]
+    # A shared row can be readable even when another profile owns it.
+    missing = [uid for uid, row in found.items()
+               if row is None or row.source != "agent" or row.agent_id != store.agent_id]
     if missing:
         raise storage.HeartError(text("missing_ids", ids=",".join(missing)))
     forgotten = [uid for uid, row in found.items() if row.forgotten]
     if forgotten:
         raise storage.HeartError(text("forgotten_ids", ids=",".join(forgotten)))
+    # A relay is an outside user turn even when its placement belongs to this profile.
+    foreign = [uid for uid, row in found.items()
+               if (row.speaker == "agent" and row.speaker_ref != f"agent:{row.agent_id}")
+               or (row.speaker == "outside" and row.role == "user")]
+    if foreign:
+        raise storage.HeartError(text("foreign_speaker", ids=",".join(foreign)))
     if reaction and not any(is_owner(row.speaker) for row in found.values()):
         raise storage.HeartError(text("owner_required", owner=current().owner_name))
     return tuple(selected)
@@ -101,10 +108,7 @@ def paired_reply(database: sqlite3.Connection, store: MessageStore, owner: Messa
     return None
 
 
-def candidates(args) -> None:
-    if args.limit < 1:
-        raise storage.HeartError(text("limit"))
-    day = storage.day(args.date)
+def day_candidates(day: dt.date, limit: int) -> list[Candidate]:
     start = dt.datetime.combine(day, dt.time()).timestamp()
     end = dt.datetime.combine(day + dt.timedelta(days=1), dt.time()).timestamp()
     selected: list[Candidate] = []
@@ -118,14 +122,26 @@ def candidates(args) -> None:
                                           time=dt.datetime.fromtimestamp(row.timestamp).strftime("%H:%M"),
                                           text=folded(owner_text(row.content)),
                                           reply=paired_reply(database, store, row, ids[row.uid])))
-                if len(selected) == args.limit:
+                if len(selected) == limit:
                     break
-    if args.json:
-        storage.json_print(selected)
-        return
+    return selected
+
+
+def print_candidates(day: dt.date, selected: list[Candidate]) -> None:
     print(text("candidates", owner=current().owner_name, day=day.isoformat(), count=len(selected)))
     for row in selected:
         print(f"{row.uid}  {row.time}  {row.session_id}  {current().owner_name}: {row.text}")
         print(f"    {text('reply')} {row.reply.uid}: {row.reply.text}" if row.reply else f"    {text('no_reply')}")
     if not selected:
         print(text("no_candidates", owner=current().owner_name))
+
+
+def candidates(args) -> None:
+    if args.limit < 1:
+        raise storage.HeartError(text("limit"))
+    day = storage.day(args.date)
+    selected = day_candidates(day, args.limit)
+    if args.json:
+        storage.json_print(selected)
+    else:
+        print_candidates(day, selected)
