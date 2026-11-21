@@ -150,6 +150,22 @@ def _parse(home: str, lines: list[str], empty_sections: set[int]) -> list[_Unit]
     return units
 
 
+def _title(lines: list[str]) -> int | None:
+    """The leading level-1 heading when deeper sections follow it: it names the home."""
+    first: int | None = None
+    for index, line in _structural_lines(lines):
+        heading = _HEADING.match(line)
+        if heading is None:
+            continue
+        if first is None:
+            if len(heading[1]) != 1:
+                return None
+            first = index
+        elif len(heading[1]) > 1:
+            return first
+    return None
+
+
 def _membership(homes: int, total_homes: int) -> Membership:
     if homes >= 3 and 3 * homes >= 2 * total_homes:
         return "common"
@@ -225,9 +241,7 @@ def _shared_headings(
 ) -> dict[str, set[int]]:
     """Per home, the ancestor headings that the common file may carry.
 
-    A heading such as a persona's own title names one home; copied into the common
-    file it would make that file differ between homes. Only a heading that passes the
-    same membership test as a unit travels; every other heading stays in its persona.
+    Only a heading that passes the same membership test as a unit travels with it.
     """
     seen: defaultdict[str, set[str]] = defaultdict(set)
     by_home: dict[str, dict[int, str]] = {}
@@ -299,6 +313,7 @@ def split_personas(sources: dict[str, str], drops: dict[str, str]) -> PersonaSpl
         },
     )
     shared_headings = _shared_headings(lines_by_home, units_by_home)
+    titles = {home: _title(lines) for home, lines in lines_by_home.items()}
     for home, units in units_by_home.items():
         common_units: list[tuple[_Unit, tuple[int, ...]]] = []
         keep = empty_sections[home]
@@ -320,7 +335,11 @@ def split_personas(sources: dict[str, str], drops: dict[str, str]) -> PersonaSpl
             if reason is not None:
                 row["disposition"] = "dropped"
                 row["reason"] = reason
-            elif membership == "common":
+            elif membership == "common" and all(
+                i in shared_headings[home] or i == titles[home] for i in unit.headings
+            ):
+                # A home's own title names the home and changes nothing about the unit.
+                # Any other heading that cannot travel stays with the unit in the persona.
                 row["disposition"] = "common"
                 chain = tuple(i for i in unit.headings if i in shared_headings[home])
                 keep.update(set(unit.headings) - set(chain))

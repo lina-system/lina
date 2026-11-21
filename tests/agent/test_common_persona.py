@@ -95,7 +95,7 @@ def test_all_common_prohibition_keeps_its_heading_in_each_prompt(install: Path) 
         assert build_system_prompt(agent).startswith(source + "\nSynthetic overlay")
 
 
-def test_common_file_carries_only_headings_shared_by_the_homes(install: Path) -> None:
+def test_common_file_carries_only_units_whose_headings_are_shared(install: Path) -> None:
     profiles = ("alpha", "beta", "gamma")
     sources = {
         profile: f"# Rules\n## {profile}\n- First\n- Second\n- Only for {profile}\n## Later\n- Third\n"
@@ -104,10 +104,10 @@ def test_common_file_carries_only_headings_shared_by_the_homes(install: Path) ->
     split = split_personas(sources, {})
     _write_common(install, **split.common)
 
-    shared = "# Rules\n- First\n\n- Second\n\n# Rules\n## Later\n- Third\n"
+    shared = "# Rules\n## Later\n- Third\n"
     for profile in profiles:
-        # A heading that names one home stays in that home's persona.
-        assert split.personas[profile] == f"# Rules\n## {profile}\n- Only for {profile}\n"
+        # Units under a heading that names one home stay with that heading.
+        assert split.personas[profile] == f"# Rules\n## {profile}\n- First\n- Second\n- Only for {profile}\n"
         assert load_common_persona(home_override=install / "profiles" / profile) == shared
     assert len({split.common[profile] for profile in profiles}) == 1
 

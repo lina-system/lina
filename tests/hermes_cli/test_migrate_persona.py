@@ -79,7 +79,7 @@ def migrated(tmp_path, monkeypatch, capsys):
     for name in ("default", "first", "second"):
         path = tmp_path / f"{name}.md"
         private = "- Local rule\n" if name == "first" else ""
-        path.write_text(f"# Rules\n## {name}\n- First rule\n- Next rule\n{private}")
+        path.write_text(f"# Rules\n- First rule\n- Next rule\n{private}")
         args.extend(["--source", f"{name}={path}"])
     code, report = _invoke(args, capsys)
     assert code == 0, report

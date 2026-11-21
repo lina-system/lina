@@ -26,7 +26,7 @@ def test_split_preserves_the_multiset_and_order_of_each_homes_units() -> None:
         "builder": (
             "# Orchard\r\n"
             "## Routine\r\n"
-            f"{shared}{second}{shared}"
+            f"{shared}\n{second}\n{shared}"
             f"## Packing\r{private_list}"
             f"## Old signs\n{dropped}"
             f"## Schedule\n{partly}\n{extras}"
@@ -49,7 +49,8 @@ def test_split_preserves_the_multiset_and_order_of_each_homes_units() -> None:
     result = split_personas(sources, {_sha("Retire the old sign."): "Owner retired it"})
 
     assert result.personas == {
-        "builder": f"# Orchard\r\n## Routine\r\n## Packing\r{private_list}## Schedule\n{partly}\n{extras}",
+        # The builder's own Routine heading governs its common units, so they stay with it.
+        "builder": f"# Orchard\r\n## Routine\r\n{shared}\n{second}\n{shared}## Packing\r{private_list}## Schedule\n{partly}\n{extras}",
         "operator": "\n" + partly,
         "planner": "\n" + partly,
         "auditor": "",
@@ -57,7 +58,7 @@ def test_split_preserves_the_multiset_and_order_of_each_homes_units() -> None:
         "empty": "",
     }
     assert result.common == {
-        "builder": shared + "\n" + second + "\n" + shared,
+        "builder": "",
         "operator": second + "\n" + shared,
         "planner": shared_variant + "\n" + second,
         "auditor": second + "\n" + shared,
@@ -111,7 +112,7 @@ def test_split_preserves_the_multiset_and_order_of_each_homes_units() -> None:
             original + original_headings
         )
 
-    assert result.summary["counts"] == {"common": 9, "persona": 6, "dropped": 1}
+    assert result.summary["counts"] == {"common": 6, "persona": 9, "dropped": 1}
     assert result.summary["group_histogram"]["4"] == {
         "groups": 2,
         "occurrences": 9,
@@ -119,11 +120,11 @@ def test_split_preserves_the_multiset_and_order_of_each_homes_units() -> None:
     }
     assert result.summary["homes"]["builder"] == {
         "source_chars": len(sources["builder"]),
-        "persona_chars": len(private_list) + len(partly) + len(extras),
-        "common_chars": 2 * len(shared) + len(second),
+        "persona_chars": 2 * len(shared) + len(second) + len(private_list) + len(partly) + len(extras),
+        "common_chars": 0,
         "dropped_chars": len(dropped),
         "membership": {"common": 3, "partly_shared": 1, "single": 3},
-        "counts": {"common": 3, "persona": 3, "dropped": 1},
+        "counts": {"persona": 6, "dropped": 1},
     }
     assert {
         key: result.summary[key]
@@ -279,11 +280,36 @@ def test_headings_naming_one_home_never_enter_the_common_file() -> None:
         assert result.personas[name] == f"# {name.title()}\n## {name} only\n- Local {name}\n"
 
 
-def test_a_home_title_with_only_common_units_stays_in_the_persona() -> None:
-    sources = {name: f"# {name}\n- Lock up\n" for name in ("one", "two", "three")}
+def test_a_title_above_only_common_units_stays_in_the_persona() -> None:
+    sources = {name: f"# {name}\n## Rules\n- Lock up\n" for name in ("one", "two", "three")}
 
     result = split_personas(sources, {})
 
     assert len(set(result.common.values())) == 1
-    assert result.common["one"] == "- Lock up\n"
+    assert result.common["one"] == "## Rules\n- Lock up\n"
     assert result.personas == {name: f"# {name}\n" for name in sources}
+
+
+def test_units_under_a_heading_naming_one_home_stay_with_that_heading() -> None:
+    sources = {
+        name: f"# {name}\n## {name}: never do these\n- Delete archived reports\n## Rules\n- Lock up\n"
+        for name in ("one", "two", "three")
+    }
+
+    result = split_personas(sources, {})
+
+    assert len(set(result.common.values())) == 1
+    assert result.common["one"] == "## Rules\n- Lock up\n"
+    for name in sources:
+        assert result.personas[name] == f"# {name}\n## {name}: never do these\n- Delete archived reports\n"
+    prohibition = [row for row in result.ledger if row["normalized_sha256"] == _sha("- Delete archived reports")]
+    assert [(row["membership"], row["disposition"]) for row in prohibition] == [("common", "persona")] * 3
+
+
+def test_a_heading_above_a_lone_list_is_context_not_a_title() -> None:
+    sources = {name: f"# {name}: never do these\n- Delete archived reports\n" for name in ("one", "two", "three")}
+
+    result = split_personas(sources, {})
+
+    assert result.common == dict.fromkeys(sources, "")
+    assert result.personas == sources
