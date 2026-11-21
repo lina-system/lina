@@ -3508,6 +3508,7 @@ display:
       user: "使用者資料"
     summary_cli: "  💾 自我改進檢閱：{summary}"
     summary_callback: "💾 自我改進檢閱：{summary}"
+    rule_proposal: "要將「{proposal}」設為長期規則嗎？如果要，請在這個對話中用自己的話說明指示。"
     aux_failure_label: "背景檢閱"
   notice:
     uncompressed_context_overflow: "⚠️ 工作階段上下文（約 {tokens} 個 token）在壓縮已停用（compression.enabled: false）的情況下超出了模型上下文視窗（約 {context_length} 個 token）。請使用 /compact 壓縮歷史記錄，或在 config.yaml 中啟用壓縮。"

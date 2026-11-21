@@ -3508,6 +3508,7 @@ display:
       user: "الملف التعريفي للمستخدم"
     summary_cli: "  💾 مراجعة التحسين الذاتي: {summary}"
     summary_callback: "💾 مراجعة التحسين الذاتي: {summary}"
+    rule_proposal: "هل تريد اعتماد «{proposal}» قاعدةً دائمة؟ إذا أردت ذلك، فاكتب التعليمات بكلماتك في هذه المحادثة."
     aux_failure_label: "المراجعة في الخلفية"
   notice:
     uncompressed_context_overflow: "⚠️ سياق الجلسة (~{tokens} رمزًا) يتجاوز نافذة سياق النموذج (~{context_length} رمزًا) مع تعطيل الضغط (compression.enabled: false). استخدم /compact لضغط السجل أو فعّل الضغط في config.yaml."

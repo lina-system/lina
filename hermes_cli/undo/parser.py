@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
 
 def build(parser: argparse.ArgumentParser) -> None:
@@ -26,6 +27,8 @@ def build(parser: argparse.ArgumentParser) -> None:
     last.add_argument("--within", default="24h")
     snapshot = commands.add_parser("snapshot", help="journal agent memory and rule files changed since the last snapshot")
     snapshot.add_argument("--dry-run", action="store_true", help="list the files without copying or journaling")
+    snapshot.add_argument("--path", action="append", type=Path,
+                          help="open a pending snapshot for an absolute in-root file; repeat for a batch")
     for verb in ("show", "apply"):
         command = commands.add_parser(verb, help=f"{verb} one recorded change")
         command.add_argument("change_id")

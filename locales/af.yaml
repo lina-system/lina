@@ -3508,6 +3508,7 @@ display:
       user: "Gebruikersprofiel"
     summary_cli: "  💾 Selfverbetering-hersiening: {summary}"
     summary_callback: "💾 Selfverbetering-hersiening: {summary}"
+    rule_proposal: "Moet “{proposal}” ’n vaste reël word? Indien wel, stel die instruksie in jou eie woorde hier in die gesprek."
     aux_failure_label: "agtergrond-hersiening"
   notice:
     uncompressed_context_overflow: "⚠️ Die sessiekonteks (~{tokens} tokens) oorskry die model se konteksvenster (~{context_length} tokens) terwyl kompressie gedeaktiveer is (compression.enabled: false). Gebruik /compact om die geskiedenis te komprimeer of aktiveer kompressie in config.yaml."

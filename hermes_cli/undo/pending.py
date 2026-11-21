@@ -47,15 +47,22 @@ def begin(store: Store, env: Env, args) -> str:
     row = Entry(at=at, bot=args.bot, change_id=change_id, what=args.what, how=HOW,
                 objects=[FileRef(type=file_type(env, p), path=str(p), sha256=None, after=None) for p in paths])
     with store.locked():
-        private_dir(store.root / "pending")
-        refs = []
-        for ref in row.objects:
-            copy = copies.capture(store, Path(ref.path))
-            refs.append(ref.model_copy(update={"sha256": copy.sha256, "after": copy.sha256,
-                                               "checkpoint": copy.checkpoint}))
-        row = row.model_copy(update={"objects": refs})
-        atomic(pending_path(store, change_id), row.model_dump_json().encode())
-    return change_id
+        return capture_locked(store, row).change_id
+
+
+def capture_locked(store: Store, row: Entry) -> Entry:
+    """Persist a pre-write batch after all checkpoint copies have been verified."""
+    private_dir(store.root / "pending")
+    refs: list[FileRef] = []
+    for ref in row.objects:
+        if not isinstance(ref, FileRef):
+            raise UndoError("pending batches require file references")
+        copy = copies.capture(store, Path(ref.path))
+        refs.append(ref.model_copy(update={"sha256": copy.sha256, "after": copy.sha256,
+                                           "checkpoint": copy.checkpoint}))
+    captured = row.model_copy(update={"objects": refs})
+    atomic(pending_path(store, row.change_id), captured.model_dump_json().encode())
+    return captured
 
 
 def read_pending(store: Store, change_id: str) -> Entry:

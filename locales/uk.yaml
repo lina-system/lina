@@ -3508,6 +3508,7 @@ display:
       user: "Профіль користувача"
     summary_cli: "  💾 Перевірка самовдосконалення: {summary}"
     summary_callback: "💾 Перевірка самовдосконалення: {summary}"
+    rule_proposal: "Зробити «{proposal}» постійним правилом? Якщо так, сформулюйте вказівку своїми словами в цьому чаті."
     aux_failure_label: "фонова перевірка"
   notice:
     uncompressed_context_overflow: "⚠️ Контекст сеансу (~{tokens} токенів) перевищує контекстне вікно моделі (~{context_length} токенів), а стискання вимкнено (compression.enabled: false). Скористайтеся /compact, щоб стиснути історію, або увімкніть стискання в config.yaml."
