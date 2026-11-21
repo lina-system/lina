@@ -10,6 +10,8 @@ import re
 from dataclasses import dataclass, replace
 from typing import Final, Literal
 
+from hermes_cli.profiles import normalize_profile_name
+
 
 @dataclass(frozen=True, slots=True)
 class Interpretation:
@@ -148,8 +150,8 @@ def _rule(clause: str, current: str, place: str | None) -> Interpretation:
         elif audience.re is _YOU:
             target = current
         else:
-            name = audience["told"] or audience["id"] or audience["ko"]
-            if name.lower() in _UNRESOLVED_NAMES:
+            name = normalize_profile_name(audience["told"] or audience["id"] or audience["ko"])
+            if name in _UNRESOLVED_NAMES:
                 return Interpretation(target=current, refusal=_UNKNOWN)
             target = f"agent:{name}"
         clause = clause[audience.end():]

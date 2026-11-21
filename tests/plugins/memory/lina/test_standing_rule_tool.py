@@ -2,6 +2,7 @@
 
 import json
 
+import psycopg
 import pytest
 
 from plugins.memory.lina import LinaMemoryProvider
@@ -76,3 +77,14 @@ def test_recorder_can_change_a_named_agents_rule_without_listing_it(conversation
         (rule,),
     ) == [("agent:beta", "replaced", "create"), ("agent:beta", "replaced", "change"),
           ("agent:beta", "ended", "end")]
+
+
+def test_mixed_case_target_visible_to_canonical_profile(conversation, _memory_store):
+    _, say = conversation
+    rule = say("create", "Tell the Beta agent to use two lines.")["rule_id"]
+    assert say("list", "List my rules.", "list")["rules"] == []
+    with psycopg.connect(_memory_store.app_dsn()) as conn:
+        conn.execute("SET lina.agent_id = 'beta'")
+        assert conn.execute(
+            "SELECT agent_id, statement FROM memory.standing_rules WHERE rule_id = %s", (rule,),
+        ).fetchall() == [("agent:beta", "use two lines")]
