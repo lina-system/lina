@@ -142,6 +142,22 @@ def test_common_scan_uses_the_source_homes_ownership(install: Path, caplog: pyte
 
 
 @pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("## Start\n- First\n## Messaging other agents\n- Frozen roster\n## End\n- Last\n",
+         "## Start\n- First\n\n## End\n- Last\n"),
+        ("## Messaging other agents\n- Frozen roster\n", None),
+        ("\ufeffOpening  \n## End\n- Last\n", "\ufeffOpening  \n\n## End\n- Last\n"),
+    ],
+)
+def test_legacy_messaging_filtered_from_common_units(install: Path, source: str, expected: str | None) -> None:
+    split = split_personas(dict.fromkeys(("alpha", "beta", "gamma"), source), {})
+    (install / COMMON_PERSONA_FILE).write_text(json.dumps(split.common), encoding="utf-8")
+
+    assert load_common_persona(home_override=install / "profiles" / "alpha") == expected
+
+
+@pytest.mark.parametrize(
     "manifest",
     [
         pytest.param(None, id="missing"),

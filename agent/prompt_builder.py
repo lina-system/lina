@@ -1604,6 +1604,10 @@ def load_common_persona(context_length: int | None = None, home_override: Path |
     content = _render_common_persona(data, profile)
     if not content:
         return None
+    from tools.bot_mode_probe import strip_legacy_protocol
+    content = strip_legacy_protocol(content)
+    if not content.strip():
+        return None
     scanned = _scan_context_content(content, path.name, user_authored=_soul_is_user_authored(home))
     # The context scanner drops a leading BOM, but it belongs to the raw unit.
     if scanned == content.removeprefix("\ufeff"):
