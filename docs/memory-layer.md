@@ -49,20 +49,25 @@ changes less often than the one after it, and only a compaction may rewrite byte
 
 | Part | Built in | Changes |
 | --- | --- | --- |
-| System and persona (identity, SOUL, guidance, context files, skills index, plugin sections (among them the self note and the agent's core tastes, after a line saying tastes never change reporting, honesty, permissions, verification, the owner's instructions or safety), profile line, the session's start date and model lines, runtime environment) | `agent/system_prompt.py` `build_system_prompt_parts` | frozen per session; rebuilt at a compaction; the self note and core tastes change at most daily and weekly and reach a running session only at that rebuild |
+| System and persona (identity, SOUL, guidance, context files, skills index, plugin sections starting with applicable owner standing rules before the self note, profile line, the session's start date and model lines, runtime environment) | `agent/system_prompt.py` `build_system_prompt_parts` | frozen per session and rebuilt at compaction. The self note and core tastes change at most daily and weekly and reach a running session at that rebuild. Their boundary keeps tastes subordinate to reporting, honesty, permissions, verification, the owner's instructions and safety. |
 | Notes and person card (the install's shared owner profile OWNER.md, MEMORY.md, USER.md, the memory provider's block, then its person card from `session_card_block()`: the person's brain page, then Honcho's session summary and the agent's own sections; Honcho's representation and peer card only while the person has no page), closing the prompt between `# Notes and person card` and its end marker | same, `_memory_parts` | frozen per session; reread at a compaction |
 | Upper summary DAG: LCM-X's condensed nodes (depth 1 and up), deepest first | LCM-X `_assemble_context` | appended to or rewritten only when they are themselves condensed |
 | Lower summary nodes (depth 0) and the recent turns | LCM-X, then the transcript | appended every turn; replaced at a compaction |
+| Turn note on the user message, including gateway and plugin notices, surface and skill changes, changes to the owner's standing rules, and the date | `agent/turn_context.py` `_merge_gateway_notes` | once per change, behind the cached prefix. Each standing-rule notice gives the full difference from the frozen section. |
 | Found memory: the turn's recall as a `memory_recall` tool call and its result, after the user message. `memory_recall` is a real read-only tool (`agent/memory_recall_tool.py`) listed with the provider's tools, so strict providers accept the call | `agent/turn_context.py` `recall_tool_rows` | per turn |
 
-Within the frozen plugin-section slot, the planned `owner-standing-rules` core section goes before the
+Within the frozen plugin-section slot, the `owner-standing-rules` core section goes before the
 self-note section (`agent-self-note`), as specified in [standing-rules, section 5](design/standing-rules.md#5-context-placement).
 The slot stays after the skills index and before the profile line, session start and model lines, runtime
 environment, and notes and person card. Sections restore from the stored prompt in their stored order,
 with their original IDs and content bytes; restoration does not special-case the self note or sort IDs.
 A same-session rebuild without invalidation keeps that snapshot. At compaction, a failed plugin render
-keeps the previous frozen sections. This reserves the placement only: the rules renderer and mid-session
-rule-change notes remain follow-up work; it does not move the existing Korean writing-rule section.
+keeps the previous frozen sections. The standing-rules section opens with the approval and safety boundary,
+then lists dated conduct rules in all-agents, agent and place order. A single line counts the active filters.
+An empty set adds zero bytes. If the complete section exceeds 4,000 characters, its frame shows the size and
+line count, and the next user row carries the complete list. This keeps every instruction intact even when a
+single rule exceeds the budget. Safe-mode workers receive applicable instructions through their brief. The
+Korean writing rule continues to use its existing section.
 
 What changes mid-session reaches the model as a note on the turn's user message, behind the cached prefix:
 today's date (`agent/date_note.py`, once it differs from the start date), the skill set (`agent/skills_index_delta.py`)
