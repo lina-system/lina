@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import threading
 
+import pytest
+
 import run_agent as run_agent_module
 from run_agent import AIAgent
 
@@ -180,6 +182,39 @@ def _install_relay_recorder(monkeypatch, review_run=None):
         lambda **kwargs: None,
     )
     return calls
+
+
+@pytest.mark.parametrize(("response", "completed", "mode", "expected"), [
+    ("RULE_PROPOSAL: Show units on every measurement", True, "on", True),
+    ("RULE_PROPOSAL: Show units on every measurement", True, "off", False),
+    ("RULE_PROPOSAL: Show units on every measurement", False, "on", False),
+    ("Nothing to save.", True, "on", False),
+])
+def test_only_current_completed_rule_proposal_reaches_foreground(monkeypatch, response, completed, mode, expected):
+    old = {"role": "assistant", "content": "RULE_PROPOSAL: An earlier suggestion"}
+
+    class Review(FakeReviewAgent):
+        def run_conversation(self, **kwargs):
+            self._session_messages = [old, {"role": "assistant", "content": response}]
+            return {"completed": completed, "final_response": response}
+
+    monkeypatch.setattr(run_agent_module, "AIAgent", Review)
+    monkeypatch.setattr(run_agent_module.threading, "Thread", ImmediateThread)
+    agent = _bare_agent()
+    notices = []
+    agent.background_review_callback = notices.append
+    agent.memory_notifications = mode
+
+    AIAgent._spawn_background_review(agent, messages_snapshot=[old], review_memory=True)
+
+    if expected:
+        notice, = notices
+        assert "Show units on every measurement" in notice
+        assert "?" in notice
+        assert "in your own words" in notice
+        assert "An earlier suggestion" not in notice
+    else:
+        assert notices == []
 
 
 def test_background_review_releases_clients_without_closing_shared_session(monkeypatch):

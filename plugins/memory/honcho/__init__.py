@@ -1339,8 +1339,9 @@ CONCLUDE_SCHEMA = {
     "description": (
         "Write, delete, or list CONCLUSIONS — persistent, derived facts about a peer that "
         "feeds their long-term profile (card + representation). Use this to record "
-        "something durable you've learned about the peer (a stable preference, a "
-        "correction, a standing constraint) so future sessions carry it forward. "
+        "durable facts about the peer, including personal preferences and factual corrections. "
+        "For an owner's standing instruction about how the agent should behave, use "
+        "standing_rule in the owner's conversation when available. "
         "You MUST pass exactly one of `conclusion` (to create), `delete_id` (to "
         "delete), or `list` (to list/search); any other combination is an error. "
         "A deletion ID is an opaque server-generated string: first call with `list=true` "

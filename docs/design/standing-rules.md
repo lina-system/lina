@@ -257,15 +257,47 @@ follow-up 04 collects candidate lines, the owner says yes to each (one list in c
 then is a rule row written; the original text is left as it is until the owner's yes, then the rule line is removed
 from it.
 
+Start with the shared files in a marked installation copy. The repository ships a Desk template.
+The deployed contents and any additional shared files depend on the installation.
+
+1. **Desk instructions.** Both `scripts/install.sh` and `scripts/install.ps1` run `desk init --adopt`.
+   `hermes_cli/desk.py::init_desk` creates `<desk>/AGENTS.md` from `AGENTS_MD` if missing and
+   preserves an existing file on adoption. Every profile reads `desk.path` from the root config.
+   A new Desk defaults to `~/Desk`. Copy the configured Desk under the marked root and enumerate
+   `AGENTS.override.md`, `AGENTS.md` and `agents.md` at its root and on the path to each agent's
+   working directory. `agent/prompt_builder.py::_agents_md_candidates` reads the first nonempty
+   file in that order per directory, from the Desk down to the working directory. A project
+   `.hermes.md` or `HERMES.md` takes precedence. Skipping project context or running in safe
+   worker mode also suppresses this route. Record the working directory with each result.
+2. **Additional shared files.** The copied root `config.yaml` may list backup patterns in
+   `undo.rules` (default `[]`). `~/Desk/rules/*.md` is a configuration example in
+   `hermes_cli/undo/env.py`. Copy the matched files into the marked root and rebase the patterns
+   there, for example to `shared/rules/*.md`. Use regular files and an empty `.standing-rule-copy`
+   marker. Enumerate the files for each copied pattern before looking at individual profiles.
+   For the example, `find "$copy/shared/rules" -maxdepth 1 -type f -name '*.md' ! -name '.*' -print`
+   lists the paths without printing any rule text. Run `python -m hermes_cli.rule_census "$copy"`
+   for candidate counts. Its shared-file count covers only the configured patterns, so inventory
+   the Desk separately. A matched file can contain zero candidates.
+3. For each additional shared file, trace the copied installation script, template or configuration that
+   places its text in a prompt input for each profile. For example, `finish_profile_layout`
+   writes a supplied `soul` to `profiles/<name>/SOUL.md`, or seeds `DEFAULT_SOUL_MD` when
+   needed. `_identity_parts` in `agent/system_prompt.py` reads the active profile's `SOUL.md`
+   through `load_soul_md`. Render a fresh synthetic prompt with a sample line in the same input.
+
+A fresh `build_system_prompt` render for both a synthetic default and a named profile included
+the Desk sample inside a nested Desk project. Neither profile saw it outside the Desk. Both saw
+only their own `SOUL.md` sample, and neither saw the file selected solely by `undo.rules`.
+Adding a project `HERMES.md` replaced the Desk instructions with that project's instructions.
+
 | Place | Read by (code) | Written by (code) | Holds today | Sorted into | What moves |
 | --- | --- | --- | --- | --- | --- |
-| Shared SOUL blocks and shared rule files | Not by core code. The undo snapshot backs up the files `undo.rules` matches (`hermes_cli/undo/env.py:6`, `:23`; `hermes_cli/undo/snapshot.py:21-30`; `docs/cron-ops.md:45-46`). How an install puts them in front of an agent is not in this repository (not checked) | By hand. The plugin-era shared append to every `SOUL.md` ("Messaging other agents") is removed by config migration 41 and stripped at load (`hermes_cli/config_migrations.py:557-560`, `agent/prompt_builder.py:1544-1547`) | Rules meant for every agent, in prose (`docs/design/hermes-patterns.md` P16: "only some agents kept them") | Rule, all agents | Each always-or-never line the owner confirms becomes an all-agents rule; the file is left for what is not a rule |
+| Shared Desk instructions, shared SOUL blocks and additional shared files | The Desk context chain and the loaded profile's `SOUL.md` reach the prompt as described above. `hermes_cli/undo/snapshot.py::targets` expands `undo.rules` for backup. | Desk initialization or adoption, profile setup, and installation-specific writers. Migration 41 removes the legacy “Messaging other agents” append and `load_soul_md` strips it on read. | Shared workspace instructions and legacy owner rules | Rule, all agents when the owner confirms that scope | Move owner-confirmed standing rules and retain workspace-specific instructions in place |
 | Per-agent `SOUL.md` | `load_soul_md` (`agent/prompt_builder.py:1518`) into the stable tier (`agent/system_prompt.py:565-576`); uploaded once to Honcho as the agent peer's file (`plugins/memory/honcho/session_migration.py:16`) | Seeded on first run (`hermes_cli/config.py:528-539`, `hermes_cli/profiles_initialization.py:51-54`); file-tool writes need approval (`tools/file_tools_write_guards.py:119`, `:180`) | Identity, role, voice, and the owner's always-or-never lines for that agent | Persona (stays); its owner lines are rules, one agent | Owner-confirmed lines become agent rules; identity, role and voice stay |
 | `SOUL.overlay.md` | `load_copy_overlay` (`agent/prompt_builder.py:1572-1588`) | `lina migrate memory` (`docs/store.md`, Copying legacy memory) | A migrated copy's work-record instruction (lina#719) | None of the three: system text | Nothing |
 | Self note `SOUL.self.md` | `agent/self_note_section.py` | `lina heart self-apply` (`hermes_cli/heart/selfnote.py:102-103`) | The agent's voice notes and tastes | Taste (lina#307) | Nothing; a line in it that states an owner rule is reported, not moved |
-| User notes `USER.md` | Frozen snapshot at load (`tools/memory_tool_store.py:224`, `:649-652`) into the notes and person card (`agent/system_prompt.py:534-563`) | The memory tool, target `user` (`tools/memory_tool.py:331`); the background review, told to store there "expectations about how you should behave" (`agent/background_review.py:367-375`); each `add` is mirrored to a Honcho conclusion (`plugins/memory/honcho/__init__.py:1076-1089`) | Facts about the owner mixed with how the owner wants agents to behave | Memory; its owner-said behaviour lines are rules | Owner-confirmed lines become rules; the review prompt stops routing behaviour expectations here and offers them as rules instead |
+| User notes `USER.md` | Frozen snapshot at load (`tools/memory_tool_store.py`) into the notes and person card (`agent/system_prompt.py`) | The memory tool, target `user`. The background review routes facts about the owner here. Honcho mirrors additions. | Personal facts, preferences and legacy behaviour instructions | Memory for facts, rules for standing instructions | The review notice asks the owner to restate a proposed instruction in chat. The foreground `standing_rule` tool uses that persisted owner turn. |
 | Memory notes `MEMORY.md` | Same as `USER.md` (target `memory`) | Same writers, target `memory` | Facts about the environment (tools, conventions, paths) | Memory | Lines that are the owner's always-or-never about work become rules; the rest stays |
-| Honcho conclusions | The person card (`session_card_block`, `plugins/memory/honcho/__init__.py:488`), prefetch (`:615`) and the Honcho tools | `honcho_conclude` (`:1205-1226`), whose description asks for "a stable preference, a correction, a standing constraint" (`:1316-1325`); the `USER.md` mirror; Honcho's own deriver and dreamer | Conclusions about the owner and the agent, some of them standing constraints | Memory (grade `agent` or `external` under lina#440) | Standing constraints the owner confirms become rules; the tool description sends new standing constraints to the rule path |
+| Honcho conclusions | The person card, prefetch and Honcho tools (`plugins/memory/honcho/`) | `honcho_conclude`, the `USER.md` mirror and Honcho's deriver and dreamer | Peer facts and legacy standing constraints | Memory (grade `agent` or `external` under lina#440) | Confirmed legacy constraints become rules. The runtime schema in `plugins/memory/honcho/tool_schemas.py` directs new standing instructions to `standing_rule`. |
 | Skills | The skills index in the volatile band (`agent/system_prompt.py:306-319`) and `skill_view` | `skill_manage` (`tools/skill_manager_tool.py`), the background review's skill prompts (`agent/background_review.py:430-456`), the curator (`agent/curator.py`) | Procedures, sometimes with an owner sentence inside ("in that room, only messages that mention me", lina#300) | Memory (procedural) | Owner sentences inside a skill become rules (often filter rules); the skill keeps the procedure |
 | Cron job prompts, script constants, closed-item and room lists (lina#300) | The cron runner reads each job's `prompt` (`cron/jobs.py:474-489`); the rest are scripts outside this repository (not checked) | By hand | "Don't bring me this" rules | Rule, kind `filter` | Become filter rules applied where items are received (lina#300, lina#520) |
 | The owner's word list `memory.word_list` | `word_list_entries` (`hermes_cli/korean/words.py:169`), placed by lina#380 | `lina words`, the refiner (`docs/korean.md:40-52`) | Words to avoid and use | Rule, all agents, of its own kind | Nothing: it keeps its table and path |

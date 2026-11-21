@@ -158,6 +158,39 @@ Start a gateway from the copy's home (`lina gateway run`, or `lina gateway insta
 
 `lina doctor` should end with no store, model, key or vector warnings you did not expect.
 
+### Review standing rules in the copy
+
+Use an isolated Lina home and its own store. Inventory the copied shared files first and
+identify which profile or workspace loads each file. See [standing rules §7](design/standing-rules.md#7-todays-map).
+Set `LINA_HOME` to the copy root. Put an empty `.standing-rule-copy` file at that root
+before starting a new chat with the `lina-memory` provider.
+
+```sh
+touch "$LINA_HOME/.standing-rule-copy"
+python -m hermes_cli.rule_census "$LINA_HOME"
+python -m hermes_cli.rule_census "$LINA_HOME" --agent default
+```
+
+The census prints counts by profile and source category. An absent category has zero candidates.
+Additional shared paths come from `undo.rules` in the copy's `config.yaml`. Keep any exported
+Honcho conclusions in the copy's `honcho/conclusions.json` or `honcho/conclusions.jsonl`.
+The export, skills, and cron files can all be synthetic for a rehearsal.
+
+In the owner's chat, ask to review the copied rules. `standing_rule` with action `copy_offer`
+returns a numbered list of up to twelve items. Show its entire question verbatim in one reply.
+The owner selects numbers in the next message, for example `2번만`, `1, 3`, or `모두`;
+`answer_copy` uses that stored owner turn as the source for the selected rows.
+The offer identifies each item's source category, scope and filter meaning where applicable.
+A count under the list identifies deferred candidates. Rows requiring a different wording can
+be proposed directly through the ordinary standing-rule conversation. To review more candidates
+after a successful move, request another list.
+
+After the store commits, the tool takes the targeted `lina undo snapshot` of the selected files,
+removes those lines, and returns `undo_id`. Run `lina undo apply <undo_id>` with the same
+`LINA_HOME` to restore the source files. The confirmed rows have a separate history in the store.
+If the response reports that registration succeeded and cleanup failed, inspect the latest
+entry and pending batches with `lina undo last --bot lina-rules` before continuing.
+
 ## 9. What a copy cannot do yet
 
 - **The model and memory provider** are not set by the migration (step 4).

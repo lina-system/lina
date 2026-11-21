@@ -12,6 +12,7 @@ from psycopg.types.json import Jsonb
 
 from hermes_state_store import StoreUnavailableError
 
+from . import copy_rules
 from .rule_sentences import interpret
 
 TOOL = "standing_rule"
@@ -38,6 +39,20 @@ SCHEMA = {
     },
 }
 _OWNER_ONLY = "주인이 직접 말한 문장만 규칙으로 남길 수 있어요."
+
+
+def schema(home):
+    if copy_rules.copy_root(home) is None:
+        return SCHEMA
+    properties = {**_PROPERTIES, "action": {"enum": [*_PROPERTIES["action"]["enum"], "copy_offer", "answer_copy"]}}
+    return {
+        **SCHEMA,
+        "description": SCHEMA["description"] + " On an opted-in copy use copy_offer to review old rules. "
+        "Return the question verbatim as the whole reply. Use answer_copy on the owner's next turn.",
+        "parameters": {**SCHEMA["parameters"], "properties": properties},
+    }
+
+
 _ALL = {"everyone", "all agents", "all of you", "모두", "전부", "모두에게", "모든 에이전트", "모든 에이전트에게"}
 _ME = {"just you", "only you", "you only", "너만", "너한테만", "너에게만"}
 _HERE = {"this room", "only here", "in this room", "이 방", "이 방에서만", "여기서만"}
@@ -173,10 +188,15 @@ def handle(provider, args):
     if args.keys() - _PROPERTIES.keys():
         return tool_error(_OWNER_ONLY)
     try:
+        action = args.get("action")
+        if action in {"copy_offer", "answer_copy"}:
+            root = copy_rules.copy_root(provider._home)
+            if root is None or len(args) != 1:
+                return tool_error("이 작업은 명시적으로 선택한 사본에서만 사용할 수 있어요.")
+        selected = []
         uid = provider._rule_source_uid
         if not uid:
             return tool_error(_OWNER_ONLY)
-        action = args.get("action")
         with provider._brain_connection() as conn, conn.transaction(), conn.cursor(row_factory=dict_row) as cur:
             source = _owner_turn(cur, uid, provider._session_id)
             place = _place(source["conversation_id"], provider._init.get("gateway_session_key"))
@@ -190,8 +210,25 @@ def handle(provider, args):
                 result = rule_offers.next_pattern_offer(conn, provider._session_id)
             elif action == "answer_offer":
                 result = rule_offers.answer_offer(conn, args.get("offer_id"), uid, provider._session_id)
+            elif action == "copy_offer":
+                result = copy_rules.offer(provider, root, uid)
+            elif action == "answer_copy":
+                selected = copy_rules.confirm(provider, root, source, cur)
+                result = {"recorded": len(selected)}
             else:
                 raise ValueError("규칙으로 할 일을 알려 주세요.")
+        if selected:
+            from hermes_cli.rule_cleanup import cleanup
+            from hermes_cli.undo.models import UndoError
+
+            try:
+                result["undo_id"] = cleanup(root, selected)
+            except (OSError, ValueError, UndoError):
+                result["error"] = "규칙 등록 후 사본 정리를 완료하지 못했어요. 되돌리기 기록을 확인해 주세요."
+            else:
+                provider._copy_rule_offer = None
+    except OSError:
+        return tool_error("사본 파일을 확인하지 못했어요.")
     except (ValueError, StoreUnavailableError) as exc:
         return tool_error(str(exc))
     except Error:

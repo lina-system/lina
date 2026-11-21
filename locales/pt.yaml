@@ -3508,6 +3508,7 @@ display:
       user: "Perfil do usuário"
     summary_cli: "  💾 Revisão de autoaperfeiçoamento: {summary}"
     summary_callback: "💾 Revisão de autoaperfeiçoamento: {summary}"
+    rule_proposal: "Quer que «{proposal}» passe a ser uma regra permanente? Se sim, escreva a instrução com as suas próprias palavras nesta conversa."
     aux_failure_label: "revisão em segundo plano"
   notice:
     uncompressed_context_overflow: "⚠️ O contexto da sessão (~{tokens} tokens) excede a janela de contexto do modelo (~{context_length} tokens) com a compressão desativada (compression.enabled: false). Use /compact para comprimir o histórico ou ative a compressão em config.yaml."
