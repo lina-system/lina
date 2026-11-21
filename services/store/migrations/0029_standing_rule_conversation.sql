@@ -210,6 +210,7 @@ DECLARE
     origin memory.messages%ROWTYPE;
     shown memory.messages%ROWTYPE;
     reply memory.messages%ROWTYPE;
+    dialogue record;
     lines text[];
     candidate uuid;
     new_rule uuid;
@@ -218,13 +219,30 @@ BEGIN
     SELECT * INTO o FROM memory.rule_offers t WHERE t.offer_id = p_offer
         AND t.agent_id = public.lina_current_agent() AND t.session_id = p_session FOR UPDATE;
     IF NOT FOUND THEN RETURN; END IF;
-    -- Tool traffic can precede the displayed answer. The first ordinary turn
-    -- must display exactly the offered question on its own final line.
-    SELECT * INTO shown FROM memory.messages m WHERE m.agent_id = o.agent_id AND m.source = 'agent'
-        AND m.session_id = p_session AND m.message_id > o.after_message_id
-        AND (m.role = 'user' OR (m.role = 'assistant' AND coalesce(m.content, '') <> ''
-             AND coalesce(m.tool_calls, 'null') IN ('null', '[]')))
-        ORDER BY m.message_id LIMIT 1 FOR SHARE;
+    -- A rewrite keeps the placement's sequence and can even reuse an older text UID.
+    -- Apply the issuance watermark to the birth of each placement, not its last write.
+    WITH placements AS (
+        SELECT min(m.message_id) AS first_id, max(m.message_id) AS latest_id,
+               max(m.message_id) FILTER (WHERE m.uid = p_uid) AS answer_id
+        FROM memory.messages m
+        WHERE m.agent_id = o.agent_id AND m.source = 'agent' AND m.session_id = p_session
+        GROUP BY m.seq_in_session, CASE WHEN m.seq_in_session IS NULL THEN m.message_id END
+        HAVING min(m.message_id) > o.after_message_id
+    ), turns AS (
+        SELECT p.first_id, p.latest_id, m.role, m.content, m.tool_calls,
+               lead(p.answer_id) OVER (ORDER BY p.first_id) AS next_answer_id,
+               count(*) FILTER (WHERE m.role = 'user') OVER
+                   (ORDER BY p.first_id ROWS BETWEEN 1 FOLLOWING AND UNBOUNDED FOLLOWING) AS remaining_users
+        FROM placements p JOIN memory.messages m ON m.message_id = p.latest_id
+    )
+    SELECT latest_id, next_answer_id, remaining_users INTO dialogue FROM turns
+        WHERE role = 'user' OR (role = 'assistant' AND coalesce(content, '') <> ''
+                                AND coalesce(tool_calls, 'null') IN ('null', '[]'))
+        ORDER BY first_id LIMIT 1;
+    -- Tool traffic may precede the question. Its immediate successor must contain the
+    -- caller's exact placement UID and be the only remaining user turn.
+    IF NOT FOUND OR dialogue.next_answer_id IS NULL OR dialogue.remaining_users <> 1 THEN RETURN; END IF;
+    SELECT * INTO shown FROM memory.messages WHERE message_id = dialogue.latest_id FOR SHARE;
     IF NOT FOUND OR shown.role <> 'assistant' OR shown.speaker <> 'agent' OR shown.grade <> 'agent'
        OR shown.forgotten_at IS NOT NULL THEN RETURN; END IF;
     SELECT * INTO origin FROM memory.messages m WHERE m.message_id = o.owner_message_id FOR SHARE;
@@ -235,14 +253,11 @@ BEGIN
     IF sha256(convert_to(lines[cardinality(lines)], 'UTF8')) IS DISTINCT FROM o.question_hash
        OR array_to_string(lines[1:cardinality(lines)-1], E'\n') ~ '[?？]' THEN RETURN; END IF;
 
-    SELECT * INTO reply FROM memory.messages m WHERE m.agent_id = o.agent_id AND m.source = 'agent'
-        AND m.session_id = p_session AND m.message_id > shown.message_id ORDER BY m.message_id LIMIT 1 FOR SHARE;
+    SELECT * INTO reply FROM memory.messages WHERE message_id = dialogue.next_answer_id FOR SHARE;
     IF NOT FOUND OR reply.uid IS DISTINCT FROM p_uid OR reply.role IS DISTINCT FROM 'user'
        OR reply.speaker <> 'owner' OR reply.grade <> 'owner' OR reply.forgotten_at IS NOT NULL
        OR coalesce(reply.ts, reply.observed_at) < coalesce(shown.ts, shown.observed_at)
        OR reply.seq_in_session <= shown.seq_in_session
-       OR EXISTS (SELECT FROM memory.messages m WHERE m.agent_id = o.agent_id AND m.source = 'agent'
-                  AND m.session_id = p_session AND m.role = 'user' AND m.message_id > reply.message_id)
        OR EXISTS (SELECT FROM memory.message_parts WHERE message_id = reply.message_id AND kind = 'reply_quote')
        THEN RETURN; END IF;
     IF o.decision IS NOT NULL THEN

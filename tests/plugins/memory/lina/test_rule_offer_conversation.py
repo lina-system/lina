@@ -11,8 +11,13 @@ from tests.plugins.memory.lina.test_rule_conversation import rule_chat, rule_res
 __all__ = ["rule_chat"]
 
 
-@pytest.mark.parametrize("answer", ["네.", None])
-def test_shared_question_in_an_ordinary_reply(rule_chat, memory_store_sql, answer):
+@pytest.mark.parametrize("answer,backfill", [
+    ("네.", None), (None, None),
+    pytest.param("네.", "answer", id="backfill-answer"),
+    pytest.param("네.", "restored", id="backfill-answer-uid-reused"),
+    pytest.param("네.", "earlier", id="backfill-earlier-user-after-answer"),
+])
+def test_shared_question_in_an_ordinary_reply(rule_chat, memory_store_sql, answer, backfill):
     def record(words, reply):
         return rule_results(rule_chat.say(words, calls=[{"action": "record"}], reply=reply))[0]
 
@@ -31,10 +36,41 @@ def test_shared_question_in_an_ordinary_reply(rule_chat, memory_store_sql, answe
         assert memory_store_sql("SELECT count(*) FROM memory.rule_offers") == [(1,)]
         assert memory_store_sql("SELECT scope, status FROM memory.standing_rules") == [("agent", "active")] * 2
         return
-    result = rule_chat.say(answer, calls=[{"action": "answer_offer", "offer_id": local["offer_id"]}],
+    turn_kwargs = {}
+    words = answer
+    before = None
+    if backfill:
+        staged = {"role": "user", "content": answer}
+        rule_chat.agent._pending_cli_user_message = staged
+        assert rule_chat.agent._flush_messages_to_session_db([staged], None)
+        row_id = staged["_row_id"]
+        before = rule_chat.text_uid(row_id)
+        turn_kwargs["conversation_history"] = []
+        if backfill == "answer":
+            words = "[voice] " + answer
+            turn_kwargs["persist_user_message"] = answer
+        elif backfill == "restored":
+            # Restoring the original payload reuses its UID. The abandoned version has a higher store ID.
+            assert rule_chat.db.set_message_api_content(rule_chat.session_id, row_id, answer, "[voice] " + answer)
+            assert rule_chat.text_uid(row_id) != before
+            assert rule_chat.db.set_user_message_content(rule_chat.session_id, row_id, answer, display_metadata={})
+        else:
+            # The answer is already durable when a sidecar arrives for the offer's owner turn.
+            (prior_id,) = memory_store_sql(
+                "SELECT seq_in_session FROM memory.messages WHERE uid = "
+                "(SELECT source_uid FROM memory.standing_rules WHERE rule_id = %s)", (local["rule_id"],),
+            )[0]
+            prior_uid = rule_chat.text_uid(prior_id)
+            assert rule_chat.db.set_message_api_content(
+                rule_chat.session_id, prior_id, "You should use two lines.", "[voice] You should use two lines.",
+            ) == 1
+            assert rule_chat.text_uid(prior_id) != prior_uid
+    result = rule_chat.say(words, **turn_kwargs, calls=[{"action": "answer_offer", "offer_id": local["offer_id"]}],
                            reply="모두의 규칙으로 정했어요.")
     (accepted,) = rule_results(result)
     uid = rule_chat.text_uid(result["messages"][result["current_turn_user_idx"]]["_row_id"])
+    if before is not None:
+        assert (uid != before) == (backfill == "answer")
     assert accepted["status"] == "recorded"
     assert memory_store_sql("SELECT source_uid, statement FROM memory.standing_rules WHERE scope = 'all'") == [
         (uid, "use two lines")]

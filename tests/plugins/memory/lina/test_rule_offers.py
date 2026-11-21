@@ -161,7 +161,7 @@ def test_pattern_yes_cites_evidence_and_uses_the_dated_owner_answer(app, pattern
 
 @pytest.mark.parametrize("case", ["different-question", "ambiguous", "agent", "outside", "tool", "external-grade",
                                   "external-source", "quote", "forgotten", "superseded", "old-sequence",
-                                  "backdated", "wrong-session", "wrong-uid"])
+                                  "backdated", "wrong-session", "wrong-uid", "intervening-user", "edited-question"])
 def test_exact_question_and_current_direct_owner_reply_are_required(app, pattern, turn, memory_store_sql, case, rule_offers):
     question = pattern["question"]
     if case == "different-question":
@@ -169,10 +169,13 @@ def test_exact_question_and_current_direct_owner_reply_are_required(app, pattern
     if case == "ambiguous":
         question = "Delete the report?\n" + question
     turn("shown", question, role="assistant", speaker="agent", seq=2)
+    if case == "intervening-user":
+        turn("intervening", "One more thing", seq=3)
     role, speaker = {"agent": ("assistant", "agent"), "outside": ("user", "outside"),
                      "tool": ("tool", "outside")}.get(case, ("user", "owner"))
     uid = turn("answer", "yes", role=role, speaker=speaker, grade="external" if case == "external-grade" else None,
-               seq=1 if case == "old-sequence" else 3, session="other" if case == "wrong-session" else ROOM,
+               seq={"old-sequence": 1, "intervening-user": 4}.get(case, 3),
+               session="other" if case == "wrong-session" else ROOM,
                source="messages" if case == "external-source" else "agent",
                date="2025-03-31" if case == "backdated" else "2025-04-01")
     if case == "quote":
@@ -184,6 +187,8 @@ def test_exact_question_and_current_direct_owner_reply_are_required(app, pattern
         memory_store_sql("UPDATE memory.messages SET forgotten_at = now() WHERE uid = 'answer'")
     if case == "superseded":
         turn("newer", "Let's discuss something else")
+    if case == "edited-question":
+        turn("edited", "No question after all.", role="assistant", speaker="agent", seq=2)
     assert rule_offers.answer_offer(app, pattern["offer_id"], "basis" if case == "wrong-uid" else uid, ROOM) == {
         "status": "ignored"}
     assert app.execute("SELECT 1 FROM memory.standing_rules").fetchall() == []
