@@ -6,6 +6,7 @@ from __future__ import annotations
 def build_migrate_parser(subparsers) -> None:
     """Attach the ``migrate`` subcommand to ``subparsers``."""
     from hermes_cli.migrate import cmd_migrate, cmd_migrate_xai
+    from hermes_cli.migrate_skills import configure
 
     migrate_parser = subparsers.add_parser(
         "migrate", help="Migrate configuration for retired models or deprecated settings",
@@ -42,6 +43,7 @@ def build_migrate_parser(subparsers) -> None:
     migrate_parser.set_defaults(func=cmd_migrate)
     _build_memory_parser(migrate_subparsers)
     _build_cron_parser(migrate_subparsers)
+    configure(migrate_subparsers.add_parser("skills", help="Inventory legacy skill layers and distinct copies"))
 
 
 def _build_memory_parser(subparsers) -> None:
