@@ -9,6 +9,12 @@ import pytest
 from tests.plugins.memory.lina.harness import FakeHoncho
 
 
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers", "after_774: rule-read questions to repeat through fresh conversation prompts after #774",
+    )
+
+
 @pytest.fixture
 def lina_env(monkeypatch):
     from hermes_cli.plugins import _reset_plugin_managers_for_tests
