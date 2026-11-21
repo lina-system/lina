@@ -128,8 +128,8 @@ lina work edit T1 --repo A1/album
 ```
 
 Use an existing area ID and a slug of 1–63 lowercase ASCII letters, digits, underscores or hyphens,
-starting with a letter or digit. The agent tool `repo_create` takes `{"repo":"A1/album"}` when the
-forge is configured. The CLI and tool both return the registered row as JSON. Repeating either call
+starting with a letter or digit. The agent tool `repo_create` (toolset `repo`, off by default so the system prompt stays
+unchanged; enable it per profile) takes `{"repo":"A1/album"}` when the forge is configured. The CLI and tool both return the registered row as JSON. Repeating either call
 returns the same row and remote. New tasks can take `--repo` on `lina work add`. `work.todo_repo`
 links a task to at most one result repository. Existing tasks keep their IDs and have no link until
 assigned. Use a work database copy when moving a registry and its assignments together.
