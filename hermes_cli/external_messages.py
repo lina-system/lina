@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import BinaryIO
 
 from hermes_state_store import ExternalBatch, ExternalMessage, ingest_external_batch
+from hermes_cli.sources.spool import message_uid
 
 _BATCH_LINES = 100
 _NATIVE_FIELDS = ("account", "room_id", "room_name", "native_id", "author_id", "author_name",
@@ -28,24 +29,43 @@ class IngestResult:
     offset: int = 0
 
 
-def enabled() -> bool:
-    """Read the host-wide source switch on every operation, including existing sessions."""
+def _settings() -> dict:
     from hermes_cli.config_effective import load_user_config_effective
     from hermes_constants import get_default_hermes_root
 
     config = load_user_config_effective(get_default_hermes_root() / "config.yaml", fail_closed=True)
-    return config.get("memory", {}).get("external_messages", {}).get("enabled", True) is True
+    return config.get("memory", {}).get("external_messages", {})
+
+
+def enabled() -> bool:
+    """Read the host-wide source switch on every operation, including existing sessions."""
+    return _settings().get("enabled", True) is True
+
+
+def _source(config: dict, kind: str) -> dict:
+    sources = config.get("sources")
+    settings = sources.get(kind) if isinstance(sources, dict) else None
+    return settings if isinstance(settings, dict) else {}
+
+
+def source_settings(kind: str) -> dict:
+    config = _settings()
+    settings = _source(config, kind)
+    return {**settings, "enabled": config.get("enabled", True) is True and settings.get("enabled") is True}
+
+
+def disabled_sources() -> tuple[str, ...]:
+    """Read opt-ins together so a single query uses one configuration snapshot."""
+    config = _settings()
+    return tuple(kind for kind in ("mail", "slack") if _source(config, kind).get("enabled") is not True)
 
 
 def configured_spool() -> Path | None:
     """The host's root config owns this job, not the currently bound profile."""
-    from hermes_cli.config_effective import load_user_config_effective
-    from hermes_constants import get_default_hermes_root
-
-    config = load_user_config_effective(get_default_hermes_root() / "config.yaml", fail_closed=True)
-    if config.get("memory", {}).get("external_messages", {}).get("enabled", True) is not True:
+    config = _settings()
+    if config.get("enabled", True) is not True:
         return None
-    value = config.get("memory", {}).get("external_messages", {}).get("spool", "")
+    value = config.get("spool", "")
     if not isinstance(value, str):
         raise SpoolError("memory.external_messages.spool must be a path string")
     return Path(value).expanduser() if value.strip() else None
@@ -70,10 +90,9 @@ def _message(message: dict, event_id: str) -> ExternalMessage:
     if any(not isinstance(message.get(key), str) for key in required):
         raise SpoolError("message requires string identity, text, timestamp and ingest_path fields")
     source, room, native_id = (message[key] for key in ("source", "room_id", "native_id"))
-    identity = json.dumps([source, room, native_id], separators=(",", ":"), ensure_ascii=False)
-    if message["uid"] != hashlib.sha256(identity.encode()).hexdigest():
+    if message["uid"] != message_uid(source, room, native_id):
         raise SpoolError("message uid does not match its platform, room and native id")
-    if source not in {"kakao", "discord", "line", "imessage"}:
+    if source not in {"kakao", "discord", "line", "imessage", "mail", "slack"}:
         raise SpoolError("unsupported message platform")
     if message["ingest_path"] not in {"archive", "live", "export"}:
         raise SpoolError("unsupported message ingest_path")
@@ -81,6 +100,9 @@ def _message(message: dict, event_id: str) -> ExternalMessage:
     if timestamp.utcoffset() is None:
         raise SpoolError("message timestamp must include a timezone")
     native = _masked({key: message.get(key) for key in _NATIVE_FIELDS})
+    link_field = {"mail": "display_url", "slack": "permalink"}.get(source)
+    if link_field and isinstance(message.get(link_field), str):
+        native[link_field] = _masked(message[link_field])
     native["platform"] = source
     content = _masked(message["text"])
     author = _masked(f"{source}:{message['author_id']}")
