@@ -5,6 +5,7 @@ from __future__ import annotations
 from hermes_cli.heart import evidence, rows, storage
 from hermes_cli.heart.locale import text
 from hermes_cli.heart.models import Change, Entry, Pref
+from hermes_cli.heart.parser import DEFAULT_CANDIDATE_LIMIT
 
 PREF_FLAGS = ("pref_target", "pref_kind", "pref_dir", "pref_route")
 
@@ -70,6 +71,9 @@ def review_input(args) -> None:
     from hermes_cli.heart.selfnote import removal_candidates
 
     day = storage.day(args.date)
+    # An imported journal may exist before the profile has a local conversation.
+    if (storage.home() / "state.db").is_file():
+        evidence.print_candidates(day, evidence.day_candidates(day, DEFAULT_CANDIDATE_LIMIT))
     selected = [entry for entry in entries() if (parsed := storage.parse_ts(entry.ts)) and parsed.date() == day]
     print(text("journal", day=day.isoformat(), count=len(selected)))
     for entry in selected:

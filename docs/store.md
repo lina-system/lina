@@ -359,12 +359,14 @@ first time a later one is named). Like the other registry tables it has no `agen
 | `ts` | the entry's time |
 | `native` | `ts` (the exact string self-note citations name), `event`, `feeling`, `note`, `strength`, `via` (`turn` or `review`), `evidence` (the `memory.messages` uids it cites), `pref` when given (`target`, `kind`, `dir`, `route`), `unmapped_evidence` for an imported line whose cited LCM rows did not move, and `payload_sha256` |
 
-`--messages` takes `memory.messages` uids of the agent's own unforgotten turns (`source = 'agent'`); another
-agent's uid reads as unknown, because row-level security hides it. An entry with no `pref`, or with route
+`--messages` takes `memory.messages` uids of the agent's own unforgotten turns (`source = 'agent'`).
+Each cited agent speaker must have this profile's `agent:<profile>` ref. An outside user turn, including a bot
+relay, is also refused, even alongside an owner turn. An entry with no `pref`, or with route
 `reaction`, must cite at least one owner message (a row whose stored `speaker` is `owner`, lina#324); `outcome` and
 `exposure` entries need not. `lina heart list`,
 `review-input` and the self-note check read these rows; `lina heart candidates` reads the placements in
-`transcript_rows` and their text here, leaving out forgotten rows. `SOUL.self.md` and `heart/changes.jsonl`
+`transcript_rows` and their text here, leaving out forgotten rows. `review-input` includes the same day's
+owner messages and replies alongside the journal. `SOUL.self.md` and `heart/changes.jsonl`
 stay files in the profile.
 
 `lina heart import --from <hermes home or profile dir> [--dry-run]` (and `lina migrate memory`, after the LCM
