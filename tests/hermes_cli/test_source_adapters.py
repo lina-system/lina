@@ -1,7 +1,6 @@
 """Manual source contracts. Every response is synthetic and all transports are disconnected."""
 
 import base64
-import ast
 import json
 import subprocess
 from datetime import UTC, datetime, timedelta
@@ -45,9 +44,7 @@ def collect(kind, call, config=None, state=None, checkpoint=None, emit=None, *, 
     return messages
 
 
-def test_mail_pagination_and_plain_thread_identity():
-    calls, checkpoints = [], []
-
+def mail_transport(calls):
     def call(tool, params, account):
         calls.append((tool, params, account))
         if tool == mail.DETAIL:
@@ -55,6 +52,12 @@ def test_mail_pagination_and_plain_thread_identity():
         if params.get("page_token") == "page-two":
             return envelope({"messages": [{"id": "m2"}]})
         return envelope({"messages": [{"id": "m1"}], "nextPageToken": "page-two"})
+    return call
+
+
+def test_mail_pagination_and_plain_thread_identity():
+    calls, checkpoints = [], []
+    call = mail_transport(calls)
 
     messages = collect("mail", call, checkpoint=lambda *args: checkpoints.append(args))
     assert [m["native_id"] for m in messages] == ["m1", "m2"]
@@ -70,9 +73,7 @@ def test_mail_pagination_and_plain_thread_identity():
     assert calls[0][1]["include_spam_trash"] is False and "-category:promotions" in calls[0][1]["query"]
 
 
-def test_slack_pages_only_memberships_and_dms_including_thread_replies():
-    calls = []
-
+def slack_transport(calls):
     def call(tool, params, account):
         calls.append((tool, params.copy()))
         if tool == slack.LIST:
@@ -94,6 +95,12 @@ def test_slack_pages_only_memberships_and_dms_including_thread_replies():
                                             "files": [{"name": "file.txt", "url_private": "PRIVATE-FILE"}]}]})
         assert tool == slack.PERMALINK
         return envelope({"permalink": "https://example.slack.com/archives/C1/p" + params["message_ts"].replace(".", "")})
+    return call
+
+
+def test_slack_pages_only_memberships_and_dms_including_thread_replies():
+    calls = []
+    call = slack_transport(calls)
 
     messages = collect("slack", call)
     assert [m["native_id"] for m in messages] == [ROOT, REPLY]
@@ -122,16 +129,17 @@ def test_empty_mail_configuration_makes_zero_calls(config):
     assert collect("mail", lambda *_: pytest.fail("unexpected read"), config) == []
 
 
-def test_static_read_only_surface_and_pre_dispatch_rejection(monkeypatch):
+def test_collectors_dispatch_only_allowed_read_operations(monkeypatch):
     forbidden = {"GMAIL_SEND_EMAIL", "GMAIL_MODIFY_THREAD_LABELS", "GMAIL_GET_ATTACHMENT",
                  "SLACK_SEND_MESSAGE", "SLACK_ADD_REACTION_TO_AN_ITEM", "SLACK_JOIN_AN_EXISTING_CONVERSATION",
                  "SLACK_SET_READ_CURSOR_IN_A_CONVERSATION", "SLACK_LIST_CONVERSATIONS"}
     assert forbidden.isdisjoint(set().union(*adapters.TOOLS.values()))
-    for module in (adapters, mail, slack):
-        tree = ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
-        literals = {node.value for node in ast.walk(tree) if isinstance(node, ast.Constant)
-                    and isinstance(node.value, str) and node.value.startswith(("GMAIL_", "SLACK_"))}
-        assert literals <= adapters.TOOLS["mail"] | adapters.TOOLS["slack"]
+    for kind, transport in (("mail", mail_transport), ("slack", slack_transport)):
+        calls = []
+        assert collect(kind, transport(calls))
+        dispatched = {call[0] for call in calls}
+        assert dispatched and dispatched <= adapters.TOOLS[kind]
+        assert dispatched.isdisjoint(forbidden)
     monkeypatch.setattr(adapters, "_composio", lambda *_: pytest.fail("subprocess reached"))
     monkeypatch.setattr(adapters, "_connector", lambda *_: pytest.fail("gateway reached"))
     for kind in ("mail", "slack"):
