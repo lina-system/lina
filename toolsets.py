@@ -99,6 +99,7 @@ TOOLSETS = {
     ),
     "report": _ts("Reports: a long result as a record with versions and a live page, sent in chat as one line",
                   ["report"]),
+    "repo": _ts("Create result repositories on the configured work forge", ["repo_create"]),
     "terminal": _ts("Terminal/command execution and process management tools", ["terminal", "process_manage"]),
     "skills": _ts(
         "Access, create, edit, and manage skill documents with specialized "

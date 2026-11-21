@@ -20,7 +20,7 @@ from hermes_cli.work.writing import guard_text, missing_field
 
 PARENT_KIND = {"목표": "영역", TODO: "목표", "메모": "영역"}
 EDIT_FIELDS = ("title", "why", "done", "check", "session", "parent", "every", "owner", "project", "add_project",
-               "remove_project", "stall", "decide", "due")
+               "remove_project", "stall", "decide", "due", "repo")
 
 
 def _guards(r: dict, a) -> None:
@@ -144,6 +144,9 @@ def cmd_edit(a) -> None:
             r["basis"] = bases
         _guards(r, a)
         _plain(r, a)
+        repo = getattr(a, "repo", None)
+        if repo is not None:
+            ledger.set_repo(r, repo)
         _due_projects(r, a)
         _owner_change(r, a)
         _decide(r, a, answered)

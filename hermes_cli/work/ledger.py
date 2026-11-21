@@ -11,8 +11,9 @@ from __future__ import annotations
 from contextvars import ContextVar
 
 from hermes_cli.work import store
-from hermes_cli.work.common import iso, now, paths, writer_profile
+from hermes_cli.work.common import die, iso, now, paths, writer_profile
 from hermes_cli.work.env import current
+from hermes_cli.work.kinds import TODO
 from hermes_cli.work.locale import LABELS
 
 # One connection per context, as the binding it was opened for (``env._CURRENT``).
@@ -90,6 +91,19 @@ def rows(item=None, ops=None):
 
 def read_all():
     return store.read_all(db())
+
+
+def set_repo(rec, repo_id: str) -> None:
+    """Set an optional to-do membership using the shared registry."""
+    if rec["kind"] != TODO:
+        die("--repo is only supported for to-dos")
+    repo_id = repo_id.strip()
+    if repo_id:
+        if not store.exists(db(), "repo", repo_id):
+            die(f"Unknown repository: {repo_id}")
+        rec["repo_id"] = repo_id
+    else:
+        rec.pop("repo_id", None)
 
 
 def stamp(rec, op, actor=None, **extra) -> dict:

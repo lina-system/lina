@@ -1,6 +1,7 @@
 """Copied profile ledger accounting and collision-safe migration."""
 
 import json
+import sqlite3
 from contextlib import closing
 
 import pytest
@@ -73,6 +74,53 @@ def test_copied_profile_import_accounts_for_ancestry_without_body_leaks(work_env
     assert (destination / "work" / "work.db").exists()
 
 
+def test_copied_profile_import_follows_selected_task_repos_to_their_area(work_env):
+    source = build_copied_work_fixture(work_env / "copied.db")
+    destination = work_env / "destination"
+    with closing(store_sqlite.connect(source, "owner", {})) as db, store.transaction(db):
+        _append(db, 5, id="A2", by="beta", title="repository area")
+        _append(db, 6, id="T3", by="beta", parent="G1", title="required task")
+        db.execute("UPDATE event SET parent_id = (SELECT id FROM event WHERE todo_id = 'T3') "
+                   "WHERE todo_id = 'T1'")
+        db.execute("INSERT INTO repo (id, area_id, name, forge_url) VALUES "
+                   "('A2/album', 'A2', 'album', 'https://example.invalid/album'), "
+                   "('A2/other', 'A2', 'other', 'https://example.invalid/other')")
+        db.execute("INSERT INTO todo_repo (todo_id, repo_id) VALUES "
+                   "('T1', 'A2/album'), ('T2', 'A2/album'), ('T3', 'A2/album')")
+
+    report = migrate_work(source, destination, "alpha", "new-alpha")
+
+    with closing(store_sqlite.connect(destination / "work" / "work.db", "owner", {})) as db:
+        assert db.execute("SELECT todo_id, repo_id FROM todo_repo ORDER BY todo_id").fetchall() == [
+            ("T1", "A2/album"), ("T3", "A2/album")]
+        assert db.execute("SELECT id, area_id, name, forge_url FROM repo").fetchall() == [
+            ("A2/album", "A2", "album", "https://example.invalid/album")]
+        assert db.execute("SELECT agent_id FROM area WHERE id = 'A2'").fetchone() == ("beta",)
+    assert report["inserted_counts"]["repo"] == 1
+    assert report["inserted_counts"]["todo_repo"] == 2
+    assert {"kind": "repo", "id": "A2/album", "profile": None} in report["required_ancestors"]
+    assert {"kind": "area", "id": "A2", "profile": "beta"} in report["required_ancestors"]
+    assert report["source_manifest"] == report["destination_manifest"]
+    repeated = migrate_work(source, destination, "alpha", "new-alpha")
+    assert repeated["inserted"] == 0 and repeated["matched_counts"]["todo_repo"] == 2
+
+
+def test_copied_profile_import_matches_legacy_task_without_repo_tables(work_env):
+    source = build_copied_work_fixture(work_env / "legacy.db")
+    destination = work_env / "destination"
+    with closing(sqlite3.connect(source)) as db, db:
+        db.execute("DROP TABLE todo_repo")
+        db.execute("DROP TABLE repo")
+
+    report = migrate_work(source, destination, "alpha", "new-alpha")
+    repeated = migrate_work(source, destination, "alpha", "new-alpha")
+
+    with closing(store_sqlite.connect(destination / "work" / "work.db", "owner", {})) as db:
+        assert db.execute("SELECT id FROM todo").fetchall() == [("T1",)]
+        assert db.execute("SELECT todo_id FROM todo_repo").fetchall() == []
+    assert repeated["inserted"] == 0 and repeated["matched"] == report["inserted"]
+
+
 def test_existing_importer_remapping_agent_overwrites_global_item(work_env):
     # Given an original import already projected in the destination store.
     with closing(store_sqlite.connect(work_env / "destination.db", "owner", {}, create=True)) as db:
@@ -90,8 +138,6 @@ def test_existing_importer_remapping_agent_overwrites_global_item(work_env):
 
 
 def test_online_work_copy_remains_reusable_after_readonly_inventory(work_env):
-    import sqlite3
-
     from hermes_cli.migrate_memory_copy import snapshot
 
     home = work_env / "source"

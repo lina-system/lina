@@ -36,6 +36,7 @@ def build_install_parser(subparsers) -> None:
     from hermes_cli.subcommands.undo import build_undo_parser
     from hermes_cli.subcommands.models import build_models_parser
     from hermes_cli.subcommands.omo import build_omo_parser
+    from hermes_cli.subcommands.repo import build_repo_parser
     from hermes_cli.subcommands.runners import build_runners_parser
     from hermes_cli.subcommands.services import build_services_parser
     from hermes_cli.subcommands.store import build_store_parser
@@ -73,6 +74,7 @@ def build_install_parser(subparsers) -> None:
     build_worker_parser(subparsers)
     build_devices_parser(subparsers)
     build_work_parser(subparsers)
+    build_repo_parser(subparsers)
     build_heart_parser(subparsers)
     build_brain_parser(subparsers)
     build_undo_parser(subparsers)

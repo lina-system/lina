@@ -5,11 +5,13 @@ from __future__ import annotations
 import hashlib
 import json
 
-KINDS = ("area", "project", "goal", "todo", "run", "run_todo", "wait", "decision", "link", "event")
+KINDS = ("area", "repo", "project", "goal", "todo", "todo_repo", "run", "run_todo", "wait", "decision", "link", "event")
+KEY_COLUMNS = {"todo_repo": ("todo_id",), "run_todo": ("run_id", "todo_id")}
 REFERENCES = {
-    "area": (), "project": (("area_id", "area"),),
+    "area": (), "repo": (("area_id", "area"),), "project": (("area_id", "area"),),
     "goal": (("area_id", "area"), ("project_id", "project")),
     "todo": (("goal_id", "goal"), ("close_run_id", "run")),
+    "todo_repo": (("todo_id", "todo"), ("repo_id", "repo")),
     "run": (("goal_id", "goal"),),
     "run_todo": (("run_id", "run"), ("todo_id", "todo")),
     "wait": (("goal_id", "goal"), ("todo_id", "todo"), ("run_id", "run")),
@@ -22,12 +24,12 @@ REFERENCES = {
 
 def rows(db, kinds=KINDS) -> dict:
     return {kind: [dict(zip(db.columns(kind), row)) for row in db.execute(
-        f"SELECT * FROM {kind} ORDER BY " + ("run_id, todo_id" if kind == "run_todo" else "id")).fetchall()]
+        f"SELECT * FROM {kind} ORDER BY {', '.join(KEY_COLUMNS.get(kind, ('id',)))}").fetchall()]
             for kind in kinds}
 
 
 def key(kind, row) -> tuple:
-    return (row["run_id"], row["todo_id"]) if kind == "run_todo" else (row["id"],)
+    return tuple(row[column] for column in KEY_COLUMNS.get(kind, ("id",)))
 
 
 def remap_owner(kind, original, mappings) -> dict:
@@ -47,10 +49,11 @@ def remap_owner(kind, original, mappings) -> dict:
 
 def select_graph(all_rows, profile, agent, mappings=None) -> tuple:
     mappings = mappings if mappings is not None else {profile: agent}
-    indexes = {kind: {row["id"]: row for row in all_rows[kind]} for kind in KINDS if kind != "run_todo"}
+    indexes = {kind: {key(kind, row)[0]: row for row in all_rows[kind]} for kind in KINDS if kind != "run_todo"}
     chosen = {kind: {row["id"] for row in all_rows[kind] if row["agent_id"] == profile}
               for kind in ("area", "project", "goal", "todo", "run")}
     owned = {kind: ids.copy() for kind, ids in chosen.items()}
+    chosen.update(repo=set(), todo_repo=set())
     for kind in ("run_todo", "wait", "decision", "link"):
         chosen[kind] = {key(kind, row) if kind == "run_todo" else row["id"] for row in all_rows[kind]
                         if row.get("agent_id") == profile or
@@ -67,6 +70,9 @@ def select_graph(all_rows, profile, agent, mappings=None) -> tuple:
     pending = [(kind, i) for kind, ids in chosen.items() for i in ids]
     while pending:
         kind, i = pending.pop()
+        if kind == "todo" and i in indexes["todo_repo"]:
+            chosen["todo_repo"].add(i)
+            pending.append(("todo_repo", i))
         for column, parent in REFERENCES[kind]:
             parent_id = indexes[kind][i].get(column)
             if parent == "event" and parent_id is not None:
@@ -82,10 +88,10 @@ def select_graph(all_rows, profile, agent, mappings=None) -> tuple:
                 pending.append(("event", event_id))
     selected = {}
     for kind in KINDS:
-        selected[kind] = [remap_owner(kind, row, mappings) for row in all_rows[kind]
-                          if (key(kind, row) if kind == "run_todo" else row["id"]) in chosen[kind]]
+        selected[kind] = [remap_owner(kind, row, mappings) for i, row in indexes[kind].items() if i in chosen[kind]]
     ancestors = [{"id": i, "kind": kind, "profile": indexes[kind][i]["agent_id"]}
                  for kind in owned for i in sorted(chosen[kind] - owned[kind])]
+    ancestors += [{"id": i, "kind": "repo", "profile": None} for i in sorted(chosen["repo"])]
     ancestors += [{"id": i, "kind": "event", "profile": indexes["event"][i]["agent_id"]}
                   for i in sorted(event_parents - event_seeds)]
     return selected, ancestors, owned

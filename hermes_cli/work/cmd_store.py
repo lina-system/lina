@@ -18,8 +18,7 @@ from hermes_cli.work.env import current
 from hermes_cli.work.kinds import current as current_kind
 from hermes_cli.work.locale import t
 
-# A work.db's tables an import copies as stored: the record's (KINDS) and a run's result records, which refer to
-# its run, to-do and goal. A work.db older than migration 0024 has no artifact table.
+# Tables copied as stored. Older work.db files can lack repository tables and result records.
 IMPORTED = (*KINDS, "artifact")
 RUN_COLUMNS = ("id", "runner", "title", "mode", "topic", "agent_id", "goal_id", "device", "created_at", "started_at",
                "last_activity_at", "ended_at", "exit_code", "result_path", "cancelled_at", "background_since")
@@ -124,6 +123,8 @@ def _import_line(db, n: int, text: str, row: dict, *, stored_event: dict | None 
     if row.get("_meta"):
         eid = store.insert_event(db, row, data_line, "import")
     else:
+        if (repo_id := row.get("repo_id")) and not store.exists(db, "repo", repo_id):
+            die(f"Line {n} references unregistered repository {repo_id}. Register it first or import the work.db.", 1)
         prev = store.latest(db, row.get("id"))
         info = _info(row)
         info = dict(info, created_by=row.get("writer") if prev is None and row.get("op") == "add" else None)
@@ -165,13 +166,15 @@ def import_selected_rows(db, selected: dict) -> None:
                            "added_by", "relayed_by", "closed_by_id"):
                 if row.get(column):
                     store.actor(db, row[column])
-    for kind in ("area", "project", "goal"):
-        for row in selected[kind]:
+    for kind in ("area", "project", "goal", "repo"):
+        for row in selected.get(kind, ()):
             store.upsert(db, kind, row["id"], {c: v for c, v in row.items() if c != "id"})
     _copy_runs(db, [tuple(row[c] for c in RUN_COLUMNS) for row in selected["run"]], [])
     for kind in ("todo", "wait", "decision", "link"):
         for row in selected[kind]:
             store.upsert(db, kind, row["id"], {c: v for c, v in row.items() if c != "id"})
+    for row in selected.get("todo_repo", ()):
+        store.set_todo_repo(db, row["todo_id"], row["repo_id"])
     _copy_runs(db, [], [tuple(row[c] for c in ("run_id", "todo_id", "closes", "added_by", "added_at"))
                        for row in selected["run_todo"]])
     # After their runs, to-dos and goals; a profile's work graph (migrate_memory_work) selects no artifacts.
@@ -204,7 +207,7 @@ def _check_counts(src: Source, db, lines, skipped, scope=None) -> tuple[bool, li
         "todo": sum(1 for r in recs.values() if store.table_of(r) == "todo"),
         "event": len(rows) - len(skipped)}
     got = store.counts(db)
-    for table in [x for x in store.TABLES if x in want and x not in ("actor", "setting", "status_label", "outbox")]:
+    for table in [x for x in store.TABLES if x in want and x not in ("actor", "setting", "status_label", "outbox", "repo")]:
         same = want[table] == got[table]
         ok = ok and same
         report.append(f"{table:10} {want[table]:>7} {got[table]:>7}  " + (t("일치") if same else t("다름")))
@@ -263,7 +266,7 @@ def _belongs(kind: str, row: dict, touched: dict) -> bool:
     """An item's projection rows, the ones store.project_item rewrites from its latest record."""
     if kind in touched:
         return row["id"] in touched[kind]
-    if kind == "run_todo":
+    if kind in ("run_todo", "todo_repo"):
         return row["todo_id"] in touched["todo"]
     if kind in ("wait", "decision", "link") and not (kind == "decision" and row["run_id"] is not None):
         return row["goal_id"] in touched["goal"] or row["todo_id"] in touched["todo"]
@@ -310,8 +313,15 @@ def _import_tables(db, src: Source) -> tuple[int, int, tuple]:
     absent = {kind: [row for row in source[kind] if key(kind, row) not in have[kind]] for kind in IMPORTED}
     scope = {kind: {key(kind, row): row for row in source[kind]
                     if key(kind, row) not in have[kind] or _belongs(kind, row, touched)} for kind in IMPORTED}
-    write, scope["artifact"] = _artifacts_due(db, source["artifact"], have["artifact"])
-    import_selected_rows(db, {kind: list(scope[kind].values()) for kind in IMPORTED} | {"artifact": write})
+    memberships = list(scope["todo_repo"].values())
+    scope["todo_repo"] = {key("todo_repo", row): row for row in source["todo_repo"]}
+    for assignment in present["todo_repo"]:
+        if _belongs("todo_repo", assignment, touched) and key("todo_repo", assignment) not in scope["todo_repo"]:
+            store.set_todo_repo(db, assignment["todo_id"], None)
+    scope["repo"] = {key("repo", row): row for row in source["repo"]}
+    artifacts, scope["artifact"] = _artifacts_due(db, source["artifact"], have["artifact"])
+    import_selected_rows(db, {kind: list(scope[kind].values()) for kind in IMPORTED}
+                         | {"artifact": artifacts, "repo": absent["repo"], "todo_repo": memberships})
     return len(absent["event"]), len(absent["run_todo"]), (scope, touched)
 
 
