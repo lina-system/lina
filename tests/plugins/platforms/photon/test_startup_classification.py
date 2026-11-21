@@ -1,9 +1,16 @@
 """Photon sidecar startup failure classification."""
-import asyncio
+from unittest.mock import AsyncMock
+
+import httpx
 import pytest
 from gateway.config import PlatformConfig
 
-# ── Photon: typed sidecar startup errors ───────────────────────────────
+pytestmark = pytest.mark.usefixtures("offline_messenger_clients")
+
+
+@pytest.fixture
+def fake_session(monkeypatch):
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: AsyncMock())
 
 
 class TestPhotonSidecarStartupClassification:
@@ -19,7 +26,19 @@ class TestPhotonSidecarStartupClassification:
         return PhotonAdapter(PlatformConfig(enabled=True, token="", extra={}))
 
     @pytest.mark.asyncio
-    async def test_typed_startup_error_sets_nonretryable_fatal(self, monkeypatch):
+    async def test_connect_without_fake_client_is_refused(self, monkeypatch):
+        adapter = self._make_adapter(monkeypatch)
+        # Keep the red case offline too. A missing guard can reach only these doubles.
+        transport = httpx.MockTransport(lambda _: httpx.Response(200))
+        monkeypatch.setattr(httpx.AsyncClient, "_init_transport", lambda *a, **kw: transport)
+        sidecar = AsyncMock(side_effect=RuntimeError("fake sidecar"))
+        monkeypatch.setattr(adapter, "_start_sidecar", sidecar)
+        with pytest.raises(RuntimeError, match="inject a fake messenger"):
+            await adapter.connect()
+        sidecar.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_typed_startup_error_sets_nonretryable_fatal(self, monkeypatch, fake_session):
         from plugins.platforms.photon import adapter as photon_adapter
 
         adapter = self._make_adapter(monkeypatch)
@@ -39,7 +58,7 @@ class TestPhotonSidecarStartupClassification:
         assert adapter.fatal_error_retryable is False
 
     @pytest.mark.asyncio
-    async def test_untyped_startup_error_stays_retryable(self, monkeypatch):
+    async def test_untyped_startup_error_stays_retryable(self, monkeypatch, fake_session):
         # Ambiguous failures (crash before ready, health timeout) must keep
         # retrying; the gateway's needs_attention escalation is the backstop.
         adapter = self._make_adapter(monkeypatch)

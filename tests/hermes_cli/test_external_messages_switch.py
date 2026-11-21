@@ -17,6 +17,25 @@ from tests.hermes_cli.test_external_messages import event, message
 from utils import atomic_roundtrip_yaml_update
 
 
+def test_collector_cannot_construct_uninjected_http_session(monkeypatch):
+    import httpx
+
+    # MockTransport cannot open sockets, even if the collector guard regresses.
+    transport = httpx.MockTransport(lambda _: httpx.Response(200))
+    monkeypatch.setattr(httpx.Client, "_init_transport", lambda *args, **kwargs: transport)
+    with pytest.raises(RuntimeError, match="inject a fake messenger"):
+        with httpx.Client(trust_env=False):
+            pass
+
+
+def test_in_process_http_client_with_injected_transport_is_allowed():
+    import httpx
+
+    # Starlette's TestClient builds its client this way; only a client with no injected transport is refused.
+    with httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(200))) as client:
+        assert client.get("http://offline.invalid/").status_code == 200
+
+
 def _parse(*words):
     parser = argparse.ArgumentParser()
     build_memory_parser(parser.add_subparsers(), cmd_memory=cmd_memory)
