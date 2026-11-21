@@ -1859,6 +1859,22 @@ def _refuse_rename_without_file_tooling(old_canon: str) -> None:
             "backend under that name, and renaming it there is not supported. Nothing was changed.")
 
 
+def _retarget_terminal_cwd(new_dir: Path, old_dir: Path) -> None:
+    """Point ``terminal.cwd`` at the renamed profile when it named the old directory. Best-effort: a config
+    that cannot be read or written leaves the rename done and the path unchanged."""
+    config_path = new_dir / "config.yaml"
+    try:
+        from hermes_cli.config import atomic_config_write, read_user_config_raw
+
+        config = read_user_config_raw(config_path)
+        terminal = config.get("terminal")
+        if isinstance(terminal, dict) and isinstance(terminal.get("cwd"), str) and Path(terminal["cwd"]) == old_dir:
+            terminal["cwd"] = str(new_dir)
+            atomic_config_write(config_path, config)
+    except Exception:
+        logger.warning("could not retarget terminal.cwd of %s after the rename", new_dir, exc_info=True)
+
+
 def rename_profile(old_name: str, new_name: str) -> Path:
     """Rename a profile: directory, wrapper script, service, active_profile. The default
     profile's home IS the installation root, so "renaming" it sets a presentation-only
@@ -1936,6 +1952,10 @@ def rename_profile(old_name: str, new_name: str) -> Path:
     # 2b. Record the rename so Bot Mode group chats can re-link persisted member descriptors to the new
     # slug (#110200). Best-effort: a metadata write failure must never fail the rename itself.
     _record_profile_rename(new_dir, old_canon)
+
+    # 2c. A profile copied by ``migrate memory`` pins ``terminal.cwd`` to its own directory; after the move that
+    # path no longer exists and every terminal command would start in a missing directory.
+    _retarget_terminal_cwd(new_dir, old_dir)
 
     # 3. Update profile-scoped Honcho host blocks, preserving aiPeer identity
     from hermes_cli.profiles_honcho import migrate_honcho_profile_host
