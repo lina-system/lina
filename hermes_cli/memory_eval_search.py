@@ -161,13 +161,14 @@ _NEW_SQL = """
     LEFT JOIN memory.messages m ON m.message_id = c.message_ids[1]
     LEFT JOIN ltm.documents d ON e.kind = 'document' AND d.vec_id = e.item_id
     WHERE e.model = %s AND e.agent_id = ANY(%s)
-      AND ((e.kind = 'chunk' AND m.message_id IS NOT NULL AND m.forgotten_at IS NULL)
+      AND ((e.kind = 'chunk' AND m.message_id IS NOT NULL AND m.forgotten_at IS NULL AND {visible_chunk})
            OR (e.kind = 'document' AND d.id IS NOT NULL AND d.deleted_at IS NULL))
     ORDER BY e.embedding <=> %s::vector
     LIMIT %s"""
 
 
 def new_vector(conn, query_vector: Sequence[float], model: str, question: Question, k: int = TOP_K) -> list[str]:
+    from hermes_state_source_visibility import visible_chunk
     from hermes_state_store import HNSW_FILTERED_SEARCH, SHARED_VECTOR_OWNER
     owners = [question.agent, question.honcho.get("workspace", "hermes"), SHARED_VECTOR_OWNER]
     literal = "[" + ",".join(repr(float(v)) for v in query_vector) + "]"
@@ -179,7 +180,7 @@ def new_vector(conn, query_vector: Sequence[float], model: str, question: Questi
     with conn.transaction():
         for setting in HNSW_FILTERED_SEARCH:
             conn.execute(setting)
-        rows = conn.execute(sql, (model, owners, literal, k)).fetchall()
+        rows = conn.execute(sql.format(visible_chunk=visible_chunk()), (model, owners, literal, k)).fetchall()
     return [row[0] for row in rows if row[0]]
 
 

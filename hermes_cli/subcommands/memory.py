@@ -8,7 +8,12 @@ from hermes_cli.subcommands._shared import add_yes_flag
 
 
 def build_memory_parser(subparsers, *, cmd_memory: Callable) -> None:
-    """Attach the ``memory`` subcommand to ``subparsers``."""
+    """Register memory configuration, manual collection and stored-message commands."""
+    from hermes_cli.sources.cli import build_sources_parser
+    from hermes_cli.subcommands.messages import build_messages_parser
+
+    build_sources_parser(subparsers)
+    build_messages_parser(subparsers)
     memory_parser = subparsers.add_parser(
         "memory", help="Configure external memory provider",
         description="Set up and manage external memory provider plugins.\n\n"

@@ -6,6 +6,7 @@ docs of config.yaml.
 """
 
 from hermes_cli.config_defaults_auxiliary import _aux
+from hermes_cli.sources.defaults import CALL_LIMITS, source_defaults
 
 #: Image every container terminal backend (docker/modal/daytona, the singularity plugin) uses unless the
 #: user pins one. LEGACY_SANDBOX_IMAGES are the plain defaults that preceded the desktop stack
@@ -1311,7 +1312,7 @@ DEFAULT_CONFIG = {
         "shared_user_char_limit": 2500,  # the install's shared owner profile, read by every agent (lina#467)
         # Periodic built-in memory review; 0 when an external provider auto-extracts.
         "nudge_interval": 10,
-        "external_messages": {"enabled": True, "spool": ""},  # Host-level collector source and spool.
+        "external_messages": {"enabled": True, "spool": "", "sources": {k: source_defaults(k) for k in CALL_LIMITS}},
         "provider": "",  # One external provider; empty = built-in only.
         "auto_recall_append": False, "prefix_fingerprints": False,  # Recall in the user message (#21); prefix hashes, no text (#25).
     },

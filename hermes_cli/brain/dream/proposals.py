@@ -13,6 +13,7 @@ import argparse
 import json
 
 from hermes_cli.brain.dream.config import DreamError
+from hermes_state_source_visibility import visible_atom, visible_ref
 
 _COLUMNS = ("proposal_id", "phase", "kind", "target", "payload", "grade", "source_refs", "status", "cycle_id",
             "created_at", "decided_at", "decided_by")
@@ -36,9 +37,15 @@ def _apply_close_edge(conn, payload: dict) -> None:
 APPLY = {"merge": _apply_merge, "close_edge": _apply_close_edge}
 
 
+def _visible_sources() -> str:
+    return ("NOT EXISTS (SELECT 1 FROM unnest(source_refs) AS cited(ref) "
+            f"WHERE NOT ({visible_ref('cited.ref')}) OR EXISTS (SELECT 1 FROM brain.atoms a "
+            f"WHERE cited.ref = 'atom:' || a.atom_id AND NOT ({visible_atom('a.source_ref')})))")
+
+
 def listing(conn, agent_id: str, status: str | None, phase: str | None) -> list[dict]:
     cur = conn.execute(
-        f"SELECT {', '.join(_COLUMNS)} FROM brain.proposals WHERE agent_id = %s "
+        f"SELECT {', '.join(_COLUMNS)} FROM brain.proposals WHERE agent_id = %s AND {_visible_sources()} "
         "AND (%s::text IS NULL OR status = %s) AND (%s::text IS NULL OR phase = %s) ORDER BY proposal_id",
         (agent_id, status, status, phase, phase))
     return [dict(zip(_COLUMNS, row)) for row in cur.fetchall()]
@@ -48,7 +55,8 @@ def decide(conn, agent_id: str, proposal_id: int, *, accept: bool, by: str, conf
     """Record the decision in one transaction with what applying it changes; returns the new status."""
     with conn.transaction():
         row = conn.execute("SELECT kind, payload, grade, status FROM brain.proposals "
-                           "WHERE proposal_id = %s AND agent_id = %s FOR UPDATE", (proposal_id, agent_id)).fetchone()
+                           f"WHERE proposal_id = %s AND agent_id = %s AND {_visible_sources()} FOR UPDATE",
+                           (proposal_id, agent_id)).fetchone()
         if row is None:
             raise DreamError(f"no proposal #{proposal_id} for agent {agent_id}")
         kind, payload, grade, status = row
