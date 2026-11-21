@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 import subprocess
 import uuid
@@ -201,7 +200,10 @@ def _composio(tool, params, account):
     if account:
         args.extend(["--account", account])
     # CLI execute otherwise writes responses over 40 KB to an artifact and prints a file pointer.
-    env = {**os.environ, "COMPOSIO_CLI_INVOCATION_ORIGIN": "run", "COMPOSIO_CLI_TELEMETRY_DISABLED": "1"}
+    from tools.environments.local import hermes_subprocess_env
+
+    env = hermes_subprocess_env(inherit_credentials=True)
+    env.update(COMPOSIO_CLI_INVOCATION_ORIGIN="run", COMPOSIO_CLI_TELEMETRY_DISABLED="1")
     try:
         result = subprocess.run(args, stdin=subprocess.DEVNULL, capture_output=True,
                                 timeout=30, check=False, env=env)

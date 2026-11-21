@@ -229,3 +229,29 @@ def test_rebuilt_session_prompt_and_notes_are_byte_identical_after_collection_an
         prompt, notes = snapshot()
         assert notes == before[1]
         assert prompt == before[0]
+
+
+def test_proposals_keep_hiding_with_their_source_after_the_atoms_are_rebuilt(session):
+    from collections import Counter
+
+    from hermes_cli.brain.dream.cycle import _write
+    from hermes_cli.brain.dream.phases import Atoms, Proposal
+    from hermes_cli.brain.dream.proposals import listing
+
+    _, _, home = session
+    refs = seed(home)
+    claims = tuple((f"derived {CANARY[kind]}", "external", refs[kind]) for kind in LINK)
+    with owner_connection() as conn:
+        conn.autocommit = True
+        _write(conn, [Atoms("finch", claims)], "atoms", "agent", 1, Counter(), [])
+        ids = {ref: atom_id for atom_id, ref in conn.execute("SELECT atom_id, source_ref FROM brain.atoms")}
+        proposals = [Proposal("new_page", kind, {"type": "concept"}, "external", (f"atom:{ids[refs[kind]]}",), kind)
+                     for kind in LINK]
+        _write(conn, proposals, "concepts", "agent", 1, Counter(), [])
+        _write(conn, [Atoms("finch", claims)], "atoms", "agent", 2, Counter(), [])
+        assert not set(ids.values()) & {row[0] for row in conn.execute("SELECT atom_id FROM brain.atoms")}
+        assert {row["target"] for row in listing(conn, "agent", None, None)} == set(LINK)
+        for platform, other in (("mail", "slack"), ("slack", "mail")):
+            switch(home, platform, False)
+            assert {row["target"] for row in listing(conn, "agent", None, None)} == {other}
+            switch(home, platform, True)
