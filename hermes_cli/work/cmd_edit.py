@@ -144,8 +144,9 @@ def cmd_edit(a) -> None:
             r["basis"] = bases
         _guards(r, a)
         _plain(r, a)
-        if a.repo is not None:
-            ledger.set_repo(r, a.repo)
+        repo = getattr(a, "repo", None)
+        if repo is not None:
+            ledger.set_repo(r, repo)
         _due_projects(r, a)
         _owner_change(r, a)
         _decide(r, a, answered)
