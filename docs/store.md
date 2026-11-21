@@ -172,6 +172,42 @@ On Git 2.53.0 over `file://`, a full clone of a README and a 1,000,000,000-byte 
 stored 2,840 object bytes and checked out the 24-byte README. Adding `audio/` took 18.95 s and
 restored the master with its original SHA-256. These are single-run local times.
 
+### Files API
+
+The dashboard's authenticated `/api/lina/files` API serves registered repositories.
+Use `GET /areas`, then `GET /areas/{area}/repos`. `GET /inbox` lists registered
+repositories whose slug is `inbox`, across areas. Each repository row includes
+`area_id` and `name`. Use these as `{area}/{repo}` in the routes below.
+
+| Method and repository route | Request | Result |
+|---|---|---|
+| `GET tree` | `path` (default root), optional `rev` | `commit` and immediate `entries` with `name` and `type`. An empty repository has a null commit. |
+| `GET blob` | `path`, optional `rev` | Exact file bytes and the `X-Git-Commit` header. The server fetches the selected blob in full. |
+| `GET preview` | `path`, `limit` (1–1,048,576 bytes) | Prefix of the file exported at HEAD and `X-Git-Commit`. A truncated response is `206` with `Content-Range` giving the full exported size. A complete response is `200`. |
+| `GET history` | `path` | `commits` for that path, newest first, with `commit`, `author`, `date` and `subject`. |
+| `GET diff` | `path`, `old`, `new` | Plain-text Git patch. Binary changes use Git's binary-file summary. |
+| `POST save` | JSON `path`, `base`, `content`, optional `encoding` (`utf-8` or `base64`) | New `commit`, authored by the signed-in dashboard owner's configured display name. |
+| `POST restore` | JSON `path`, `base`, `source` | New `commit` with the saved bytes and file mode from `source`. Its parent is `base`. |
+| `GET context` | `path` | Matching `artifacts` with run, task, goal, path, commit and `kind` (`draft` or `final`), plus lists of matching work IDs. |
+| `POST artifacts/{id}` | JSON `path`, `commit` | Binds an existing result to a verified regular file at its recorded path. An identical retry returns the same `artifact`. A conflicting binding returns `409`. |
+
+Use full commit IDs from the default branch for revisions. For a write, send the
+last observed branch tip in `base`, or `null` for the first commit in an empty
+repository. A stale base or a concurrent update returns `409`. Reload before saving
+again. Git reads and writes use a bare partial clone and require filter support.
+
+On POSIX hosts, preview uses the forge's `git-upload-archive` service and closes the
+stream after the requested prefix. Git export attributes apply, so `export-ignore`
+hides a file and `export-subst` may change its bytes and size. The route accepts
+literal UTF-8 paths without archive wildcard syntax. An unavailable archive service
+returns an error without requesting the full blob. Use `blob` for the exact bytes
+at a specific commit.
+
+For the reverse lookup, `GET /api/lina/files/artifacts?item={id}` accepts a run,
+task or goal ID. Rows created by the Desk worker can have null `repo` and `commit`.
+An explicit binding makes the same result available through the file's `context`
+route. The owner accepts drafts through the existing work artifact workflow.
+
 ## Messages (`memory.messages`)
 
 Every message is one row in `memory.messages`, the one copy every engine reads. `hermes_state_store.py`
