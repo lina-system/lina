@@ -45,3 +45,10 @@ def build_desk_parser(subparsers) -> None:
     p_show = sub.add_parser("show", help="Show the Desk path and folders")
     p_show.add_argument("--json", action="store_true", help="Print the Desk as JSON")
     parser.set_defaults(func=cmd_desk, desk_action="show")
+    from hermes_cli.desk_reports import cmd_desk_report
+
+    register = sub.add_parser("register", help="Register or refresh a Desk markdown report and print its page")
+    register.add_argument("path", help="Markdown under 1_Goals or 2_Areas on the configured Desk")
+    register.set_defaults(func=cmd_desk_report)
+    sync = sub.add_parser("sync-reports", help="Sync registered Desk reports once")
+    sync.set_defaults(func=cmd_desk_report)
