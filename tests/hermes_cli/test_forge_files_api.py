@@ -116,6 +116,12 @@ def test_lists_work_areas(client: TestClient) -> None:
     assert [(row["id"], row["title"]) for row in response.json()["areas"]] == [("A1", "Dev")]
 
 
+def test_sqlite_file_context_reports_brain_unavailable(client: TestClient, remote: Path) -> None:
+    response = client.get(f"{ALBUM}/context", params={"path": NOTE})
+    assert response.status_code == 200, response.text
+    assert response.json()["brain"] == {"available": False, "pages": []}
+
+
 @pytest.mark.parametrize(("path", "expected"), [
     ("/areas/A1/repos", [(REPO, "album")]),
     ("/inbox", []),

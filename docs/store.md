@@ -213,8 +213,16 @@ repositories whose slug is `inbox`, across areas. Each repository row includes
 | `GET diff` | `path`, `old`, `new` | Plain-text Git patch. Binary changes use Git's binary-file summary. |
 | `POST save` | JSON `path`, `base`, `content`, optional `encoding` (`utf-8` or `base64`) | New `commit`, authored by the signed-in dashboard owner's configured display name. |
 | `POST restore` | JSON `path`, `base`, `source` | New `commit` with the saved bytes and file mode from `source`. Its parent is `base`. |
-| `GET context` | `path` | Matching `artifacts` with run, task, goal, path, commit and `kind` (`draft` or `final`), plus lists of matching work IDs. |
+| `GET context` | `path` | 파일과 연결된 `artifacts`(실행, 작업, 목표, 경로, 커밋, `kind`가 `draft` 또는 `final`), `runs`, `tasks`, `goals` ID 목록과 파일을 인용한 Brain 페이지(`brain`). |
 | `POST artifacts/{id}` | JSON `path`, `commit` | Binds an existing result to a verified regular file at its recorded path. An identical retry returns the same `artifact`. A conflicting binding returns `409`. |
+
+`GET context`의 `brain.pages`에는 조회할 수 있는 타임라인 인용이 줄마다 한 항목씩 담긴다.
+각 항목의 `slug`, `title`, `path`는 Brain 페이지의 식별자, 제목, 파일 경로이고, `line`, `date`, `grade`는
+인용 줄의 번호, 날짜, 신뢰 등급이다. 날짜가 없으면 `date`는 `null`이다. `commit`은 인용에 적힌 커밋 SHA이며 생략하면 `null`이다.
+최신 날짜부터 나열하고 날짜가 없는 줄은 마지막에 둔다. 날짜가 같으면 `slug`, `line` 오름차순으로 정렬한다.
+인용이 50개를 넘으면 앞의 50개와 `brain.truncated: true`를 반환한다.
+PostgreSQL에서 조회했으나 인용이 없으면 `brain`은 `{"available": true, "pages": []}`이다.
+작업 카탈로그가 SQLite이거나 Brain을 읽을 수 없으면 `{"available": false, "pages": []}`이다.
 
 Use full commit IDs from the default branch for revisions. For a write, send the
 last observed branch tip in `base`, or `null` for the first commit in an empty

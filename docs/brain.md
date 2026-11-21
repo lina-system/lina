@@ -58,6 +58,11 @@ One summary paragraph, then what is known now. Rewritten when new information ar
   the `promote` phase proposes an `external` entry for compiled truth once it is confirmed (External messages,
   below).
 
+타임라인에서 저장소 파일을 인용할 때는 `source_ref`에 `repo:<repo_id>:<path>`를 쓴다.
+`<repo_id>`는 작업 카탈로그에 등록된 저장소 ID(`영역/이름`)이고, `<path>`는 저장소 루트 기준 상대 경로다.
+예를 들어 `repo:A1/album:docs/a.md`는 파일을, `repo:A1/album:docs/a.md@abc1234`는 해당 커밋의 파일을 가리킨다.
+파일에서 인용을 조회할 때는 저장소 ID와 경로로 만든 키 전체를 비교하므로 경로 안의 `:`와 `@`도 파일 이름의 일부로 취급한다.
+
 The parser is lossless: every byte of a file lands in exactly one part, and `render(parse(text)) == text` holds for
 any file, hand-written or not. The importer never needs to rewrite a file, and it never does.
 

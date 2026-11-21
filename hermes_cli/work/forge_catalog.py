@@ -5,12 +5,14 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Iterator
 from contextlib import closing, contextmanager
-from typing import TypedDict
+from typing import Final, NotRequired, TypedDict
 
+import hermes_state_source_visibility as visibility
 from hermes_cli.config_backend import ConfigBackendUnavailable
 from hermes_cli.work import artifacts, env, ledger, store, store_pg, store_sqlite
 
 _Db = store_pg.PgDb | store_sqlite.SqliteDb
+_BRAIN_LIMIT: Final = 50
 
 
 class CatalogError(RuntimeError):
@@ -62,6 +64,22 @@ class _Binding(TypedDict):
     artifact: _Artifact
 
 
+class _Citation(TypedDict):
+    slug: str
+    title: str
+    path: str
+    line: int
+    date: str | None
+    grade: str
+    commit: str | None
+
+
+class _Brain(TypedDict):
+    available: bool
+    pages: list[_Citation]
+    truncated: NotRequired[bool]
+
+
 class _Context(_Artifacts):
     area: str
     repo: str
@@ -69,6 +87,7 @@ class _Context(_Artifacts):
     runs: list[str]
     tasks: list[str]
     goals: list[str]
+    brain: _Brain
 
 
 @contextmanager
@@ -136,6 +155,33 @@ def inbox() -> _Repos:
                       for repo_id, area_id, name in rows]}
 
 
+def _brain_citations(db: _Db, key: str) -> _Brain:
+    if not isinstance(db, store_pg.PgDb):
+        return {"available": False, "pages": []}
+
+    try:
+        rows = db.execute(
+            "SELECT p.slug, p.title, t.path, t.line, t.entry_date, t.grade, t.source_ref "
+            "FROM brain.timeline t JOIN brain.pages p ON p.slug = t.page_slug "
+            "WHERE (t.source_ref = ? OR starts_with(t.source_ref, ?)) "
+            f"AND {visibility.visible_ref('t.source_ref')} "
+            "ORDER BY t.entry_date DESC NULLS LAST, p.slug, t.line LIMIT ?",
+            (key, key + "@", _BRAIN_LIMIT + 1),
+        ).fetchall()
+    except (store_pg.PgError, ConfigBackendUnavailable):
+        return {"available": False, "pages": []}
+
+    brain: _Brain = {"available": True, "pages": [
+        {"slug": str(slug), "title": str(title), "path": str(path), "line": int(str(line)),
+         "date": str(dated) if dated is not None else None, "grade": str(grade),
+         "commit": str(ref)[len(key) + 1:] or None}
+        for slug, title, path, line, dated, grade, ref in rows[:_BRAIN_LIMIT]
+    ]}
+    if len(rows) > _BRAIN_LIMIT:
+        brain["truncated"] = True
+    return brain
+
+
 def context(area: str, repo: str, path: str) -> _Context:
     """Find recorded work for this exact repository and file path."""
     _require_key(path)
@@ -143,7 +189,8 @@ def context(area: str, repo: str, path: str) -> _Context:
         repo_id, _ = _registered(db, area, repo)
         rows = db.execute(artifacts._SELECT + " WHERE repo = ? AND path = ? ORDER BY id", (repo_id, path)).fetchall()
         found: list[_Artifact] = [artifacts.served(row) for row in rows]
-    return {"area": area, "repo": repo_id, "path": path, "artifacts": found,
+        brain = _brain_citations(db, f"repo:{repo_id}:{path}")
+    return {"area": area, "repo": repo_id, "path": path, "artifacts": found, "brain": brain,
             "runs": list(dict.fromkeys(row["run"] for row in found)),
             "tasks": list(dict.fromkeys(row["task"] for row in found if row["task"] is not None)),
             "goals": list(dict.fromkeys(row["goal"] for row in found if row["goal"] is not None))}
