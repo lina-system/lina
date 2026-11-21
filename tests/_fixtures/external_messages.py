@@ -6,6 +6,19 @@ import socket
 import pytest
 
 
+def _httpx_init_requires_transport(client, refused):
+    """An httpx client built with an injected transport (Starlette's TestClient passes its in-process
+    ASGI transport) cannot reach a messenger; the socket guards below still refuse a real connection."""
+    original = client.__init__
+
+    def guarded(self, *args, **kwargs):
+        if kwargs.get("transport") is None and kwargs.get("app") is None:
+            refused()
+        return original(self, *args, **kwargs)
+
+    return guarded
+
+
 @pytest.fixture(autouse=True)
 def _offline_external_messages(request):
     if request.path.stem.startswith("test_external_messages"):
@@ -36,7 +49,11 @@ def offline_messenger_clients(monkeypatch):
                 continue
             raise
         for name in clients:
-            monkeypatch.setattr(getattr(sdk, name), "__init__", refused)
+            if module == "httpx":
+                guarded = _httpx_init_requires_transport(getattr(sdk, name), refused)
+            else:
+                guarded = refused
+            monkeypatch.setattr(getattr(sdk, name), "__init__", guarded)
 
     for name in ("getaddrinfo", "gethostbyname", "gethostbyname_ex", "gethostbyaddr"):
         monkeypatch.setattr(socket, name, refused)

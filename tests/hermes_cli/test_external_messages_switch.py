@@ -28,6 +28,14 @@ def test_collector_cannot_construct_uninjected_http_session(monkeypatch):
             pass
 
 
+def test_in_process_http_client_with_injected_transport_is_allowed():
+    import httpx
+
+    # Starlette's TestClient builds its client this way; only a client with no injected transport is refused.
+    with httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(200))) as client:
+        assert client.get("http://offline.invalid/").status_code == 200
+
+
 def _parse(*words):
     parser = argparse.ArgumentParser()
     build_memory_parser(parser.add_subparsers(), cmd_memory=cmd_memory)
