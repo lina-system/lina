@@ -31,12 +31,17 @@ def read_rule_lines(agent: Any) -> tuple[str, ...]:
     places = []
     if gateway:
         places.append(f"channel:{gateway}")
-    if db is not None and sid:
+    # A managed worker's RuntimeSessionStore offers neither the goal registry nor the owner's message
+    # store (its reads are a closed set). Such a store has no goal place, and the rules come from the
+    # agent's own handle, as for an agent without a session_db.
+    get_meta = getattr(db, "get_meta", None)
+    if get_meta is not None and sid:
         from hermes_cli.goals import GoalState, _meta_key
-        goal = db.get_meta(_meta_key(sid))
+        goal = get_meta(_meta_key(sid))
         if goal and GoalState.from_json(goal).status in ("active", "paused"):
             places.append(f"goal:{sid}")
-    store = (nullcontext(db.message_store) if db is not None else
+    owned = getattr(db, "message_store", None)
+    store = (nullcontext(owned) if owned is not None else
              closing(MessageStore(agent_id_for((_agent_home(agent) or get_hermes_home()) / "state.db"))))
     with store as reader:
         rows = reader.standing_rules(sid, gateway, places)

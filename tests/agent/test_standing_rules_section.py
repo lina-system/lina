@@ -92,3 +92,27 @@ def test_persisted_rules_survive_resume_and_failed_read_until_successful_compact
         invalidate_system_prompt(resumed)
         refreshed = build_system_prompt(resumed)
         assert new in refreshed and old not in refreshed
+
+
+def test_session_store_without_goal_registry_or_message_store_reads_rules_from_own_handle(monkeypatch, tmp_path):
+    """A managed worker's RuntimeSessionStore has no get_meta or message_store (see the surface parity test)."""
+    import hermes_state_store
+    from agent import standing_rules_section as rules
+
+    seen = {}
+
+    class Reader:
+        def __init__(self, agent_id):
+            seen["agent_id"] = agent_id
+
+        def standing_rules(self, session_id, gateway_key, places):
+            seen["places"] = places
+            return [("all", None, "2026-01-01", "Show both units.")]
+
+        def close(self):
+            seen["closed"] = True
+
+    monkeypatch.setattr(hermes_state_store, "MessageStore", Reader)
+    agent = SimpleNamespace(_session_db=object(), session_id="s1", _gateway_session_key="g1", _agent_home=tmp_path)
+    assert rules.read_rule_lines(agent) == ("- all (2026-01-01): Show both units.",)
+    assert seen["places"] == ["channel:g1"] and seen["closed"]
