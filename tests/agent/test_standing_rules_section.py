@@ -133,3 +133,24 @@ def test_modes_without_the_api_content_sidecar_never_get_a_rules_notice(monkeypa
     agent = SimpleNamespace(_cached_system_prompt="You are helpful.", provider="anthropic", api_mode="chat_completions")
     restore_plugin_prompt_sections(agent, agent._cached_system_prompt)
     assert line in rules.standing_rules_note(agent, [])
+
+
+def test_each_notice_supersedes_an_earlier_update_for_a_rule_that_was_never_frozen(monkeypatch):
+    from agent import standing_rules_section as rules
+
+    first_rule, second_rule = ("- agent (2026-01-01): " + text for text in ("Use bullets.", "Use prose."))
+    lines = []
+    monkeypatch.setattr(rules, "read_rule_lines", lambda agent: tuple(lines))
+    frozen = (rules.RenderedPluginSystemPromptSection(
+        id=rules.SECTION_ID, content=rules.BOUNDARY, position="after_memory", plugin="core"),)
+    agent = SimpleNamespace(_plugin_system_prompt_sections_snapshot=frozen)
+
+    lines[:] = [first_rule]
+    first = rules.standing_rules_note(agent, [])
+    history = [{"role": "user", "api_content": first}]
+    lines[:] = [second_rule]
+    second = rules.standing_rules_note(agent, history)
+    # The first rule is in no frozen section, so the second notice cannot list it as ended. It must say
+    # that it replaces every earlier update still sitting in the replay history.
+    assert second_rule in second and first_rule not in second
+    assert "replaces every earlier standing rules update" in second

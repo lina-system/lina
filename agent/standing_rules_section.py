@@ -90,7 +90,9 @@ def standing_rules_note(agent: Any, history: list) -> str:
     baseline = tuple(line for line in frozen.splitlines()[1:] if not line.startswith(_OVERFLOW))
     # Tie the last announcement to its frame so an older notice cannot undo a successful compaction.
     frame = hashlib.sha256(frozen.encode()).hexdigest()[:16]
-    prefix = f"[System: Standing rules update for frozen section {frame}.\n"
+    # A rule announced earlier but absent from the frozen section cannot be listed as ended, so every
+    # notice says that it replaces the earlier ones still sitting in the replay history.
+    prefix = f"[System: Standing rules update for frozen section {frame}. It replaces every earlier standing rules update.\n"
     previous = ""
     for row in reversed(history):
         if row.get("role") == "user":
