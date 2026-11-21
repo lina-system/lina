@@ -57,6 +57,7 @@ class LinaMemoryProvider(MemoryProvider):
         self._init: dict[str, Any] = {}
         self._worker = None
         self._session_id = ""
+        self._copy_rule_offer: standing_rules.copy_rules.Offer | None = None
         self._search: Optional[search.MemorySearch] = None
         self._embedding = None
         self._brain = None
@@ -418,7 +419,8 @@ class LinaMemoryProvider(MemoryProvider):
 
     def get_tool_schemas(self) -> list[dict[str, Any]]:
         honcho = self._honcho.get_tool_schemas() if self._honcho.is_available() else []
-        return [*honcho, *search.SCHEMAS, links.LINK_SCHEMA, terms.TERMS_SCHEMA, personal.MARK_SCHEMA, standing_rules.SCHEMA]
+        return [*honcho, *search.SCHEMAS, links.LINK_SCHEMA, terms.TERMS_SCHEMA, personal.MARK_SCHEMA,
+                standing_rules.schema(self._home)]
 
     def handle_tool_call(self, tool_name: str, args: dict[str, Any], **kwargs) -> str:
         if tool_name == standing_rules.TOOL:

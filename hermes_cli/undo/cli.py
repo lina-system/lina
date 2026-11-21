@@ -55,7 +55,8 @@ def execute(args: argparse.Namespace) -> int:
             "apply": lambda: apply(store, load(store), args.change_id),
             "last": lambda: display(store, args),
             "show": lambda: display(store, args),
-            "snapshot": lambda: (snapshot.dry_run if args.dry_run else snapshot.run)(store, load(store)),
+            "snapshot": lambda: (snapshot.targeted(store, args.path, dry_run=args.dry_run) if args.path
+                                 else (snapshot.dry_run if args.dry_run else snapshot.run)(store, load(store))),
         }
         handlers[args.undo_command]()
         return 0

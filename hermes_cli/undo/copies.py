@@ -31,8 +31,8 @@ class Copy:
 def manager(store: Store) -> Iterator:
     from tools.checkpoint_manager import CheckpointManager
 
-    token = set_hermes_home_override(store.base)
     private_dir(store.base / "checkpoints")
+    token = set_hermes_home_override(store.base)
     previous_mask = os.umask(0o077)
     try:
         yield CheckpointManager(enabled=True, max_file_size_mb=0)

@@ -3508,6 +3508,7 @@ display:
       user: "Kullanıcı profili"
     summary_cli: "  💾 Kendini geliştirme incelemesi: {summary}"
     summary_callback: "💾 Kendini geliştirme incelemesi: {summary}"
+    rule_proposal: "“{proposal}” kalıcı bir kural olsun mu? Öyleyse talimatı bu sohbette kendi sözlerinizle yazın."
     aux_failure_label: "arka plan incelemesi"
   notice:
     uncompressed_context_overflow: "⚠️ Oturum bağlamı (~{tokens} token) sıkıştırma devre dışıyken (compression.enabled: false) modelin bağlam penceresini (~{context_length} token) aşıyor. Geçmişi sıkıştırmak için /compact kullanın veya config.yaml içinde sıkıştırmayı etkinleştirin."
