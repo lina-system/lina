@@ -1516,6 +1516,18 @@ def _omitted_headings(content: str, start: int, end: int, limit: int = 15) -> li
     return headings[:limit] + (["..."] if len(headings) > limit else [])
 
 
+def _soul_is_user_authored(home: Path) -> bool:
+    """A distribution owns the whole payload unless it lists individual files."""
+    from hermes_cli.profile_distribution import read_manifest
+
+    try:
+        manifest = read_manifest(home)
+        return manifest is None or (bool(manifest.distribution_owned) and "SOUL.md" not in manifest.distribution_owned)
+    except Exception as exc:  # An unreadable distribution manifest must still fail closed.
+        logger.debug("Could not read distribution manifest in %s: %s", home, exc)
+        return False
+
+
 def load_soul_md(context_length: Optional[int] = None, home_override: Path | None = None) -> Optional[str]:
     """SOUL.md from HERMES_HOME (identity slot #1), or None.
 
@@ -1548,18 +1560,7 @@ def load_soul_md(context_length: Optional[int] = None, home_override: Path | Non
             content = strip_legacy_protocol(content).strip()
         if not content:
             return None
-        # `hermes profile install <git-url>` / `profile update` plant a third-party SOUL.md into a
-        # distribution profile (hermes_cli/profile_distribution.py, DEFAULT_DIST_OWNED) with no scan and no
-        # approval gate, so it is NOT the user's own file: when distribution.yaml owns SOUL.md (a manifest
-        # with no `distribution_owned` list owns the whole payload) a scanner hit keeps BLOCKING.
-        from hermes_cli.profile_distribution import read_manifest
-        try:
-            manifest = read_manifest(soul_path.parent)
-            user_authored = manifest is None or (bool(manifest.distribution_owned)
-                                                 and "SOUL.md" not in manifest.distribution_owned)
-        except Exception as e:  # unparseable manifest is still a distribution: fail closed
-            logger.debug("Could not read distribution manifest next to %s: %s", soul_path, e)
-            user_authored = False
+        user_authored = _soul_is_user_authored(soul_path.parent)
         return _truncate_content(_scan_context_content(content, "SOUL.md", user_authored=user_authored), "SOUL.md",
                                  context_length=context_length, read_path=str(soul_path))
     except Exception as e:
@@ -1603,7 +1604,7 @@ def load_common_persona(context_length: int | None = None, home_override: Path |
     content = _render_common_persona(data, profile)
     if not content:
         return None
-    scanned = _scan_context_content(content, path.name)
+    scanned = _scan_context_content(content, path.name, user_authored=_soul_is_user_authored(home))
     # The context scanner drops a leading BOM, but it belongs to the raw unit.
     if scanned == content.removeprefix("\ufeff"):
         scanned = content
