@@ -38,7 +38,6 @@ _HERMES_CORE_TOOLS = CoreTools([
     "manage_connections",
     # Long reports as a record and a live page (lina#263); check_fn hides it where no store is set up.
     "report",
-    "repo_create",
 ])
 
 # Webhook payloads are untrusted third-party content: no file/system execution.
