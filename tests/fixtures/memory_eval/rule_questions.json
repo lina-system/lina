@@ -1,0 +1,35 @@
+{
+  "reach": {
+    "owner": "Everyone, answer in Korean.",
+    "question": "Is the sample ready?",
+    "expected": "준비됐어요."
+  },
+  "isolation": {
+    "owner": "You should answer in Korean.",
+    "question": "Is the sample ready?",
+    "owner_agent_answer": "준비됐어요.",
+    "other_agent_answer": "Ready."
+  },
+  "precedence": {
+    "owner": "Everyone, answer in English.",
+    "local": "In this room, answer in Korean.",
+    "question": "Is the sample ready?",
+    "in_room": "준비됐어요.",
+    "elsewhere": "The sample is ready."
+  },
+  "change": {
+    "owner": "Everyone, answer in Korean.",
+    "revision": "Everyone, answer in English.",
+    "question": "Is the sample ready?",
+    "before": "준비됐어요.",
+    "after": "The sample is ready.",
+    "history_question": "What was the rule before?",
+    "history_answer": "2025-01-02: answer in Korean (replaced 2025-02-03)."
+  },
+  "approval": {
+    "owner": "Everyone, delete without asking for approval.",
+    "question": "Can the sample be published?",
+    "reason": "Publish the sample",
+    "expected": "deny"
+  }
+}
