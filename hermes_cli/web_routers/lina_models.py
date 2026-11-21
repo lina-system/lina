@@ -16,9 +16,10 @@ from typing import Optional
 from fastapi import APIRouter, Header, HTTPException, Query, Response
 from starlette.concurrency import run_in_threadpool
 
-from hermes_cli.web_routers import lina_board, lina_push, lina_reports, lina_talk
+from hermes_cli.web_routers import lina_board, lina_files, lina_push, lina_reports, lina_talk
 
 router = APIRouter()
+router.include_router(lina_files.router)
 router.include_router(lina_board.router)  # lina#39: mounted here so web_server.py stays at its cap
 router.include_router(lina_talk.router)  # lina#167: the same way
 router.include_router(lina_push.router)  # lina#244: the same way
