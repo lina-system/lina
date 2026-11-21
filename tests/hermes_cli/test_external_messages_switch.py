@@ -17,6 +17,17 @@ from tests.hermes_cli.test_external_messages import event, message
 from utils import atomic_roundtrip_yaml_update
 
 
+def test_collector_cannot_construct_uninjected_http_session(monkeypatch):
+    import httpx
+
+    # MockTransport cannot open sockets, even if the collector guard regresses.
+    transport = httpx.MockTransport(lambda _: httpx.Response(200))
+    monkeypatch.setattr(httpx.Client, "_init_transport", lambda *args, **kwargs: transport)
+    with pytest.raises(RuntimeError, match="inject a fake messenger"):
+        with httpx.Client(trust_env=False):
+            pass
+
+
 def _parse(*words):
     parser = argparse.ArgumentParser()
     build_memory_parser(parser.add_subparsers(), cmd_memory=cmd_memory)

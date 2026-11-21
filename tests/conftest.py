@@ -263,6 +263,7 @@ from tests._fixtures.live_system_guard import (
     _LIVE_SYSTEM_GUARD_BYPASS_MARK,
     _live_system_guard,
 )
+from tests._fixtures.external_messages import _offline_external_messages, offline_messenger_clients
 from tests._fixtures.memory_store import PROCESS_STORE, _memory_store, memory_store_sql, skip_if_store_unavailable
 from tests._fixtures.model_peer import model_peer  # fixture registers here
 from tests._fixtures.platform_gating import _platforms_gate_reason, _reject_contradictory_platform_marks
