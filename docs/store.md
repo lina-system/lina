@@ -86,6 +86,31 @@ The migration also gives that owner to such vectors written before it with the o
 Migration 0016 adds the owner's word list ([korean.md](korean.md)): `memory.word_list` has no `agent_id`, a
 SELECT-only policy lets every agent read it, and `lina_app`'s write grants on it are revoked; only the owner (`lina`)
 and `lina_refiner` write it. Its sentence pairs, `memory.word_pairs`, have no `lina_app` grant at all.
+
+## Standing rules
+
+`memory.standing_rules` keeps one row per `(rule_id, version)`. A `conduct` rule records how to work. A `filter`
+rule also carries a JSON object `filter_match` and a `filtered_count` starting at zero. Forced row-level security
+lets `lina_app` read versions for `agent:<profile>` matching its `lina.agent_id` and shared versions owned by `*`.
+Scope `all` uses `*`, scope `agent` uses an agent identity, and scope `place` adds a `channel:`, `source:` or
+`goal:` reference to either owner. The store owner `lina` can inspect the full history.
+
+Agents have SELECT on the table. Their only write grant is EXECUTE on
+`memory.record_standing_rule(rule_id, source_uid, kind, scope, agent_id, place_ref, statement, status, cites, filter_match)`.
+The last three arguments default to `active`, an empty UID array and SQL NULL. The function returns the new
+version number. It derives `recorded_by` from the calling session and `said_at` from the cited turn. The source
+must be a retained `memory.messages` user turn in a session of the recording agent, with speaker and grade both
+`owner`. A gateway note has its own `note:` reference. Earlier citations must belong to the caller and have
+owner or agent grade. Every rule version, including a tombstone, has grade `owner`.
+
+Writers serialize on the rule ID. Recording a new active version or ending an active rule marks its predecessor
+`replaced` with the successor's version and date in the same transaction. A partial unique index permits one active
+version. Text, scope and source are immutable. An `ended` version retains the history. For an explicit erasure
+the store owner sets `forgotten_at` on the latest version, the same marker used for messages. A trigger erases
+the rule's text, references, match and earlier versions in that transaction. The remaining `forgotten` row
+records the rule ID, date and `forgotten_by = 'owner'`. That ID cannot be reused. The SQL operation leaves
+the original conversation intact.
+
 ## Migrations
 
 Honcho migrates `ltm` itself. Schemas `memory`, `ctx` and `vec` belong to LINA: each
