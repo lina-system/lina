@@ -220,12 +220,35 @@ def _render_persona(lines: list[str], keep: set[int], removed: set[int]) -> str:
     return "".join(parts)
 
 
-def _render_common(lines: list[str], units: list[_Unit]) -> str:
+def _shared_headings(
+    lines_by_home: dict[str, list[str]], units_by_home: dict[str, list[_Unit]]
+) -> dict[str, set[int]]:
+    """Per home, the ancestor headings that the common file may carry.
+
+    A heading such as a persona's own title names one home; copied into the common
+    file it would make that file differ between homes. Only a heading that passes the
+    same membership test as a unit travels; every other heading stays in its persona.
+    """
+    seen: defaultdict[str, set[str]] = defaultdict(set)
+    by_home: dict[str, dict[int, str]] = {}
+    for home, units in units_by_home.items():
+        indexes = {i for unit in units for i in unit.headings}
+        by_home[home] = {i: " ".join(lines_by_home[home][i].split()) for i in indexes}
+        for text in by_home[home].values():
+            seen[text].add(home)
+    total = len(units_by_home)
+    return {
+        home: {i for i, text in heading_texts.items() if _membership(len(seen[text]), total) == "common"}
+        for home, heading_texts in by_home.items()
+    }
+
+
+def _render_common(lines: list[str], units: list[tuple[_Unit, tuple[int, ...]]]) -> str:
     parts: list[str] = []
     previous_headings: list[str] = []
-    for unit in units:
+    for unit, chain in units:
         text = unit.raw
-        headings = [lines[i] for i in unit.headings]
+        headings = [lines[i] for i in chain]
         if headings != previous_headings:
             text = "".join(headings) + text
             previous_headings = headings
@@ -275,8 +298,9 @@ def split_personas(sources: dict[str, str], drops: dict[str, str]) -> PersonaSpl
             "ledger_lines": 0,
         },
     )
+    shared_headings = _shared_headings(lines_by_home, units_by_home)
     for home, units in units_by_home.items():
-        common_units: list[_Unit] = []
+        common_units: list[tuple[_Unit, tuple[int, ...]]] = []
         keep = empty_sections[home]
         removed: set[int] = set()
         membership_counts: Counter[Membership] = Counter()
@@ -298,7 +322,9 @@ def split_personas(sources: dict[str, str], drops: dict[str, str]) -> PersonaSpl
                 row["reason"] = reason
             elif membership == "common":
                 row["disposition"] = "common"
-                common_units.append(unit)
+                chain = tuple(i for i in unit.headings if i in shared_headings[home])
+                keep.update(set(unit.headings) - set(chain))
+                common_units.append((unit, chain))
             else:
                 keep.update(unit.span)
                 keep.update(unit.headings)

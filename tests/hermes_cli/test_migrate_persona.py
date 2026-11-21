@@ -92,7 +92,7 @@ def migrated(tmp_path, monkeypatch, capsys):
 @pytest.mark.parametrize(("source", "full"), [("first", False), ("second", False), ("default", True)])
 def test_clone_keeps_migrated_persona(migrated, source, full):
     home = migrated if source == "default" else migrated / "profiles" / source
-    expected = f"# Rules\n## {source}\n- First rule\n\n- Next rule\n"
+    expected = "# Rules\n- First rule\n\n- Next rule\n"
     assert load_common_persona(home_override=home) == expected
     clone = create_profile("copy", clone_from=source, clone_all=full, no_alias=True)
 
@@ -105,7 +105,7 @@ def test_clone_keeps_migrated_persona(migrated, source, full):
 
 def test_renamed_profile_keeps_common_persona(migrated):
     renamed = rename_profile("first", "renamed")
-    assert load_common_persona(home_override=renamed) == "# Rules\n## first\n- First rule\n\n- Next rule\n"
+    assert load_common_persona(home_override=renamed) == "# Rules\n- First rule\n\n- Next rule\n"
 
 
 def test_recreated_profile_has_no_deleted_persona(migrated):
@@ -125,7 +125,7 @@ def test_export_import_preserves_persona_in_another_install(migrated, tmp_path, 
     monkeypatch.setenv("HERMES_HOME", str(destination))
     imported = import_profile(str(archive), "imported")
     assert (imported / "SOUL.md").read_bytes() == persona
-    assert load_common_persona(home_override=imported) == f"# Rules\n## {source}\n- First rule\n\n- Next rule\n"
+    assert load_common_persona(home_override=imported) == "# Rules\n- First rule\n\n- Next rule\n"
 
 
 def test_clone_without_shared_file_keeps_local_bytes(tmp_path, monkeypatch):

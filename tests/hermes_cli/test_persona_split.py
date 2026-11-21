@@ -49,7 +49,7 @@ def test_split_preserves_the_multiset_and_order_of_each_homes_units() -> None:
     result = split_personas(sources, {_sha("Retire the old sign."): "Owner retired it"})
 
     assert result.personas == {
-        "builder": f"# Orchard\r\n## Packing\r{private_list}## Schedule\n{partly}\n{extras}",
+        "builder": f"# Orchard\r\n## Routine\r\n## Packing\r{private_list}## Schedule\n{partly}\n{extras}",
         "operator": "\n" + partly,
         "planner": "\n" + partly,
         "auditor": "",
@@ -57,7 +57,7 @@ def test_split_preserves_the_multiset_and_order_of_each_homes_units() -> None:
         "empty": "",
     }
     assert result.common == {
-        "builder": "# Orchard\r\n## Routine\r\n" + shared + "\n" + second + "\n" + shared,
+        "builder": shared + "\n" + second + "\n" + shared,
         "operator": second + "\n" + shared,
         "planner": shared_variant + "\n" + second,
         "auditor": second + "\n" + shared,
@@ -90,12 +90,12 @@ def test_split_preserves_the_multiset_and_order_of_each_homes_units() -> None:
             if row["home"] != home:
                 continue
             positions = row.get("heading_lines", [])
+            headings.update((pos, source_lines[pos - 1]) for pos in positions)
             if row["disposition"] == "common":
                 common_heading_lines.update(positions)
             elif row["disposition"] == "persona":
                 personal_heading_lines.update(positions)
             else:
-                headings.update((pos, source_lines[pos - 1]) for pos in positions)
                 location = row["location"]
                 raw = "".join(source_lines[location["start_line"] - 1:location["end_line"]])
                 assert row["raw_sha256"] == _sha(raw)
@@ -103,8 +103,9 @@ def test_split_preserves_the_multiset_and_order_of_each_homes_units() -> None:
                 dropped_units.append(raw)
         personal_headings = [line for line in result.personas[home].splitlines(keepends=True) if line.startswith("#")]
         common_headings = [line for line in common_lines if line.startswith("#")]
-        headings.update(zip(sorted(common_heading_lines), common_headings, strict=True))
-        headings.update(zip(sorted(personal_heading_lines), personal_headings, strict=True))
+        # Every heading above a common or personal unit is written to one of the two files.
+        written = set(common_headings) | set(personal_headings)
+        assert {source_lines[pos - 1] for pos in common_heading_lines | personal_heading_lines} <= written
         original_headings = [line for line in source_lines if line.startswith("#")]
         assert Counter(persona_units + common_units + dropped_units + list(headings.values())) == Counter(
             original + original_headings
@@ -262,3 +263,27 @@ def test_removal_does_not_join_a_bare_cr_to_a_later_lf_separator() -> None:
     ]
     assert len(lines) == 3
     assert not lines[1].strip()
+
+
+def test_headings_naming_one_home_never_enter_the_common_file() -> None:
+    sources = {
+        name: f"# {name.title()}\n## Rules\n- Lock up\n- Log out\n## {name} only\n- Local {name}\n"
+        for name in ("one", "two", "three")
+    }
+
+    result = split_personas(sources, {})
+
+    assert len(set(result.common.values())) == 1
+    assert result.common["one"] == "## Rules\n- Lock up\n\n- Log out\n"
+    for name in sources:
+        assert result.personas[name] == f"# {name.title()}\n## {name} only\n- Local {name}\n"
+
+
+def test_a_home_title_with_only_common_units_stays_in_the_persona() -> None:
+    sources = {name: f"# {name}\n- Lock up\n" for name in ("one", "two", "three")}
+
+    result = split_personas(sources, {})
+
+    assert len(set(result.common.values())) == 1
+    assert result.common["one"] == "- Lock up\n"
+    assert result.personas == {name: f"# {name}\n" for name in sources}
