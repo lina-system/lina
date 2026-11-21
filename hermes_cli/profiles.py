@@ -1232,8 +1232,9 @@ def create_profile(
             if stripped:
                 logger.info("profile %s: cloned without messaging channels %s", canon, stripped)
         finish_profile_layout(staging, name=canon, no_skills=no_skills, clone_all=clone_all, description=description, soul=soul)
+        from hermes_cli.migrate_persona import clone_persona_membership
         from hermes_cli.store_gc import profile_lifecycle
-        with profile_lifecycle(profile_dir / "state.db"):
+        with profile_lifecycle(profile_dir / "state.db"), clone_persona_membership(source_dir, profile_dir):
             os.rename(staging, profile_dir)
     except BaseException:
         discard_unpublished_vault_key(clone_key)
