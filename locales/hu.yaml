@@ -3525,6 +3525,7 @@ display:
       user: "Felhasználói profil"
     summary_cli: "  💾 Önfejlesztési áttekintés: {summary}"
     summary_callback: "💾 Önfejlesztési áttekintés: {summary}"
+    rule_proposal: "Legyen a következő állandó szabály: „{proposal}”? Ha igen, fogalmazd meg az utasítást a saját szavaiddal ebben a beszélgetésben."
     aux_failure_label: "háttér-áttekintés"
   notice:
     uncompressed_context_overflow: "⚠️ A munkamenet kontextusa (~{tokens} token) meghaladja a modell kontextusablakát (~{context_length} token), miközben a tömörítés ki van kapcsolva (compression.enabled: false). Használd a /compact parancsot az előzmények tömörítéséhez, vagy kapcsold be a tömörítést a config.yaml fájlban."

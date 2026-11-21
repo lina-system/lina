@@ -58,8 +58,8 @@ def atomic(path: Path, data: bytes, *, mode: int = 0o600) -> None:
 
 
 class Store:
-    def __init__(self) -> None:
-        self.base = lina_root()
+    def __init__(self, base: Path | None = None) -> None:
+        self.base = lina_root() if base is None else base
         self.root = self.base / "undo"
 
     @contextmanager

@@ -364,14 +364,23 @@ def _digest_history(messages_snapshot: list[dict], tail: int = 24) -> list[dict]
 
 # Review prompts. AIAgent exposes them as class attributes (``_MEMORY_REVIEW_PROMPT`` etc.) so
 # per-agent overrides work; the text lives here.
+_RULE_PROPOSAL_PREFIX = "RULE_PROPOSAL: "
+_RULE_PROPOSAL_BLOCK = (
+    "\n\nIf the owner expressed an enduring expectation about how the agent should behave, "
+    "offer it for confirmation. Do not save it to USER.md, MEMORY.md, a skill, or a conclusion, "
+    "and do not record a rule from this review. A one-off request does not warrant a proposal. "
+    "After any unrelated fact or procedure updates, return just one line as your final response: "
+    f"{_RULE_PROPOSAL_PREFIX}<proposed instruction in the owner's language, at most 300 characters>. "
+    "The review notice will ask the owner to restate it in chat."
+)
+
 # Shared by the memory-only and combined review prompts: the memory tool has two targets and the
 # fork must pick one per fact. Without this the reviewer wrote profile data into MEMORY.md and the
 # same lesson into both stores until both hit their size limits (#30220).
 _MEMORY_ROUTING_BLOCK = (
     "TWO distinct stores — pick the right one for each fact:\n"
-    "  • USER.md (memory tool, target='user'): who the user is — persona, preferences, "
-    "communication and work style, personal details they revealed, and expectations about how you "
-    "should behave.\n"
+    "  • USER.md (memory tool, target='user'): facts about who the user is, including "
+    "personal details and likes or dislikes they stated.\n"
     "  • MEMORY.md (memory tool, target='memory'): facts about the ENVIRONMENT you operate in — "
     "tool quirks, project conventions, config gotchas, paths and endpoints that matter.\n\n"
     "One fact goes to ONE store, never both — writing it to both bloats both files until they hit "
@@ -382,9 +391,7 @@ _MEMORY_ROUTING_BLOCK = (
     # facts. Store-neutral on purpose: scoped to USER.md only, the same guess moved to MEMORY.md.
     "Save only facts GROUNDED in this conversation — a user message or tool result you can point "
     "to. Never infer the user's traits, skill level, role, mood or preferences from topic, tone or "
-    "tools used, and never turn a one-off request into a standing preference (in either store) "
-    "unless the user marked it general ('always', 'from now on', 'remember') or stated a standing "
-    "like/dislike ('I hate X', 'stop doing Y'). If unsure, leave it "
+    "tools used, and never turn a one-off request into a standing preference. If unsure, leave it "
     "out — a wrong fact misleads every future session.\n\n"
 )
 
@@ -392,7 +399,8 @@ _MEMORY_REVIEW_PROMPT = (
     "Review the conversation above and consider saving to memory if appropriate.\n\n"
     "Memory has " + _MEMORY_ROUTING_BLOCK +
     "If something stands out, save it once, in the right store, using the memory tool with the "
-    "matching target. If nothing is worth saving, just say 'Nothing to save.' and stop."
+    "matching target. If nothing is worth saving or proposing, say 'Nothing to save.' and stop."
+    + _RULE_PROPOSAL_BLOCK
 )
 
 # Shared shape contract for anything written into a skill. The failure mode this prevents is the
@@ -401,7 +409,7 @@ _MEMORY_REVIEW_PROMPT = (
 _LESSON_LAYER_BLOCK = (
     "What a skill IS: the instructions for doing a class of task the most efficient and correct "
     "way, to THIS user's specifications — the procedure, the tools and commands that work, the "
-    "order, the user's preferences for how the result should look, and the pitfalls that cost time. "
+    "order, the required output for the task, and the pitfalls that cost time. "
     "A future session should be able to follow it and produce what the user wants on the first "
     "try. Everything below is about writing that well:\n"
     "  • Procedure first: the steps in the order they are done, with the concrete commands, tool "
@@ -418,8 +426,8 @@ _LESSON_LAYER_BLOCK = (
     "  • Not a duplicate of what the environment already teaches: repo AGENTS.md files, tool schema "
     "descriptions, and other always-loaded context. A skill carries the WORKFLOW and the pitfalls; "
     "it does not restate the codebase map or a tool's parameter list.\n"
-    "  • Always-on rules (standing user preferences, gates that apply to every instance of the "
-    "task) live in SKILL.md itself, whole. references/ is for depth that is only needed sometimes: "
+    "  • Procedural steps that apply to every instance of the task live in SKILL.md itself. "
+    "references/ is for depth that is only needed sometimes: "
     "a decision table, a recipe, a domain note — each file topical and reusable, never "
     "'<date>-<incident>.md'. Prefer extending an existing references/ file over creating one; "
     "a skill with dozens of one-off references is the failure shape, not the goal.\n"
@@ -462,12 +470,7 @@ _SKILL_REVIEW_PROMPT = (
     "not an umbrella hoarding a references/ file per session. This shapes HOW you update, not "
     "WHETHER you update.\n\n" + _LESSON_LAYER_BLOCK +
     "Signals to look for (any one of these warrants action):\n"
-    "  • User corrected your style, tone, format, legibility, or verbosity. Frustration signals "
-    "like 'stop doing X', 'this is too verbose', 'don't format like this', 'why are you "
-    "explaining', 'just give me the answer', 'you always do Y and I hate it', or an explicit "
-    "'remember this' are FIRST-CLASS skill signals, not just memory signals. Update the relevant "
-    "skill(s) to embed the preference so the next session starts already knowing.\n"
-    "  • User corrected your workflow, approach, or sequence of steps. Encode the correction as a "
+    "  • The conversation uncovered an incorrect workflow or sequence of steps. Encode the correction as a "
     "pitfall or explicit step in the skill that governs that class of task.\n"
     "  • Non-trivial technique, fix, workaround, debugging path, or tool-usage pattern emerged "
     "that a future session would benefit from. Capture it.\n"
@@ -511,17 +514,12 @@ _SKILL_REVIEW_PROMPT = (
     "skill_view just returned. Creating a brand-new skill or adding a NEW supporting file needs no "
     "prior read. If a write is refused with a read-before-write error, call skill_view for the "
     "named target once and retry the write once; do not loop.\n\n"
-    "User-preference embedding (important): when the user expressed a style/format/workflow "
-    "preference, the update belongs in the SKILL.md body, not just in memory. Memory captures 'who "
-    "the user is and what the current situation and state of your operations are'; skills capture "
-    "'how to do this class of task for this user'. When they complain about how you handled a "
-    "task, the skill that governs that task needs to carry the lesson.\n\n"
     "If you notice two existing skills that overlap, note it in your reply — the background "
     "curator handles consolidation at scale. Never delete a skill here.\n\n"
     "Do NOT capture" + _DO_NOT_CAPTURE_BLOCK +
     "'Nothing to save.' is a real option but should NOT be the default. If the session ran "
     "smoothly with no corrections and produced no new technique, just say 'Nothing to save.' and "
-    "stop. Otherwise, act."
+    "stop. Otherwise, act." + _RULE_PROPOSAL_BLOCK
 )
 
 _COMBINED_REVIEW_PROMPT = (
@@ -534,10 +532,7 @@ _COMBINED_REVIEW_PROMPT = (
     "small `references/` set of topical depth — not narrow one-session skills, and not an umbrella "
     "hoarding a references/ file per session.\n\n" + _LESSON_LAYER_BLOCK +
     "Signals that warrant a skill update (any one is enough):\n"
-    "  • User corrected your style, tone, format, legibility, verbosity, or approach. Frustration "
-    "is a FIRST-CLASS skill signal, not just a memory signal. 'stop doing X', 'don't format like "
-    "this', 'I hate when you Y' — embed the lesson in the skill that governs that task so the next "
-    "session starts fixed.\n"
+    "  • A correction revealed an error in the task's procedure or output format.\n"
     "  • Non-trivial technique, fix, workaround, or debugging path emerged.\n"
     "  • A skill that was loaded or consulted turned out wrong, missing, or outdated — patch it "
     "now.\n\n"
@@ -562,18 +557,12 @@ _COMBINED_REVIEW_PROMPT = (
     "file. Content quoted earlier in the transcript does NOT count — base the write on what "
     "skill_view just returned. New skills and NEW supporting files need no prior read. On a "
     "read-before-write refusal: view the named target once, retry the write once, do not loop.\n\n"
-    "User-preference embedding: when the user complains about how you handled a task, update the "
-    "skill that governs that task rather than memory. Memory says 'who the user is and "
-    "what the current situation and state of your operations are'; skills say 'how to do this "
-    "class of task for this user'. A user-preference lesson lives in exactly ONE place: the skill "
-    "that governs the task when one exists, USER.md only for cross-cutting preferences no skill "
-    "owns — never both. Duplicating it is how a memory file ends up restating SKILL.md until both "
-    "hit their size limits.\n\n"
     "If you notice overlapping existing skills, mention it — the background curator handles "
     "consolidation. Never delete a skill here.\n\n"
     "Do NOT capture as skills" + _DO_NOT_CAPTURE_BLOCK +
     "Act on whichever of the two dimensions has real signal. If genuinely nothing stands out on "
     "either, say 'Nothing to save.' and stop — but don't reach for that conclusion as a default."
+    + _RULE_PROPOSAL_BLOCK
 )
 
 
@@ -1147,6 +1136,16 @@ class _ReviewForkState:
     review_agent: Any = None
     review_messages: list[dict] = field(default_factory=list)
     review_usage: dict[str, Any] = field(default_factory=dict)
+    rule_proposal: str = ""
+
+
+def _rule_proposal(result: dict | None) -> str:
+    """Read only the current fork's marked final reply, never the inherited transcript."""
+    final = result.get("final_response") if result and result.get("completed") else None
+    if not isinstance(final, str) or not final.strip().startswith(_RULE_PROPOSAL_PREFIX):
+        return ""
+    proposal = final.strip().removeprefix(_RULE_PROPOSAL_PREFIX).strip()
+    return proposal if proposal.isprintable() and len(proposal) <= 300 else ""
 
 
 def _release_fork_clients(review_agent: Any) -> None:
@@ -1209,7 +1208,7 @@ def _run_review_fork(
     try:
         if review_run is None or review_run.begin_request(st.review_agent):
             # Routed -> digest (cache cold anyway); same model -> full snapshot (warm cache reads).
-            st.review_agent.run_conversation(
+            result = st.review_agent.run_conversation(
                 user_message=(
                     prompt + "\n\nYou can only call " + memory_phrase_prompt +
                     "management tools. Other tools will be denied "
@@ -1217,6 +1216,7 @@ def _run_review_fork(
                 ),
                 conversation_history=_digest_history(messages_snapshot) if _routed else messages_snapshot,
             )
+            st.rule_proposal = _rule_proposal(result)
     finally:
         clear_thread_tool_whitelist()
         # Attribute usage to the PARENT session. Snapshot BEFORE unregister/close so counters
@@ -1283,6 +1283,7 @@ def _run_review_in_thread(
             _run_review_fork(agent, messages_snapshot, prompt, task_cfg, review_run, st, review_memory, explicit)
         # A buggy/legacy tool response shape must NOT take down the whole review (the outer
         # except would discard every action the fork DID complete), so coerce to an empty list.
+        notification_mode = getattr(agent, "memory_notifications", "on")
         try:
             # Scan the review agent's messages for successful tool actions and surface a compact summary to
             # the user. Tool messages already present in messages_snapshot must be skipped, since the review
@@ -1295,7 +1296,7 @@ def _run_review_in_thread(
             # instead.
             actions = summarize_background_review_actions(
                 st.review_messages, messages_snapshot,
-                notification_mode=getattr(agent, "memory_notifications", "on"),
+                notification_mode=notification_mode,
             )
         except Exception as e:
             logger.warning(
@@ -1306,6 +1307,8 @@ def _run_review_in_thread(
             )
             actions = []
         _log_review_completion(st.review_usage, _classify_review_result(actions))
+        if st.rule_proposal and str(notification_mode).lower() != "off":
+            actions.append(t("display.review.rule_proposal", proposal=st.rule_proposal))
         if actions:
             _publish_review_summary(agent, actions)
     except Exception as e:

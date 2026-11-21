@@ -3508,6 +3508,7 @@ display:
       user: "Профиль пользователя"
     summary_cli: "  💾 Ревью самосовершенствования: {summary}"
     summary_callback: "💾 Ревью самосовершенствования: {summary}"
+    rule_proposal: "Сделать «{proposal}» постоянным правилом? Если да, сформулируйте указание своими словами в этом чате."
     aux_failure_label: "фоновое ревью"
   notice:
     uncompressed_context_overflow: "⚠️ Контекст сеанса (~{tokens} токенов) превышает контекстное окно модели (~{context_length} токенов), а сжатие отключено (compression.enabled: false). Используйте /compact, чтобы сжать историю, или включите сжатие в config.yaml."
