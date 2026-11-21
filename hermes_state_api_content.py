@@ -16,6 +16,13 @@ from hermes_state_store import rewrite_rows
 class SessionApiContentMixin:
     """``SessionDB`` mixin: the ``api_content`` sidecar backfills."""
 
+    def user_row_text_uid(self, session_id: str, row_id: int, message_uid: str) -> str | None:
+        """Exact text version after the user row and its API sidecar have been persisted."""
+        row = self._read_one("SELECT text_uid FROM transcript_rows WHERE session_id = ? AND id = ? "
+                             "AND message_uid = ? AND role = 'user' AND active = 1",
+                             (session_id, row_id, message_uid))
+        return row[0] if row else None
+
     def set_latest_user_api_content(self, session_id: str, content: Any, api_content: str) -> int:
         """Backfill the ``api_content`` sidecar onto the newest ACTIVE user row (0/1 rows). Preflight compaction
         inserts that row BEFORE the sidecar exists and the later persist identity-skips compacted dicts;

@@ -663,9 +663,11 @@ class MemoryManager:
         if accepted is not None:
             kwargs = {k: v for k, v in kwargs.items() if k in accepted}
         args = _redact_for_provider(args)
+        from agent.memory_tool_turn import memory_tool_dispatch
         from hermes_cli.observability.shared_metrics_loop import record_provider_memory_call
         try:
-            result = provider.handle_tool_call(tool_name, args, **kwargs)
+            with memory_tool_dispatch(self, provider):
+                result = provider.handle_tool_call(tool_name, args, **kwargs)
         except Exception as e:
             logger.error("Memory provider '%s' handle_tool_call(%s) failed: %s", provider.name, tool_name, e)
             record_provider_memory_call(provider.name, tool_name, args, raised=True)
