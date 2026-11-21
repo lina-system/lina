@@ -56,7 +56,9 @@ def test_split_preserves_the_multiset_and_order_of_each_homes_units() -> None:
         "reviewer": sources["reviewer"],
         "empty": "",
     }
-    assert result.common["homes"] == {
+    assert {
+        home: [entry["unit"] for entry in entries] for home, entries in result.common["homes"].items()
+    } == {
         "builder": [_sha(shared), _sha(second), _sha(shared)],
         "operator": [_sha(second), _sha(shared)],
         "planner": [_sha(shared_variant), _sha(second)],
@@ -78,17 +80,37 @@ def test_split_preserves_the_multiset_and_order_of_each_homes_units() -> None:
             key=lambda line: bool(line.strip()) and not line.startswith("#"),
         )
         persona_units = ["".join(lines) for is_unit, lines in runs if is_unit]
-        common_units = [result.common["units"][sha] for sha in result.common["homes"][home]]
+        entries = result.common["homes"][home]
+        common_units = [result.common["units"][entry["unit"]] for entry in entries]
         source_lines = sources[home].splitlines(keepends=True)
+        # Source positions count a heading shared by several rows or outputs once.
+        headings = {}
+        personal_heading_lines = set()
+        common_entries = iter(entries)
         dropped_units = []
         for row in result.ledger:
-            if row["home"] == home and row["disposition"] == "dropped":
+            if row["home"] != home:
+                continue
+            positions = row.get("heading_lines", [])
+            if row["disposition"] == "common":
+                for pos, text in zip(positions, next(common_entries)["headings"], strict=True):
+                    assert text == source_lines[pos - 1]
+                    headings[pos] = text
+            elif row["disposition"] == "persona":
+                personal_heading_lines.update(positions)
+            else:
+                headings.update((pos, source_lines[pos - 1]) for pos in positions)
                 location = row["location"]
                 raw = "".join(source_lines[location["start_line"] - 1:location["end_line"]])
                 assert row["raw_sha256"] == _sha(raw)
                 assert row["reason"] == "Owner retired it"
                 dropped_units.append(raw)
-        assert Counter(persona_units + common_units + dropped_units) == Counter(original)
+        personal_headings = [line for line in result.personas[home].splitlines(keepends=True) if line.startswith("#")]
+        headings.update(zip(sorted(personal_heading_lines), personal_headings, strict=True))
+        original_headings = [line for line in source_lines if line.startswith("#")]
+        assert Counter(persona_units + common_units + dropped_units + list(headings.values())) == Counter(
+            original + original_headings
+        )
 
     assert result.summary["counts"] == {"common": 9, "persona": 6, "dropped": 1}
     assert result.summary["group_histogram"]["4"] == {
@@ -159,6 +181,13 @@ def test_two_homes_are_partly_shared_even_when_every_home_has_the_unit() -> None
 
     assert [row["membership"] for row in result.ledger] == ["partly_shared"] * 2
     assert result.personas == {"one": text, "two": variant}
+
+
+def test_headings_without_body_text_survive_in_the_persona() -> None:
+    source = "# Policy\n## Pending\n## Active\n- Shared rule\n## Review\n"
+    result = split_personas(dict.fromkeys(("one", "two", "three"), source), {})
+
+    assert result.personas == dict.fromkeys(result.personas, "# Policy\n## Pending\n## Review\n")
 
 
 def test_drops_override_common_membership_for_all_raw_variants() -> None:

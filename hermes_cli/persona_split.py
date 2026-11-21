@@ -17,9 +17,14 @@ Membership = Literal["common", "partly_shared", "single"]
 Disposition = Literal["common", "persona", "dropped"]
 
 
+class CommonEntry(TypedDict):
+    unit: str
+    headings: list[str]
+
+
 class CommonBlock(TypedDict):
     units: dict[str, str]
-    homes: dict[str, list[str]]
+    homes: dict[str, list[CommonEntry]]
 
 
 class Location(TypedDict):
@@ -43,6 +48,7 @@ class LedgerRow(Occurrence):
     disposition: Disposition
     near_matches: list[NearMatch]
     reason: NotRequired[str]
+    heading_lines: NotRequired[list[int]]
 
 
 class GroupStats(TypedDict):
@@ -101,10 +107,11 @@ def _digest(text: str) -> str:
     return sha256(text.encode("utf-8")).hexdigest()
 
 
-def _parse(home: str, lines: list[str]) -> list[_Unit]:
+def _parse(home: str, lines: list[str], empty_sections: set[int]) -> list[_Unit]:
     """Collect units and their active ATX heading ancestors by source line."""
     units: list[_Unit] = []
     headings: list[tuple[int, int]] = []
+    heading_without_body = False
     start: int | None = None
     for index, line in enumerate(chain(lines, ("",))):
         blank = not line.strip()
@@ -122,13 +129,18 @@ def _parse(home: str, lines: list[str]) -> list[_Unit]:
                 _Unit(raw, normalized, range(start, index), tuple(i for _, i in headings), identity)
             )
             start = None
+        if heading_without_body and (index == len(lines) or (heading and len(heading[1]) <= headings[-1][0])):
+            # No unit can carry this section; keep its heading and ancestors in the persona.
+            empty_sections.update(i for _, i in headings)
         if heading:
             level = len(heading[1])
             while headings and headings[-1][0] >= level:
                 headings.pop()
             headings.append((level, index))
+            heading_without_body = True
         elif not blank and start is None:
             start = index
+            heading_without_body = False
     return units
 
 
@@ -211,7 +223,8 @@ def split_personas(sources: dict[str, str], drops: dict[str, str]) -> PersonaSpl
     Aggregate membership counts refer to normalized groups before drops.
     """
     lines_by_home = {home: list(StringIO(source, newline="")) for home, source in sources.items()}
-    units_by_home = {home: _parse(home, lines) for home, lines in lines_by_home.items()}
+    empty_sections: dict[str, set[int]] = {home: set() for home in sources}
+    units_by_home = {home: _parse(home, lines, empty_sections[home]) for home, lines in lines_by_home.items()}
     groups = _groups(units_by_home)
     unmatched = drops.keys() - {group.units[0].identity["normalized_sha256"] for group in groups.values()}
     if unmatched:
@@ -238,9 +251,9 @@ def split_personas(sources: dict[str, str], drops: dict[str, str]) -> PersonaSpl
         },
     )
     for home, units in units_by_home.items():
-        common_ids: list[str] = []
-        result.common["homes"][home] = common_ids
-        keep: set[int] = set()
+        common_entries: list[CommonEntry] = []
+        result.common["homes"][home] = common_entries
+        keep = empty_sections[home]
         membership_counts: Counter[Membership] = Counter()
         counts: Counter[Disposition] = Counter()
         characters: Counter[Disposition] = Counter()
@@ -254,13 +267,15 @@ def split_personas(sources: dict[str, str], drops: dict[str, str]) -> PersonaSpl
                 disposition="persona",
                 near_matches=near.get(unit.normalized, []),
             )
+            if unit.headings:
+                row["heading_lines"] = [i + 1 for i in unit.headings]
             if reason is not None:
                 row["disposition"] = "dropped"
                 row["reason"] = reason
             elif membership == "common":
                 row["disposition"] = "common"
                 result.common["units"][raw_sha] = unit.raw
-                common_ids.append(raw_sha)
+                common_entries.append({"unit": raw_sha, "headings": [lines_by_home[home][i] for i in unit.headings]})
             else:
                 keep.update(unit.span)
                 keep.update(unit.headings)

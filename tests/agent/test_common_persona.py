@@ -8,8 +8,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from agent.prompt_builder import DEFAULT_AGENT_IDENTITY
+from agent.prompt_builder import DEFAULT_AGENT_IDENTITY, load_common_persona
 from agent.system_prompt import build_system_prompt
+from hermes_cli.persona_split import split_personas
 from hermes_constants import COMMON_PERSONA_FILE
 
 
@@ -91,6 +92,36 @@ def test_same_membership_has_exact_prefix_before_distinct_personas(install: Path
     )
     assert b"Synthetic closing" not in prompts["minority"]
     assert root_prompt.startswith("Root-only unit.\n\nSynthetic persona for install.")
+
+
+def test_all_common_prohibition_keeps_its_heading_in_each_prompt(install: Path) -> None:
+    source = "## Never do these\n- Delete production data\n"
+    split = split_personas(dict.fromkeys(("alpha", "beta", "gamma"), source), {})
+    (install / COMMON_PERSONA_FILE).write_text(json.dumps(split.common), encoding="utf-8")
+
+    for profile, persona in split.personas.items():
+        home = install / "profiles" / profile
+        agent = _make_agent(home)
+        (home / "SOUL.md").write_text(persona, encoding="utf-8")
+        assert persona == ""
+        assert build_system_prompt(agent).startswith(source + "\nSynthetic overlay")
+
+
+def test_common_runs_use_each_homes_heading_chain(install: Path) -> None:
+    profiles = ("alpha", "beta", "gamma")
+    sources = {
+        profile: f"# Rules\n## {profile}\n- First\n- Second\n- Only for {profile}\n## Later\n- Third\n"
+        for profile in profiles
+    }
+    split = split_personas(sources, {})
+    (install / COMMON_PERSONA_FILE).write_text(json.dumps(split.common), encoding="utf-8")
+
+    for profile in profiles:
+        chain = f"# Rules\n## {profile}\n"
+        assert split.personas[profile] == chain + f"- Only for {profile}\n"
+        assert load_common_persona(home_override=install / "profiles" / profile) == (
+            chain + "- First\n\n- Second\n\n# Rules\n## Later\n- Third\n"
+        )
 
 
 @pytest.mark.parametrize(
