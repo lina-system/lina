@@ -65,6 +65,23 @@ def test_a_renamed_profile_reads_its_history_and_the_old_agent_keeps_no_rows(pro
     assert all(uid.startswith("agent:lighthouse:") for uid in agents["lighthouse"])
 
 
+def test_a_rename_moves_the_messages_the_honcho_import_copied(profile_env, memory_store_sql):
+    _seed(create_profile("harbor", no_alias=True))
+    # `migrate memory` copies Honcho-only messages under honcho:<agent>:<public id>; copy a seeded row's columns
+    memory_store_sql(
+        "INSERT INTO memory.messages (uid, source, agent_id, session_id, role, content, ts, content_sha256,"
+        " speaker, grade, source_id)"
+        " SELECT 'honcho:harbor:abc123', source, agent_id, session_id, role, 'a honcho-only note', ts,"
+        " 'honcho-only-sha', speaker, grade, 'honcho-only' FROM memory.messages LIMIT 1")
+    assert "honcho:harbor:abc123" in _agents(memory_store_sql)["harbor"]
+
+    _rename("harbor", "lighthouse")
+
+    agents = _agents(memory_store_sql)
+    assert set(agents) == {"lighthouse"}
+    assert "honcho:lighthouse:abc123" in agents["lighthouse"]
+
+
 def test_running_the_rename_step_again_changes_nothing(profile_env, memory_store_sql):
     _seed(create_profile("harbor", no_alias=True))
     new_dir = _rename("harbor", "lighthouse")
