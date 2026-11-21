@@ -1,0 +1,222 @@
+"""Synthetic contracts for the lossless persona split in lina#825."""
+
+import json
+from collections import Counter
+from hashlib import sha256
+from itertools import groupby
+
+import pytest
+
+from hermes_cli.persona_split import UnmatchedDropError, split_personas
+
+
+def _sha(text: str) -> str:
+    return sha256(text.encode("utf-8")).hexdigest()
+
+
+def test_split_preserves_the_multiset_and_order_of_each_homes_units() -> None:
+    shared = "- Check stock\r\n  - Count crates\r\n"
+    shared_variant = "- Check  stock\n  - Count crates\n"
+    second = "- Lock the gate\r\n"
+    private_list = "- Pack pears\r  - Put ripe ones on top\r"
+    partly = "Keep the orchard schedule.\n"
+    dropped = "Retire the old sign.\n"
+    extras = "Count 배 trees by hand."
+    sources = {
+        "builder": (
+            "# Orchard\r\n"
+            "## Routine\r\n"
+            f"{shared}{second}{shared}"
+            f"## Packing\r{private_list}"
+            f"## Old signs\n{dropped}"
+            f"## Schedule\n{partly}\n{extras}"
+        ),
+        "operator": second + shared + "\n" + partly,
+        "planner": shared_variant + second + "\n" + partly,
+        "auditor": second + shared,
+        "reviewer": "# Review\nCheck the receipts.\r\n",
+        "empty": "",
+    }
+    original_units = {
+        "builder": [shared, second, shared, private_list, dropped, partly, extras],
+        "operator": [second, shared, partly],
+        "planner": [shared_variant, second, partly],
+        "auditor": [second, shared],
+        "reviewer": ["Check the receipts.\r\n"],
+        "empty": [],
+    }
+
+    result = split_personas(sources, {_sha("Retire the old sign."): "Owner retired it"})
+
+    assert result.personas == {
+        "builder": f"# Orchard\r\n## Packing\r{private_list}## Schedule\n{partly}\n{extras}",
+        "operator": "\n" + partly,
+        "planner": "\n" + partly,
+        "auditor": "",
+        "reviewer": sources["reviewer"],
+        "empty": "",
+    }
+    assert result.common["homes"] == {
+        "builder": [_sha(shared), _sha(second), _sha(shared)],
+        "operator": [_sha(second), _sha(shared)],
+        "planner": [_sha(shared_variant), _sha(second)],
+        "auditor": [_sha(second), _sha(shared)],
+        "reviewer": [],
+        "empty": [],
+    }
+    assert result.common["units"] == {_sha(unit): unit for unit in (shared, shared_variant, second)}
+    assert result.ledger[0]["location"] == {"start_line": 3, "end_line": 4}
+    assert result.ledger[0]["normalized_sha256"] == _sha("- Check stock - Count crates")
+
+    # Re-read the emitted text and common payload, and recover actual dropped
+    # text from the original line ranges. No production tokenizer is reused.
+    for home, original in original_units.items():
+        # In this fixture every surviving unit is bounded by a heading, a
+        # blank line, or the file boundary.
+        runs = groupby(
+            result.personas[home].splitlines(keepends=True),
+            key=lambda line: bool(line.strip()) and not line.startswith("#"),
+        )
+        persona_units = ["".join(lines) for is_unit, lines in runs if is_unit]
+        common_units = [result.common["units"][sha] for sha in result.common["homes"][home]]
+        source_lines = sources[home].splitlines(keepends=True)
+        dropped_units = []
+        for row in result.ledger:
+            if row["home"] == home and row["disposition"] == "dropped":
+                location = row["location"]
+                raw = "".join(source_lines[location["start_line"] - 1:location["end_line"]])
+                assert row["raw_sha256"] == _sha(raw)
+                assert row["reason"] == "Owner retired it"
+                dropped_units.append(raw)
+        assert Counter(persona_units + common_units + dropped_units) == Counter(original)
+
+    assert result.summary["counts"] == {"common": 9, "persona": 6, "dropped": 1}
+    assert result.summary["group_histogram"]["4"] == {
+        "groups": 2,
+        "occurrences": 9,
+        "characters": 4 * len(shared) + len(shared_variant) + 4 * len(second),
+    }
+    assert result.summary["homes"]["builder"] == {
+        "source_chars": len(sources["builder"]),
+        "persona_chars": len(private_list) + len(partly) + len(extras),
+        "common_chars": 2 * len(shared) + len(second),
+        "dropped_chars": len(dropped),
+        "membership": {"common": 3, "partly_shared": 1, "single": 3},
+        "counts": {"common": 3, "persona": 3, "dropped": 1},
+    }
+    assert {
+        key: result.summary[key]
+        for key in ("distinct", "occurrences", "common", "near", "partly_shared", "ledger_lines")
+    } == {"distinct": 7, "occurrences": 16, "common": 2, "near": 0, "partly_shared": 1, "ledger_lines": 16}
+    assert json.loads(json.dumps(result.ledger)) == result.ledger
+    assert json.loads(json.dumps(result.summary)) == result.summary
+    assert extras not in json.dumps(result.summary)
+
+
+def test_near_single_uses_maximum_directional_ratio_against_all_other_homes() -> None:
+    single = "abcdefghijklmnoptide"
+    shared = "abcdefghijklmnopdiet"
+    lower_case_with_punctuation = "Mix all paint."
+    sources = {
+        "one": f"{single}\n\n{single}\n\n{single}\n\n{lower_case_with_punctuation}\n",
+        "two": f"{shared}\n\nabcdefghijklmnzzxxxx\n\nmix all paint.\n",
+        "three": f"{shared}\n\nMix all paint!\n",
+        "four": shared,
+        "empty": "",
+    }
+
+    result = split_personas(sources, {})
+
+    rows = [row for row in result.ledger if row["normalized_sha256"] == _sha(single)]
+    assert [row["location"] for row in rows] == [
+        {"start_line": 1, "end_line": 1},
+        {"start_line": 3, "end_line": 3},
+        {"start_line": 5, "end_line": 5},
+    ]
+    # These strings score 0.85 in this order and 0.90 in reverse.
+    expected_matches = [
+        (home, _sha(shared), 0.90) for home in ("two", "three", "four")
+    ]
+    for row in rows:
+        assert row["membership"] == "single"
+        assert row["disposition"] == "persona"
+        assert [
+            (match["home"], match["normalized_sha256"], match["ratio"])
+            for match in row["near_matches"]
+        ] == expected_matches
+    assert result.personas == sources
+    assert result.common["units"] == {}
+    shared_rows = [row for row in result.ledger if row["normalized_sha256"] == _sha(shared)]
+    assert [row["membership"] for row in shared_rows] == ["partly_shared"] * 3
+    assert result.summary["near"] == 4
+
+
+def test_two_homes_are_partly_shared_even_when_every_home_has_the_unit() -> None:
+    text = "- Store the spare key\n"
+    variant = "- Store the  spare key\r\n"
+
+    result = split_personas({"one": text, "two": variant}, {})
+
+    assert [row["membership"] for row in result.ledger] == ["partly_shared"] * 2
+    assert result.personas == {"one": text, "two": variant}
+
+
+def test_drops_override_common_membership_for_all_raw_variants() -> None:
+    text = "- Store the spare key\n"
+    variant = "- Store the  spare key\r\n"
+    sources = {"one": text, "two": variant, "three": text}
+    normalized_sha = _sha("- Store the spare key")
+
+    dropped = split_personas(sources, {normalized_sha: "Retired rule"})
+
+    assert dropped.personas == dict.fromkeys(sources, "")
+    assert dropped.common == {"units": {}, "homes": {home: [] for home in sources}}
+    assert [
+        (row["raw_sha256"], row["membership"], row["disposition"], row["reason"])
+        for row in dropped.ledger
+    ] == [
+        (_sha(raw), "common", "dropped", "Retired rule") for raw in sources.values()
+    ]
+    assert dropped.summary["common"] == 1
+
+
+def test_rejects_drop_digests_without_a_normalized_source_match() -> None:
+    raw = "- Store the spare key\r\n"
+    valid = _sha("- Store the spare key")
+    unmatched = {_sha(raw): "Raw digest", _sha("Missing rule"): "Stale entry"}
+
+    with pytest.raises(UnmatchedDropError) as error:
+        split_personas({"one": raw}, {valid: "Retired rule", **unmatched})
+
+    assert error.value.digests == tuple(sorted(unmatched))
+
+
+def test_only_dash_space_starts_a_new_item_and_indented_items_stay_nested() -> None:
+    source = "- Top item\r\n  - Nested item\n---\n-\tcontinued\n-next line\n-\n"
+
+    result = split_personas({"one": source + "- Next item"}, {})
+
+    assert [row["raw_sha256"] for row in result.ledger] == [_sha(source), _sha("- Next item")]
+
+
+def test_near_matching_preserves_difflib_default_popular_character_handling() -> None:
+    repeated = "a" * 220
+
+    result = split_personas({"one": f"x{repeated}y", "two": f"z{repeated}w"}, {})
+
+    assert result.summary["near"] == 0
+    assert [row["near_matches"] for row in result.ledger] == [[], []]
+
+
+def test_removal_does_not_join_a_bare_cr_to_a_later_lf_separator() -> None:
+    source = "Keep this line.\r- Retire this item.\r\n\nKeep this paragraph."
+
+    result = split_personas({"one": source}, {_sha("- Retire this item."): "Retired"})
+
+    lines = result.personas["one"].splitlines(keepends=True)
+    assert [line for line in lines if line.strip()] == [
+        "Keep this line.\r",
+        "Keep this paragraph.",
+    ]
+    assert len(lines) == 3
+    assert not lines[1].strip()
