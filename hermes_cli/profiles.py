@@ -1864,12 +1864,13 @@ def _retarget_terminal_cwd(new_dir: Path, old_dir: Path) -> None:
     that cannot be read or written leaves the rename done and the path unchanged."""
     config_path = new_dir / "config.yaml"
     try:
-        from hermes_cli.config import read_user_config_raw
-        from utils import atomic_roundtrip_yaml_update
+        from hermes_cli.config import atomic_config_write, read_user_config_raw
 
-        cwd = (read_user_config_raw(config_path).get("terminal") or {}).get("cwd")
-        if isinstance(cwd, str) and Path(cwd) == old_dir:
-            atomic_roundtrip_yaml_update(config_path, "terminal.cwd", str(new_dir))
+        config = read_user_config_raw(config_path)
+        terminal = config.get("terminal")
+        if isinstance(terminal, dict) and isinstance(terminal.get("cwd"), str) and Path(terminal["cwd"]) == old_dir:
+            terminal["cwd"] = str(new_dir)
+            atomic_config_write(config_path, config)
     except Exception:
         logger.warning("could not retarget terminal.cwd of %s after the rename", new_dir, exc_info=True)
 
