@@ -1174,6 +1174,34 @@ class TestRenameProfile:
         assert new_dir.is_dir()
         assert new_dir == tmp_path / ".hermes" / "profiles" / "newname"
 
+    def test_rename_retargets_terminal_cwd_that_named_the_old_directory(self, profile_env):
+        from hermes_cli.config import read_user_config_raw
+        from utils import atomic_roundtrip_yaml_update
+
+        tmp_path = profile_env
+        create_profile("oldname", no_alias=True)
+        old_dir = tmp_path / ".hermes" / "profiles" / "oldname"
+        atomic_roundtrip_yaml_update(old_dir / "config.yaml", "terminal.cwd", str(old_dir))
+
+        with patch("hermes_cli.profiles.check_alias_collision", return_value="skip"):
+            new_dir = rename_profile("oldname", "newname")
+
+        assert read_user_config_raw(new_dir / "config.yaml")["terminal"]["cwd"] == str(new_dir)
+
+    def test_rename_keeps_terminal_cwd_that_named_another_directory(self, profile_env):
+        from hermes_cli.config import read_user_config_raw
+        from utils import atomic_roundtrip_yaml_update
+
+        tmp_path = profile_env
+        create_profile("oldname", no_alias=True)
+        old_dir = tmp_path / ".hermes" / "profiles" / "oldname"
+        atomic_roundtrip_yaml_update(old_dir / "config.yaml", "terminal.cwd", "/srv/elsewhere")
+
+        with patch("hermes_cli.profiles.check_alias_collision", return_value="skip"):
+            new_dir = rename_profile("oldname", "newname")
+
+        assert read_user_config_raw(new_dir / "config.yaml")["terminal"]["cwd"] == "/srv/elsewhere"
+
     def test_renames_root_honcho_host_without_changing_ai_peer(self, profile_env):
         tmp_path = profile_env
         create_profile("ssi_health", no_alias=True)
