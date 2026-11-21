@@ -239,7 +239,7 @@ time and are retained; the collector does not infer one from message age or miss
 
 Configure `memory.external_messages.spool` in the LINA root's `config.yaml` to the collector's
 `spool/events.jsonl`. The default is empty: ingestion does nothing and the CLI says so. This is a host job,
-not a profile job; there is no source on/off switch here (#23).
+not a profile job. Kakao, Discord, LINE, iMessage, [mail and Slack](sources.md) share the spool; mail and Slack each require an explicit opt-in.
 
 ```sh
 lina memory external-messages ingest
