@@ -5,7 +5,8 @@ from __future__ import annotations
 import json
 import re
 from argparse import Namespace
-from contextlib import nullcontext
+from collections.abc import Iterator
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 
 from hermes_cli.active_sessions import _FileLock
@@ -56,6 +57,42 @@ def _json_line(value) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True) + "\n"
 
 
+def _persona_lock(root: Path) -> _FileLock:
+    return _FileLock(_safe(root / "shared" / ".persona-migration.lock"))
+
+
+@contextmanager
+def clone_persona_membership(source: Path | None, destination: Path) -> Iterator[None]:
+    """Publish the clone with its source's ordered references, rolling back a failed rename."""
+    root = destination.parent.parent
+    path = root / COMMON_PERSONA_FILE
+    if source is None or not path.exists():
+        yield
+        return
+
+    with _persona_lock(root):
+        original = _safe(path).read_bytes()
+        common = json.loads(original)
+        homes = common["homes"]
+        name = destination.name
+        source_name = "default" if source == root else source.name
+        if homes.get(source_name) == homes.get(name):
+            yield
+            return
+        if destination.exists():
+            raise FileExistsError(f"Profile '{name}' already exists")
+        if source_name in homes:
+            homes[name] = homes[source_name]
+        else:
+            del homes[name]
+        atomic_write_bytes(path, _json_line(common).encode(), mode=0o600)
+        try:
+            yield
+        except BaseException:
+            atomic_write_bytes(path, original, mode=0o600)
+            raise
+
+
 def _migrate(args: Namespace) -> dict:
     root = _safe(Path(args.home).expanduser())
     sources = _sources(args.source, root)
@@ -72,7 +109,7 @@ def _migrate(args: Namespace) -> dict:
         rows = (_json_line(row) for row in split.ledger if row["home"] == name)
         outputs[home / "persona-ledger.jsonl"] = "".join(rows).encode()
 
-    lock = _FileLock(_safe(root / "shared" / ".persona-migration.lock")) if args.apply else nullcontext()
+    lock = _persona_lock(root) if args.apply else nullcontext()
     with lock:
         pending = {}
         for path, data in outputs.items():
