@@ -338,7 +338,7 @@ def fuse(lists: Sequence[Sequence[Hit]], limit: int, now: datetime) -> list[dict
 
 def _row_hit(row: Any, terms: Sequence[str]) -> Hit:
     return Hit(row.source, f"msg:{row.uid}", excerpt(row.content or "", terms), utc_iso(row.at),
-               row.speaker_ref or row.author, row.speaker, grade=row.grade)
+               row.speaker_ref or row.author, row.speaker, grade=row.grade, fields=getattr(row, "native_refs", None))
 
 
 def _note(part: Any) -> dict[str, Any]:
@@ -633,7 +633,8 @@ class MemorySearch:
             from hermes_cli.external_messages import enabled
             if not enabled():
                 raise SourceOff("External messages are off.")
-        opened = {"source": row.source, "time": utc_iso(row.at), "author": row.author, "role": row.role,
+        opened = {"source": row.source, **(getattr(row, "native_refs", None) or {}), "time": utc_iso(row.at),
+                  "author": row.author, "role": row.role,
                   "speaker": row.speaker, "speaker_ref": row.speaker_ref, "grade": row.grade,
                   "source_id": row.source_id,
                   "conversation_id": row.conversation_id, "session_id": row.session_id}

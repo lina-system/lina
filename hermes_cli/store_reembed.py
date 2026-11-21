@@ -31,6 +31,7 @@ from typing import Any, Optional
 
 from agent.embedding_client import DEFAULT_MAX_REQUEST_CHARS, EmbeddingRetriesExhausted
 from hermes_state_store import SHARED_VECTOR_OWNER, _INJECTED_TURN_RE, _memory_search_projection
+from hermes_state_source_visibility import hidden_message, platform_sql
 
 SOURCES = ("agent", "messages", "memory")
 DEFAULT_MAX_CHARS = 8000
@@ -39,11 +40,6 @@ DEFAULT_MAX_CHARS = 8000
 _COVERED = """EXISTS (SELECT 1 FROM vec.chunks c JOIN vec.embeddings e ON e.kind = 'chunk' AND e.item_id = c.chunk_id
                WHERE c.source = 'messages' AND c.source_ref = 'collector' AND e.model = %(model)s
                  AND c.message_ids @> ARRAY[m.message_id])"""
-_MESSAGE_ROWS = """
-    SELECT message_id, coalesce(agent_id, CASE WHEN scope = 'agents' THEN %(shared)s END), content, {covered}
-    FROM memory.messages AS m
-    WHERE source = %(source)s AND message_id > %(after)s {roles}
-    ORDER BY message_id LIMIT %(limit)s"""
 _DOCUMENT_ROWS = """
     SELECT vec_id, workspace_name, content FROM ltm.documents
     WHERE vec_id > %(after)s AND deleted_at IS NULL
@@ -115,6 +111,17 @@ def _message_filter(source: str) -> str:
         else "AND forgotten_at IS NULL"
 
 
+def _collector_window() -> str:
+    # A later visible row can advance the shared cursor past a disabled row. On re-enable also
+    # visit older, still-unembedded source rows without re-sending already embedded legacy text.
+    return (f"FROM memory.messages m WHERE m.source = 'messages' AND NOT {hidden_message('m')} "
+            "AND m.forgotten_at IS NULL AND m.message_id > %(after)s AND (m.message_id > %(saved)s OR "
+            f"({platform_sql('m')} IN ('mail', 'slack') AND m.scope = 'agents' AND trim(m.content) <> '' "
+            "AND NOT EXISTS (SELECT 1 FROM vec.chunks c JOIN vec.embeddings e ON e.kind = 'chunk' "
+            "AND e.item_id = c.chunk_id WHERE c.source = 'messages' AND e.model = %(model)s "
+            "AND c.message_ids @> ARRAY[m.message_id])))")
+
+
 def rows_left(conn, source: str, model: str) -> int:
     """Rows of *source* after its saved progress: what a rerun still goes through (Honcho conclusions and LCM summaries
     for ``memory``)."""
@@ -126,6 +133,9 @@ def rows_left(conn, source: str, model: str) -> int:
                         f" WHERE source = 'agent' AND message_id > %s {_message_filter(source)}",
                         [*parameters, after])
             return int(cur.fetchone()[0])
+    if source == "messages":
+        return int(conn.execute("SELECT count(*) " + _collector_window(),
+                                {"after": 0, "saved": after, "model": model}).fetchone()[0])
     if source != "memory":
         return int(conn.execute(f"SELECT count(*) FROM memory.messages WHERE source = %s AND message_id > %s "
                                 f"{_message_filter(source)}", (source, after)).fetchone()[0])
@@ -137,7 +147,7 @@ def rows_left(conn, source: str, model: str) -> int:
     return left
 
 
-def _items(conn, source: str, model: str, after: int, limit: int, max_chars: int) -> list[_Item]:
+def _items(conn, source: str, model: str, after: int, limit: int, max_chars: int, saved: int = 0) -> list[_Item]:
     if source == "agent":
         with conn.cursor() as cur:
             projection, parameters = _memory_search_projection(cur)
@@ -150,10 +160,9 @@ def _items(conn, source: str, model: str, after: int, limit: int, max_chars: int
             return []
         rows = conn.execute(_DOCUMENT_ROWS, {"after": after, "limit": limit}).fetchall()
     else:
-        roles = _message_filter(source)
-        covered = _COVERED if source == "messages" else "false"
-        rows = conn.execute(_MESSAGE_ROWS.format(roles=roles, covered=covered),
-                            {"source": source, "after": after, "limit": limit, "model": model,
+        rows = conn.execute("SELECT message_id, coalesce(agent_id, CASE WHEN scope = 'agents' THEN %(shared)s END), "
+                            f"content, {_COVERED} " + _collector_window() + " ORDER BY message_id LIMIT %(limit)s",
+                            {"after": after, "saved": saved, "limit": limit, "model": model,
                              "shared": SHARED_VECTOR_OWNER}).fetchall()
     items = []
     for item_id, agent_id, content, *covered_by in rows:
@@ -229,7 +238,8 @@ def _write_batch(conn, source: str, model: str, items: list[_Item], vectors: lis
                 (kind, item_id, item.agent_id, model, len(vector), _vector_literal(vector)))
         conn.execute(
             "INSERT INTO vec.reembed_progress (source, model, last_item_id) VALUES (%s, %s, %s) "
-            "ON CONFLICT (source, model) DO UPDATE SET last_item_id = EXCLUDED.last_item_id, updated_at = now()",
+            "ON CONFLICT (source, model) DO UPDATE SET last_item_id = greatest(vec.reembed_progress.last_item_id, "
+            "EXCLUDED.last_item_id), updated_at = now()",
             (source, model, items[-1].item_id))
 
 
@@ -244,8 +254,9 @@ def reembed_source(conn, embed: Callable[[list[str]], list[list[float]]], *, sou
     counts.last_item_id = counts.resumed_after
     if source == "memory" and conn.execute("SELECT to_regclass('ltm.documents') IS NULL").fetchone()[0]:
         counts.notes.append("no Honcho tables (ltm.documents) in this store")
+    after = 0 if source == "messages" else counts.last_item_id
     while max_batches is None or counts.batches < max_batches:
-        items = _items(conn, source, model, counts.last_item_id, batch_size, max_chars)
+        items = _items(conn, source, model, after, batch_size, max_chars, counts.resumed_after)
         if not items:
             break
         texts = [item.text for item in items if item.text]
@@ -255,7 +266,8 @@ def reembed_source(conn, embed: Callable[[list[str]], list[list[float]]], *, sou
         counts.embedded += len(texts)
         counts.covered += sum(item.covered for item in items)
         counts.skipped += len(items) - len(texts) - sum(item.covered for item in items)
-        counts.last_item_id = items[-1].item_id
+        after = items[-1].item_id
+        counts.last_item_id = max(counts.last_item_id, after)
         out(f"{source}: batch {counts.batches}, up to id {counts.last_item_id}, {counts.embedded} embedded"
             f"{split_note(requests)}")
     return counts

@@ -61,10 +61,12 @@ def entries(store: MessageStore) -> list[Entry]:
 
 def texts(store: MessageStore, uids: Iterable[str]) -> dict[str, str]:
     """The plain text of the rows of *uids* this agent may cite: its own, not forgotten."""
+    from hermes_state_source_visibility import hidden_message
+
     wanted = list(dict.fromkeys(uids))
     with store._cursor() as cur:
-        cur.execute("SELECT uid, coalesce(content, '') FROM memory.messages WHERE uid = ANY(%s)"
-                    " AND forgotten_at IS NULL", (wanted,))
+        cur.execute("SELECT uid, coalesce(content, '') FROM memory.messages m WHERE uid = ANY(%s)"
+                    f" AND forgotten_at IS NULL AND NOT {hidden_message('m')}", (wanted,))
         return dict(cur.fetchall())
 
 

@@ -52,23 +52,39 @@ class Lock:
         conn.execute("DELETE FROM brain.cycle_lock WHERE name = %s AND holder = %s", (LOCK, self.holder))
 
 
+def _with_message_origins(conn, source_refs) -> list[str]:
+    """A proposal citing atoms also keeps their message references: a later atoms pass replaces the atoms under
+    new ids, and the proposal must still hide with its source when that source is switched off."""
+    refs = list(source_refs)
+    atom_ids = [int(ref[5:]) for ref in refs if ref.startswith("atom:") and ref[5:].isdigit()]
+    if atom_ids:
+        for (origin,) in conn.execute("SELECT source_ref FROM brain.atoms WHERE atom_id = ANY(%s) ORDER BY atom_id",
+                                      (atom_ids,)):
+            refs.extend(ref for ref in (origin or "").split() if ref.startswith("msg:") and ref not in refs)
+    return refs
+
+
 def _write(conn, writes: list[Atoms | Proposal], phase: str, agent_id: str, cycle_id: int, counts: Counter,
            ids: list[int]) -> None:
     from psycopg.types.json import Jsonb
+    from hermes_state_source_visibility import visible_atom
+
     for write in writes:
         if isinstance(write, Atoms):
-            conn.execute("DELETE FROM brain.atoms WHERE page_slug = %s", (write.slug,))
+            conn.execute(f"DELETE FROM brain.atoms WHERE page_slug = %s AND {visible_atom('source_ref')}",
+                         (write.slug,))
             for claim, grade, ref in write.claims:
                 conn.execute("INSERT INTO brain.atoms (page_slug, claim, grade, source_ref) VALUES (%s, %s, %s, %s)",
                              (write.slug, claim, grade, ref))
             counts["atoms"] += len(write.claims)
             continue
+        refs = _with_message_origins(conn, write.source_refs)
         row = conn.execute(
             "INSERT INTO brain.proposals (agent_id, phase, kind, target, payload, grade, source_refs, cycle_id, "
             "fingerprint) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (agent_id, fingerprint) DO NOTHING "
             "RETURNING proposal_id",
             (agent_id, phase, write.kind, write.target, Jsonb(write.payload), write.grade,
-             list(write.source_refs), cycle_id, write.fingerprint)).fetchone()
+             refs, cycle_id, write.fingerprint)).fetchone()
         if row:
             counts["proposals"] += 1
             ids.append(row[0])

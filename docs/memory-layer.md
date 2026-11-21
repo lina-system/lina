@@ -209,7 +209,7 @@ the source keys each came from:
 An id is derived from the first key it is registered under, so it is the same on every machine and run, before
 and after the registry holds it; Honcho peer names and LCM conversation ids are read as Honcho and LCM-X derive
 them today and are never renamed. A later key joins the identity an earlier key already has; two keys that name
-different identities are never merged. External messages (#18) keep their conversation ids
+different identities are never merged. External messages from Kakao, Discord, LINE, iMessage, [mail and Slack](sources.md) keep their conversation ids
 (`messages:<platform>:<room id>`) and own the `messages_room` and `messenger_author` source kinds. Each external
 message's author is a person under its own `messenger_author` handle (`<platform>:<author id>`, the row's `author`),
 and a platform is part of every handle, so nothing is merged across platforms by itself. The tables have no

@@ -26,6 +26,7 @@ from pathlib import Path
 from agent.embedding_client import truncate_stored
 from hermes_cli.store_reembed import ReembedError, _vector_literal
 from hermes_state_store import SHARED_VECTOR_OWNER
+from hermes_state_source_visibility import hidden_message
 
 IMPORTED_REF = "collector"
 _VEC0_VERSION = "v0.1."
@@ -39,7 +40,7 @@ _REQUIRED = {
     "chunk_vectors_vector_chunks00": ("rowid", "vectors"),
 }
 _STORE_ROWS = """
-    SELECT uid, message_id, content FROM memory.messages
+    SELECT uid, message_id, content FROM memory.messages m
     WHERE uid = ANY(%s) AND source = 'messages' AND agent_id IS NULL AND scope = 'agents' AND forgotten_at IS NULL"""
 
 
@@ -147,7 +148,8 @@ def _import_batch(conn, index: _Index, chunk_ids: list[int], counts: ImportCount
         uids.setdefault(int(chunk_id), []).append(f"messages:{uid}")
     stored = _stored_vectors(index, chunk_ids[0], chunk_ids[-1])
     wanted = sorted({ref for refs in uids.values() for ref in refs})
-    rows = {uid: (int(mid), content) for uid, mid, content in conn.execute(_STORE_ROWS, (wanted,)).fetchall()}
+    rows = {uid: (int(mid), content) for uid, mid, content in conn.execute(
+        _STORE_ROWS + f" AND NOT {hidden_message('m')}", (wanted,)).fetchall()}
     with conn.transaction():
         for chunk_id in chunk_ids:
             refs = uids.get(chunk_id, [])

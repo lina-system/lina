@@ -107,14 +107,19 @@ def message_ref(uid: str) -> str:
 
 def resolve(conn, ref: str) -> Message | None:
     """The stored message *ref* names, in its current version; None when it is gone or forgotten."""
+    from hermes_cli.external_messages import enabled
+    from hermes_state_source_visibility import hidden_message
+
     found = _REF.match(ref or "")
     if found is None:
         raise ExtractError(f"not a message reference: {ref!r} (expected msg:messages:<uid>)")
+    if not enabled():
+        return None
     base = found.group(1)
     row = conn.execute(
         "SELECT m.uid, m.content, m.author, m.conversation_id, m.ts FROM memory.messages AS m "
         "WHERE m.uid = coalesce((SELECT h.current_uid FROM memory.external_message_heads AS h WHERE h.uid = %s), %s) "
-        "AND m.source = 'messages' AND m.forgotten_at IS NULL", (base, base)).fetchone()
+        f"AND m.source = 'messages' AND m.forgotten_at IS NULL AND NOT {hidden_message('m')}", (base, base)).fetchone()
     if row is None:
         return None
     uid, text, author, conversation, sent_at = row
@@ -124,10 +129,16 @@ def resolve(conn, ref: str) -> Message | None:
 def pending(conn, limit: int = LIMIT) -> list[str]:
     """References of stored external messages not yet extracted (or whose answers failed fewer than ATTEMPTS
     times), oldest first."""
+    from hermes_cli.external_messages import enabled
+    from hermes_state_source_visibility import hidden_message
+
+    if not enabled():
+        return []
     return [row[0] for row in conn.execute(
         "SELECT 'msg:' || m.uid FROM memory.messages AS m "
         "LEFT JOIN brain.extracted AS x ON x.source_ref = 'msg:' || m.uid "
         "WHERE m.source = 'messages' AND position('#' IN m.uid) = 0 AND m.forgotten_at IS NULL "
+        f"AND NOT {hidden_message('m')} "
         "AND (x.source_ref IS NULL OR (x.outcome = 'invalid' AND x.attempts < %s)) "
         "ORDER BY m.ts NULLS LAST, m.message_id LIMIT %s", (ATTEMPTS, limit))]
 
