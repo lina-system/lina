@@ -12,7 +12,15 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
-from agent.skill_utils import EXCLUDED_SKILL_DIRS, SKILL_SUPPORT_DIRS, parse_frontmatter
+from agent.skill_utils import (
+    EXCLUDED_SKILL_DIRS,
+    SKILL_SUPPORT_DIRS,
+    TIER_EXTERNAL,
+    TIER_LOCAL,
+    parse_frontmatter,
+    pick_skill_candidate,
+    skill_candidate_rank,
+)
 from hermes_cli.migrate_skill_calls import skill_calls
 
 
@@ -49,13 +57,21 @@ def _files(root: Path, *, discovery: bool, output: Path | None):
                 yield child
 
 
-def _package(directory: Path, output: Path | None) -> tuple[str, str, tuple[str, ...]]:
-    metadata, _ = parse_frontmatter((directory / "SKILL.md").read_text(encoding="utf-8-sig"))
-    name = metadata.get("name") or directory.name
-    if not isinstance(name, str):
+def _package(
+    directory: Path, output: Path | None
+) -> tuple[str | None, str, tuple[str, ...]]:
+    metadata, _ = parse_frontmatter(
+        (directory / "SKILL.md").read_text(encoding="utf-8-sig")
+    )
+    name = metadata.get("name") or None
+    if name is not None and not isinstance(name, str):
         raise ValueError(f"expected a skill name at {directory}")
     description = metadata.get("description")
-    prefix = tuple(description.casefold().split()[:3]) if isinstance(description, str) else ()
+    prefix = (
+        tuple(description.casefold().split()[:3])
+        if isinstance(description, str)
+        else ()
+    )
     digest = hashlib.sha256()
     files = _files(directory, discovery=False, output=output)
     for rel, file in sorted((f.relative_to(directory).as_posix(), f) for f in files):
@@ -84,11 +100,73 @@ def _inputs(args: argparse.Namespace) -> tuple[dict[str, Path], list[Tree]]:
     for spec in args.home_tree:
         owner, equal, value = spec.partition("=")
         if not equal or not value or owner not in homes:
-            raise ValueError("--home-tree requires an existing home label and a skill directory")
+            raise ValueError(
+                "--home-tree requires an existing home label and a skill directory"
+            )
         trees.append(Tree(Path(value), "home", (owner,)))
     for path in args.bundle:
         trees.append(Tree(path, "bundle", ()))
     return homes, trees
+
+
+def _home_lookup(trees, packages, calls):
+    """Resolve only the identifiers present in this home's call history."""
+    roots = {}
+    for tree in trees:
+        root = tree.path.absolute()
+        tier = TIER_LOCAL if tree.kind == "home" else TIER_EXTERNAL
+        roots[root] = min(tier, roots.get(root, tier))
+
+    matches = defaultdict(dict)
+    for tree in sorted(trees, key=lambda t: roots[t.path.absolute()]):
+        for md, declared, record_name in packages[tree]:
+            relative = md.parent.relative_to(tree.path).as_posix()
+            aliases = {relative, md.parent.name, declared} & calls.keys()
+            if not aliases:
+                continue
+            path = md.absolute()
+            # Nested search roots own a candidate through the most specific lexical root.
+            root = max(
+                (r for r in roots if path.is_relative_to(r)), key=lambda r: len(r.parts)
+            )
+            candidate = (roots[root], str(root), skill_candidate_rank(path, root), path)
+            physical_md = md.resolve()
+            for alias in aliases:
+                # The loader tries a direct path before recursive matches in each root.
+                views = matches[alias]
+                if physical_md not in views or (
+                    relative == alias and views[physical_md][2] == tree
+                ):
+                    views[physical_md] = (candidate, record_name, tree)
+
+    resolved = {}
+    for alias, views in matches.items():
+        contenders = list(views.values())
+        winner, _ = pick_skill_candidate([candidate for candidate, _, _ in contenders])
+        if winner is not None:
+            resolved[alias] = contenders[winner][1]
+    return resolved
+
+
+def _call_totals(homes, trees, packages, now):
+    totals: Counter[str] = Counter()
+    file_calls: Counter[str] = Counter()
+    databases = defaultdict(list)
+    for owner, home in homes.items():
+        databases[(home / "state.db").resolve()].append(owner)
+    for database, owners in databases.items():
+        calls, with_file = skill_calls(database, now)
+        names = defaultdict(set)
+        for owner in owners:
+            visible = [tree for tree in trees if owner in tree.owners]
+            for alias, name in _home_lookup(visible, packages, calls).items():
+                names[alias].add(name)
+        for alias, targets in names.items():
+            if len(targets) == 1:
+                (name,) = targets
+                totals[name] += calls[alias]
+                file_calls[name] += with_file[alias]
+    return totals, file_calls
 
 
 def _inventory(args: argparse.Namespace):
@@ -98,51 +176,73 @@ def _inventory(args: argparse.Namespace):
         raise ValueError("manifest must be outside the input homes")
     exclusions = set()
     if args.exclude:
-        exclusions = {s.strip() for s in args.exclude.read_text(encoding="utf-8-sig").splitlines() if s.strip()}
+        exclusions = {
+            s.strip()
+            for s in args.exclude.read_text(encoding="utf-8-sig").splitlines()
+            if s.strip()
+        }
     now = time.time()
-    totals: Counter[str] = Counter()
-    file_calls: Counter[str] = Counter()
-    for database in {(home / "state.db").resolve() for home in homes.values()}:
-        calls, with_file = skill_calls(database, now)
-        totals.update(calls)
-        file_calls.update(with_file)
-
     # One linked package can be visible in several homes while occupying just one place.
-    sources: dict[Path, set[Tree]] = defaultdict(set)
+    sources: dict[Path, list[tuple[Tree, Path]]] = defaultdict(list)
     for tree in trees:
         for md in _files(tree.path, discovery=True, output=output):
-            sources[md.parent.resolve()].add(tree)
+            sources[md.parent.resolve()].append((tree, md))
     groups = defaultdict(lambda: defaultdict(list))
     prefixes = defaultdict(set)
     by_name = defaultdict(set)
+    packages = defaultdict(list)
     for path, views in sorted(sources.items()):
-        name, digest, prefix = _package(path, output)
+        declared, digest, prefix = _package(path, output)
+        name = declared or min(md.parent.name for _, md in views)
+        for tree, md in views:
+            packages[tree].append((md, declared, name))
         if len(prefix) == 3:
             prefixes[prefix].add(name)
             by_name[name].add(prefix)
-        owners = sorted({owner for view in views for owner in view.owners})
-        kinds = sorted({view.kind for view in views})
-        groups[name][digest].append({"path": str(path), "kinds": kinds, "owners": owners})
+        owners = sorted({owner for tree, _ in views for owner in tree.owners})
+        kinds = sorted({tree.kind for tree, _ in views})
+        groups[name][digest].append(
+            {"path": str(path), "kinds": kinds, "owners": owners}
+        )
 
+    totals, file_calls = _call_totals(homes, trees, packages, now)
     records = []
     for name in sorted(groups.keys() - exclusions):
         variants = groups[name]
         places = [loc for locations in variants.values() for loc in locations]
         visibility = {owner for loc in places for owner in loc["owners"]}
-        overlap = sorted({other for prefix in by_name[name] for other in prefixes[prefix]} - {name})
+        overlap = sorted(
+            {other for prefix in by_name[name] for other in prefixes[prefix]} - {name}
+        )
         for digest, locations in sorted(variants.items()):
-            records.append({
-                "name": name, "layer": "common" if visibility == homes.keys() else "agent",
-                "owners": sorted({owner for loc in locations for owner in loc["owners"]}),
-                "sha256": digest, "copies_identical": len(variants) == 1, "locations": locations,
-                "calls_30d": totals[name], "file_calls_30d": file_calls[name],
-                "same_name_overlap": len(places) > 1, "weak_overlap": overlap,
-                "archive_candidate": len(places) > 1 and totals[name] == 0,
-            })
+            records.append(
+                {
+                    "name": name,
+                    "layer": "common" if visibility == homes.keys() else "agent",
+                    "owners": sorted(
+                        {owner for loc in locations for owner in loc["owners"]}
+                    ),
+                    "sha256": digest,
+                    "copies_identical": len(variants) == 1,
+                    "locations": locations,
+                    "calls_30d": totals[name],
+                    "file_calls_30d": file_calls[name],
+                    "same_name_overlap": len(places) > 1,
+                    "weak_overlap": overlap,
+                    "archive_candidate": len(places) > 1 and totals[name] == 0,
+                }
+            )
     return {
-        "version": 1, "homes": sorted(homes), "window_end": now, "exclusions": sorted(exclusions),
-        "counts": {"names": len(groups), "locations": len(sources), "records": len(records),
-                   "excluded_names": len(groups.keys() & exclusions)},
+        "version": 1,
+        "homes": sorted(homes),
+        "window_end": now,
+        "exclusions": sorted(exclusions),
+        "counts": {
+            "names": len(groups),
+            "locations": len(sources),
+            "records": len(records),
+            "excluded_names": len(groups.keys() & exclusions),
+        },
         "records": records,
     }
 
@@ -169,14 +269,40 @@ def _command(args: argparse.Namespace) -> None:
 
 
 def configure(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--home", action="append", required=True, metavar="LABEL=DIRECTORY",
-                        help="Read this home's skills and state.db (repeatable)")
-    parser.add_argument("--shared", type=Path, action="append", default=[], help="Skill tree visible to every home")
-    parser.add_argument("--home-tree", action="append", default=[], metavar="LABEL=DIRECTORY",
-                        help="Additional skill tree visible to this home (repeatable)")
-    parser.add_argument("--bundle", type=Path, action="append", default=[], help="Install-only skill tree")
-    parser.add_argument("--exclude", type=Path, help="Exact skill names to omit, one per line")
-    parser.add_argument("--manifest", type=Path, help="Create this new JSON file (default: stdout)")
+    parser.add_argument(
+        "--home",
+        action="append",
+        required=True,
+        metavar="LABEL=DIRECTORY",
+        help="Read this home's skills and state.db (repeatable)",
+    )
+    parser.add_argument(
+        "--shared",
+        type=Path,
+        action="append",
+        default=[],
+        help="Skill tree visible to every home",
+    )
+    parser.add_argument(
+        "--home-tree",
+        action="append",
+        default=[],
+        metavar="LABEL=DIRECTORY",
+        help="Additional skill tree visible to this home (repeatable)",
+    )
+    parser.add_argument(
+        "--bundle",
+        type=Path,
+        action="append",
+        default=[],
+        help="Install-only skill tree",
+    )
+    parser.add_argument(
+        "--exclude", type=Path, help="Exact skill names to omit, one per line"
+    )
+    parser.add_argument(
+        "--manifest", type=Path, help="Create this new JSON file (default: stdout)"
+    )
     parser.set_defaults(func=_command)
 
 

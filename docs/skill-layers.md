@@ -17,13 +17,13 @@ The envelope carries `version`, `homes`, `window_end` (Unix seconds), `exclusion
 
 | Record field | Meaning |
 | --- | --- |
-| `name` | Frontmatter name, with the package directory name as the fallback. |
+| `name` | Frontmatter name, with the discovered directory name as the fallback. |
 | `layer` | `common` when every selected home has the name. All other names have layer `agent`. |
 | `owners` | Sorted home labels with access to this particular copy. A bundle-only copy has an empty list. |
 | `sha256` | Package fingerprint over sorted relative file paths and their byte digests, including supporting files. |
 | `copies_identical` | True when all locations for the name have the same fingerprint. |
 | `locations` | Physical package directories holding this fingerprint. Each has `path`, source `kinds` (`home`, `shared`, `bundle`), and `owners`. Multiple views of one directory count as one place. |
-| `calls_30d` | Total assistant `skill_view` calls with this name across selected session databases in the inclusive 30-day window. |
+| `calls_30d` | Total assistant `skill_view` calls attributed to this name across selected session databases in the inclusive 30-day window. |
 | `file_calls_30d` | Subset of those calls containing the `file_path` argument. |
 | `same_name_overlap` | True when two or more physical package directories declare the name. |
 | `weak_overlap` | Other names whose descriptions share the first three whitespace-delimited words, compared case-insensitively. |
@@ -32,6 +32,10 @@ The envelope carries `version`, `homes`, `window_end` (Unix seconds), `exclusion
 Discovery uses the catalog's `SKILL.md` convention, including linked package directories and the catalog's exclusions for runtime directories and nested support material. All discovered versions are inventoried, including copies normally shadowed by lookup precedence. Bundle tracking files describe the installed origin. The inventory hashes the package currently on disk so that local edits survive.
 
 For the role-based index in lina#567, select records whose `owners` include the requesting home. The union of eligible records for a common name covers every home. Differing common copies retain their individual locations and owners, including any shared fallback. A bundle-only record has no eligible home. Archive flags are advisory and leave indexing eligibility unchanged.
+
+For an unnamed linked package, the directory name visible in the tree supplies the record name. If several links expose one physical package under different names, the lexicographically smallest discovered directory name labels its single location. Use that record name with `--exclude`. Each home can still refer to the package through its own link.
+
+Each home's calls resolve against its selected trees by frontmatter name, discovered directory name, or path relative to the tree. Home and `--home-tree` packages take precedence over `--shared` packages. Bundle-only packages have no home visibility. The loader's tie-break applies within the winning tier. For example, among byte-identical `SKILL.md` files in one root, a uniquely shallowest copy wins. An ambiguous or unmatched argument contributes zero. If homes link to the same database, its counts are included once; an argument resolving to different record names across those homes contributes zero.
 
 The call counters belong to the **name** and repeat across its variants. Count them once per name when totaling calls. SQLite aggregates within the window and returns only names, path-presence groups and counts. Malformed tool calls contribute zero. A missing database stops the command so that missing evidence cannot turn into an archive flag.
 
