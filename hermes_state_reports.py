@@ -121,7 +121,8 @@ def get(conn, report_id: str, version: Optional[int] = None) -> Optional[Report]
     params = (report_id, version) if version is not None else (report_id,)
     row = conn.execute(f"SELECT {_COLUMNS}, v.title, v.summary FROM reports.report AS r "
                        "JOIN reports.report_version AS v USING (report_id) "
-                       f"WHERE r.report_id = %s AND {which}", params).fetchone()
+                       f"WHERE r.report_id = %s AND {which} AND (r.desk_state IS NULL OR r.desk_state = 'active')",
+                       params).fetchone()
     if row is None:
         return None
     report = Report(*row[:12])
@@ -138,7 +139,7 @@ def versions(conn, report_id: str) -> list[dict[str, Any]]:
 def listing(conn, *, card: Optional[str] = None, goal: Optional[str] = None,
             include_private: bool = False) -> list[Report]:
     """Reports with their newest body, newest change first; only those of *card* and of *goal* when given."""
-    where, params = ["v.version = r.version"], []
+    where, params = ["v.version = r.version", "(r.desk_state IS NULL OR r.desk_state = 'active')"], []
     for column, value in (("card", card), ("goal", goal)):
         if value:
             where.append(f"r.{column} = %s")
