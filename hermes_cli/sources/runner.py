@@ -102,7 +102,7 @@ class _Run:
             else:
                 reason = exc.kind if exc.kind in ERROR_KINDS else ("auth" if exc.auth else "provider_error")
                 self.fail(reason, auth=exc.auth)
-        except Exception:
+        except (OSError, ValueError, TypeError, LookupError, AttributeError, OverflowError, RuntimeError):
             # SDK and malformed-response exceptions may include the raw body. Persist a fixed kind only.
             self.fail("collection_error")
         else:

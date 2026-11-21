@@ -1,9 +1,11 @@
 """Manual source contracts. Every response is synthetic and all transports are disconnected."""
 
 import base64
+import ast
 import json
 import subprocess
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -125,6 +127,11 @@ def test_static_read_only_surface_and_pre_dispatch_rejection(monkeypatch):
                  "SLACK_SEND_MESSAGE", "SLACK_ADD_REACTION_TO_AN_ITEM", "SLACK_JOIN_AN_EXISTING_CONVERSATION",
                  "SLACK_SET_READ_CURSOR_IN_A_CONVERSATION", "SLACK_LIST_CONVERSATIONS"}
     assert forbidden.isdisjoint(set().union(*adapters.TOOLS.values()))
+    for module in (adapters, mail, slack):
+        tree = ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
+        literals = {node.value for node in ast.walk(tree) if isinstance(node, ast.Constant)
+                    and isinstance(node.value, str) and node.value.startswith(("GMAIL_", "SLACK_"))}
+        assert literals <= adapters.TOOLS["mail"] | adapters.TOOLS["slack"]
     monkeypatch.setattr(adapters, "_composio", lambda *_: pytest.fail("subprocess reached"))
     monkeypatch.setattr(adapters, "_connector", lambda *_: pytest.fail("gateway reached"))
     for kind in ("mail", "slack"):
