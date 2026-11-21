@@ -27,7 +27,7 @@ from typing import Any, Optional
 
 from agent.memory_provider import MemoryProvider, RecallStatus, ctx_bound
 
-from . import grade, korean, lcm, links, personal, search, speaker, terms
+from . import grade, korean, lcm, links, personal, search, speaker, standing_rules, terms
 from .identity import OWNER_HANDLE, IdentityRegistry, SourceKey
 from .policy import load_policy, signals_for_turn, turn_start_index
 from .record import TurnRecord, build_record, turn_rows
@@ -160,13 +160,7 @@ class LinaMemoryProvider(MemoryProvider):
         person_id = None if author.get("is_bot") else self._registry.resolve(
             "person", self._person_keys(author, honcho_keys))
         agent_keys: list[SourceKey] = [("profile", agent), ("honcho_peer", honcho_keys.get("agent", ""))]
-        handle = self._author_handle(author)
-        speakers = speaker.turn_speakers(
-            self._policy, history, turn_start, agent_context=self._init.get("agent_context", ""),
-            platform=self._init.get("platform", ""), author=author, agent_ref=f"agent:{agent}",
-            person_ref=links.row_refs([handle])[0] if handle else None,
-            owner_handle=lambda: bool(handle) and self._registry.person_of(handle) == self._registry.person_of(
-                OWNER_HANDLE))
+        speakers = self._turn_speakers(history, turn_start, author, agent)
         return build_record(
             rule, turn_rows(history, turn_start), store_uid=self._store_uid, person_id=person_id,
             agent_id=self._registry.resolve("agent", agent_keys) or f"agent:{agent}",
@@ -174,6 +168,39 @@ class LinaMemoryProvider(MemoryProvider):
                 session_id, honcho_keys, lcm_conversation)) or "", session_id=session_id, platform=self._init.get("platform", ""),
             author_id=str(author.get("id") or "") or None, speakers=speakers, gateway_notes=gateway_notes,
         )
+
+    def _turn_speakers(self, history, start, author, agent):
+        handle = self._author_handle(author)
+
+        def owner_handle() -> bool:
+            # In a shared room the session opener cannot vouch for a turn without a sender ID.
+            person = self._registry.person_of(handle) if handle and author.get("id") else None
+            return bool(person) and person == self._registry.person_of(OWNER_HANDLE)
+
+        return speaker.turn_speakers(
+            self._policy, history, start, agent_context=self._init.get("agent_context", ""),
+            platform=self._init.get("platform", ""), author=author, agent_ref=f"agent:{agent}",
+            person_ref=links.row_refs([handle])[0] if handle else None, owner_handle=owner_handle)
+
+    @property
+    def _rule_source_uid(self) -> str | None:
+        """The exact persisted owner text available to this tool call."""
+        from agent.memory_tool_turn import current_tool_turn
+
+        source = current_tool_turn(self)
+        if source is None or source.session_id != self._session_id:
+            return None
+        rows = self._turn_speakers([source.row], 0, source.author, self._agent_name())
+        if not rows or rows[0][1] != "owner" or not (ref := rows[0][2]):
+            return None
+        uid = source.text_uid()
+        if not uid:
+            return None
+        honcho_keys = (self._honcho.source_keys(source.author, session_key=self._honcho.session_key)
+                       if self._honcho_on else {})
+        conversation = self._registry.resolve("conversation", self._conversation_keys(
+            source.session_id, honcho_keys, lcm.conversation_id(source.session_id)))
+        return uid if self._message_store().identify_owner_turn(uid, source.session_id, ref, conversation) else None
 
     def _author_handle(self, author: dict[str, Any]) -> Optional[SourceKey]:
         """The turn author's handle: their gateway user, or the machine owner on a local surface."""
@@ -391,9 +418,11 @@ class LinaMemoryProvider(MemoryProvider):
 
     def get_tool_schemas(self) -> list[dict[str, Any]]:
         honcho = self._honcho.get_tool_schemas() if self._honcho.is_available() else []
-        return [*honcho, *search.SCHEMAS, links.LINK_SCHEMA, terms.TERMS_SCHEMA, personal.MARK_SCHEMA]
+        return [*honcho, *search.SCHEMAS, links.LINK_SCHEMA, terms.TERMS_SCHEMA, personal.MARK_SCHEMA, standing_rules.SCHEMA]
 
     def handle_tool_call(self, tool_name: str, args: dict[str, Any], **kwargs) -> str:
+        if tool_name == standing_rules.TOOL:
+            return standing_rules.handle(self, args)
         if tool_name in search.TOOL_NAMES:
             return search.handle_tool_call(self._memory_search(), tool_name, args)
         if tool_name == links.LINK_TOOL:

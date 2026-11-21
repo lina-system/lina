@@ -575,6 +575,18 @@ class MessageStore:
                 changed += cur.rowcount
         return changed
 
+    def identify_owner_turn(self, uid: str, session_id: str, ref: str, conversation: str | None) -> bool:
+        """Fill the pending speaker on one current user text version, preserving every decided speaker."""
+        with self._cursor() as cur:
+            cur.execute("UPDATE memory.messages SET speaker = 'owner', speaker_ref = %s,"
+                        " conversation_id = coalesce(conversation_id, %s) WHERE uid = %s AND session_id = %s"
+                        " AND agent_id = %s AND source = 'agent' AND role = 'user' AND speaker = 'unknown'"
+                        " AND forgotten_at IS NULL", (ref, conversation, uid, session_id, self.agent_id))
+            cur.execute("SELECT 1 FROM memory.messages WHERE uid = %s AND session_id = %s AND agent_id = %s"
+                        " AND source = 'agent' AND role = 'user' AND speaker = 'owner' AND grade = 'owner'"
+                        " AND forgotten_at IS NULL", (uid, session_id, self.agent_id))
+            return cur.fetchone() is not None
+
     def speakers(self, uids: Iterable[str]) -> dict[str, str]:
         """The stored speaker kind of each of *uids* this agent may read."""
         wanted = list(dict.fromkeys(u for u in uids if u))

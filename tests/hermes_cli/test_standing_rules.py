@@ -70,6 +70,36 @@ def test_own_and_shared_reads_with_function_only_writes(app, turns):
             app.execute(sql)
 
 
+def test_recorder_can_change_and_end_rule_addressed_to_another_agent(
+    app: psycopg.Connection, turns: str
+) -> None:
+    rule = uuid.uuid4()
+    target = "agent:gamma"
+    history = (
+        "SELECT version, status, recorded_by FROM memory.standing_rules "
+        "WHERE rule_id = %s ORDER BY version"
+    )
+    assert record(app, rule, target=target) == 1
+    assert app.execute(history, (rule,)).fetchall() == []
+
+    app.execute("SET lina.agent_id = 'beta'")
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        record(app, rule, "outside", target=target)
+    assert app.execute(history, (rule,)).fetchall() == []
+
+    app.execute("SET lina.agent_id = 'alpha'")
+    assert record(app, rule, "edit", target=target, statement="Use two lines") == 2
+    assert record(app, rule, "end", target=target, status="ended", statement="Stop doing that") == 3
+    assert app.execute(history, (rule,)).fetchall() == []
+
+    app.execute("SET lina.agent_id = 'gamma'")
+    assert app.execute(history, (rule,)).fetchall() == [
+        (1, "replaced", "agent:alpha"),
+        (2, "replaced", "agent:alpha"),
+        (3, "ended", "agent:alpha"),
+    ]
+
+
 def test_place_filter_keeps_match_and_rejects_external_citation(app, turns):
     rule = uuid.uuid4()
     query = """SELECT memory.record_standing_rule(%s, 'owner', 'filter', 'place', '*', 'channel:sample',
