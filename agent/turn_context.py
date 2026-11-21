@@ -1107,7 +1107,7 @@ def _append_multimodal_context(
 
 def _persist_turn_start(
     agent: Any, messages: list[Any], conversation_history: Optional[list[Any]],
-    pending_cli_message: Any,
+    pending_cli_message: Any, *, source_row=None, turn_author=None,
 ) -> None:
     """Crash-resilience: persist the inbound user turn once, with final api_content,
     before the first LLM call. Same critical section as CLI close persistence; retries
@@ -1115,6 +1115,9 @@ def _persist_turn_start(
     def _ensure_and_persist() -> None:
         agent._ensure_db_session()
         agent._persist_session(messages, conversation_history)
+        if source_row is not None:
+            from agent.memory_tool_turn import bind_persisted_user_turn
+            bind_persisted_user_turn(agent, source_row, turn_author)
 
     _persist_under_lock(
         agent, _ensure_and_persist,
@@ -1322,7 +1325,15 @@ def build_turn_context(
     for row in recall_rows:
         append_message(messages, row)
 
-    _persist_turn_start(agent, messages, conversation_history, pending_cli_message)
+    # A compaction re-anchor can name an older user row. Only the actual inbound
+    # dict (or a copy carrying its durable identity) may authorize a memory tool.
+    source_row = messages[current_turn_user_idx] if 0 <= current_turn_user_idx < len(messages) else None
+    if source_row is not user_msg and not (
+        source_row and user_msg.get("message_uid") and source_row.get("message_uid") == user_msg["message_uid"]
+    ):
+        source_row = None
+    _persist_turn_start(agent, messages, conversation_history, pending_cli_message,
+                        source_row=None if plugin_block_message else source_row, turn_author=turn_author)
 
     return TurnContext(
         user_message=user_message, original_user_message=original_user_message, messages=messages,
