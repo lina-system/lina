@@ -73,8 +73,7 @@ CREATE TABLE memory.taste_events (
     to_strength memory.taste_strength,
     from_valence memory.taste_valence,
     to_valence memory.taste_valence,
-    PRIMARY KEY (agent_id, taste_id, event_id),
-    FOREIGN KEY (agent_id, taste_id) REFERENCES memory.tastes (agent_id, id)
+    PRIMARY KEY (agent_id, taste_id, event_id)
 );
 
 SELECT public.lina_apply_agent_rls('memory.tastes');
@@ -84,13 +83,18 @@ SELECT public.lina_apply_agent_rls('memory.taste_events');
 CREATE FUNCTION memory.taste_check_evidence() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
     cited text;
+    expected_source text;
 BEGIN
     -- Lock each source for the transaction so a simultaneous forget cannot slip between
     -- checking the row and recording its citation. A journal is specifically a heart row.
-    FOREACH cited IN ARRAY array_prepend(NEW.journal_uid, NEW.message_uids) LOOP
+    FOR cited, expected_source IN
+        SELECT NEW.journal_uid, 'heart' UNION ALL SELECT unnest(NEW.message_uids), 'agent'
+    LOOP
         PERFORM 1 FROM memory.messages
-            WHERE uid = cited AND agent_id = NEW.agent_id AND forgotten_at IS NULL
-              AND (cited <> NEW.journal_uid OR source = 'heart')
+            WHERE uid = cited AND source = expected_source AND agent_id = NEW.agent_id AND forgotten_at IS NULL
+              -- Same speaker contract as hermes_cli.heart.evidence.lookup.
+              AND (speaker <> 'agent' OR speaker_ref = 'agent:' || agent_id)
+              AND (speaker <> 'outside' OR role IS DISTINCT FROM 'user')
             FOR SHARE;
         IF NOT FOUND THEN
             RAISE EXCEPTION 'taste evidence requires an available source for this agent' USING ERRCODE = '23514';
@@ -103,9 +107,17 @@ CREATE TRIGGER taste_check_evidence BEFORE INSERT OR UPDATE ON memory.taste_evid
 
 CREATE FUNCTION memory.taste_keep_history() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-    RAISE EXCEPTION 'taste events are append-only' USING ERRCODE = '23514';
+    IF TG_OP <> 'INSERT' THEN
+        RAISE EXCEPTION 'taste events are append-only' USING ERRCODE = '23514';
+    END IF;
+    -- An event needs a parent when written, but outlives a candidate's expiry.
+    PERFORM 1 FROM memory.tastes WHERE agent_id = NEW.agent_id AND id = NEW.taste_id FOR KEY SHARE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'taste event requires an existing taste' USING ERRCODE = '23503';
+    END IF;
+    RETURN NEW;
 END $$;
-CREATE TRIGGER taste_events_append_only BEFORE UPDATE OR DELETE ON memory.taste_events
+CREATE TRIGGER taste_events_append_only BEFORE INSERT OR UPDATE OR DELETE ON memory.taste_events
     FOR EACH ROW EXECUTE FUNCTION memory.taste_keep_history();
 
 CREATE FUNCTION memory.taste_write() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -114,6 +126,13 @@ BEGIN
         RAISE EXCEPTION 'taste tombstones are immutable' USING ERRCODE = '23514';
     END IF;
     IF TG_OP = 'DELETE' THEN
+        IF OLD.status = 'candidate' AND OLD.first_seen <= CURRENT_DATE - 14 THEN
+            -- Recent evidence still pins the parent through its live-row foreign key.
+            DELETE FROM memory.taste_evidence WHERE agent_id = OLD.agent_id AND taste_id = OLD.id
+                                                AND observed_on <= CURRENT_DATE - 14;
+        ELSIF EXISTS (SELECT 1 FROM memory.taste_events WHERE agent_id = OLD.agent_id AND taste_id = OLD.id) THEN
+            RAISE EXCEPTION 'taste with history can only be deleted at candidate expiry' USING ERRCODE = '23503';
+        END IF;
         RETURN OLD;
     END IF;
     IF TG_OP = 'UPDATE' AND

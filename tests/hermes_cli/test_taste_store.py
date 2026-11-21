@@ -110,6 +110,32 @@ def test_unusable_evidence_is_refused(agent, field, invalid):
     assert agent.execute("SELECT count(*) FROM memory.taste_evidence").fetchone() == (0,)
 
 
+@pytest.mark.parametrize(("speaker", "ref", "role"), [
+    ("agent", "agent:beta", "assistant"),
+    ("agent", None, "assistant"),
+    ("outside", "relay:guest", "user"),
+])
+def test_turn_evidence_checks_the_speaker_within_the_profile(agent, speaker, ref, role):
+    tid = taste(agent)
+    message(agent, "journal", "heart")
+    agent.execute(
+        "INSERT INTO memory.messages (agent_id, uid, source, speaker, speaker_ref, role, content_sha256) VALUES "
+        "('alpha', 'own', 'agent', 'agent', 'agent:alpha', 'assistant', 'synthetic'), "
+        "('alpha', 'foreign', 'agent', %s, %s, %s, 'synthetic')", (speaker, ref, role),
+    )
+    with pytest.raises(psycopg.errors.CheckViolation):
+        evidence(agent, tid, "journal", ["own", "foreign"])
+    evidence(agent, tid, "journal", ["own"])
+    assert agent.execute("SELECT message_uids FROM memory.taste_evidence").fetchone() == (["own"],)
+
+
+def test_journal_cannot_double_as_a_cited_turn(agent):
+    tid = taste(agent)
+    message(agent, "journal", "heart")
+    with pytest.raises(psycopg.errors.CheckViolation):
+        evidence(agent, tid, "journal", ["journal"])
+
+
 def test_forget_scrubs_record_and_evidence_and_preserves_history(agent):
     tid = taste(agent)
     message(agent, "journal", "heart")
@@ -144,3 +170,35 @@ def test_tombstone_cooldown_boundary(agent, age, blocked):
     else:
         taste(agent)
         assert agent.execute("SELECT status FROM memory.tastes ORDER BY id").fetchall() == [("forgotten",), ("active",)]
+
+
+@pytest.mark.parametrize("has_evidence", [False, True])
+def test_expire_candidate_keeps_its_immutable_history(agent, has_evidence):
+    tid = agent.execute(
+        "INSERT INTO memory.tastes (agent_id, target_kind, label, valence, strength, status, origin, first_seen) "
+        "VALUES ('alpha', 'method', 'grid sorting', 'like', 0.15, 'candidate', 'outcome', CURRENT_DATE - 14) "
+        "RETURNING id"
+    ).fetchone()[0]
+    for reason in ("created", "strength_changed"):
+        event(agent, tid, reason)
+    if has_evidence:
+        message(agent, "journal", "heart")
+        evidence(agent, tid, "journal", [])
+        agent.execute("UPDATE memory.taste_evidence SET observed_on = CURRENT_DATE - 13")
+        with pytest.raises(psycopg.errors.ForeignKeyViolation):
+            agent.execute("DELETE FROM memory.tastes WHERE id = %s", (tid,))
+        agent.execute("UPDATE memory.taste_evidence SET observed_on = CURRENT_DATE - 14")
+    assert agent.execute(
+        "DELETE FROM memory.tastes WHERE id = %s AND status = 'candidate' AND first_seen <= CURRENT_DATE - 14 "
+        "RETURNING id", (tid,),
+    ).fetchone() == (tid,)
+    assert agent.execute("SELECT id FROM memory.tastes").fetchall() == []
+    assert agent.execute("SELECT taste_id FROM memory.taste_evidence").fetchall() == []
+    assert agent.execute("SELECT taste_id, reason FROM memory.taste_events ORDER BY event_id").fetchall() == [
+        (tid, "created"), (tid, "strength_changed"),
+    ]
+    with pytest.raises(psycopg.errors.CheckViolation):
+        agent.execute("DELETE FROM memory.taste_events WHERE taste_id = %s", (tid,))
+    with pytest.raises(psycopg.errors.ForeignKeyViolation):
+        event(agent, tid, "correction")
+    assert taste(agent) != tid
