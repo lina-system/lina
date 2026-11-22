@@ -206,3 +206,44 @@ def test_weekly_includes_profile_evening_until_local_midnight(sandbox, la_evenin
     page = (tmp_path / "250601.md").read_text()
     assert "Sunday evening" in page
     assert "Monday midnight" not in page
+
+
+@pytest.mark.parametrize(("caller", "target", "activated", "status", "journal_count", "promoted_at"), [
+    pytest.param("UTC", "Asia/Seoul", "2025-05-03T00:00:00+09:00", "active", 3,
+                 "2025-06-01T15:00:00Z", id="utc-to-seoul"),
+    pytest.param("Asia/Seoul", "America/Los_Angeles", "2025-05-02T23:30:00-07:00", "core", 4,
+                 "2025-06-01T07:00:00Z", id="seoul-to-los-angeles"),
+])
+def test_weekly_reviews_each_profiles_local_week(sandbox, monkeypatch, tmp_path, memory_store_sql,
+                                                caller, target, activated, status, journal_count, promoted_at):
+    home = sandbox["alpha"]
+    (home / "config.yaml").write_text(f"timezone: {target}\n")
+    monkeypatch.delenv("HERMES_TIMEZONE", raising=False)
+    assert hermes_time.get_timezone() == ZoneInfo(target)
+    sql = memory_store_sql
+    [(tid,)] = sql("INSERT INTO memory.tastes(agent_id,target_kind,label,status,origin,valence,strength,first_seen)"
+                   " VALUES ('alpha','method','grid layout','active','outcome','like',0.8,'2025-05-01') RETURNING id")
+    sql("INSERT INTO memory.taste_events(agent_id,taste_id,changed_at,reason,changed_by,from_status,to_status)"
+        " VALUES ('alpha',%s,%s,'status_changed','review','candidate','active')", (tid, activated))
+    for n in range(3):
+        uid = f"turn-{n}"
+        turn(sql, uid)
+        journal(home, DAY, "like", (uid,))
+    daily(DAY)
+    stamp = "2025-06-01T16:00:00Z"  # Monday in Seoul, Sunday in Los Angeles.
+    put_entry(home, Entry(ts=stamp, event="Synthetic", feeling="calm", note="Boundary", evidence=(), strength=1))
+    storage.append(home / "heart/changes.jsonl", Change(ts=stamp, added=("Boundary change",)))
+
+    monkeypatch.setenv("HERMES_HOME", str(sandbox["beta"]))
+    monkeypatch.setenv("HERMES_TIMEZONE", caller)
+    code, _, error = invoke("weekly", "--week-ending", "2025-06-01", "--out-dir", str(tmp_path))
+    assert code == 0, error
+    assert sql("SELECT status FROM memory.tastes WHERE id=%s", (tid,)) == [(status,)]
+    page = (tmp_path / "250601.md").read_text()
+    assert f"Journal: {journal_count} lines" in page
+    assert ("Boundary change" in page) == (journal_count == 4)
+    assert storage.home() == sandbox["beta"] and hermes_time.get_timezone() == ZoneInfo(caller)
+    if status == "active":
+        assert invoke("weekly", "--week-ending", "2025-06-02", "--out-dir", str(tmp_path))[0] == 0
+    assert sql("SELECT changed_at FROM memory.taste_events WHERE taste_id=%s AND reason='status_changed'"
+               " AND to_status='core'", (tid,)) == [(datetime.fromisoformat(promoted_at),)]
