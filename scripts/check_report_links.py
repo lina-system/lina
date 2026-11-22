@@ -124,7 +124,7 @@ def main() -> int:
     headers = {SESSION_HEADER: token} if token else {}
 
     try:
-        index = json.loads((args.registry / "index.json").read_text(encoding="utf-8"))
+        index = json.loads((args.registry / "index.json").read_bytes())
     except (OSError, ValueError):
         return setup_failure("invalid-index")
     if not isinstance(index, dict) or not isinstance(index.get("reports"), list):
