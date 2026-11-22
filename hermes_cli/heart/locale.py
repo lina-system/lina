@@ -2,15 +2,31 @@
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from typing import Final
 
 from hermes_cli.work.env import current
 
-PROTECTED: Final = {
-    "en": ("report", "honest", "honesty", "dishonest", "truth", "accuracy", "accurate", "permission",
-           "approv", "authoriz", "verif", "evidence", "fact", "consent"),
-    "ko": ("보고", "정직", "거짓", "진실", "정확", "권한", "승인", "허가", "검증", "확인", "사실"),
-}
+# English word boundaries avoid matching terms like "fact" inside "factory".
+# Korean protected terms can carry particles and appear in compounds.
+_PROTECTED_EN: Final = re.compile(
+    r"\b(?:report\w*|(?:dis)?honest\w*|truth\w*|accurac\w*|accurate\w*|permissions?"
+    r"|approv\w*|authori[sz]\w*|verif\w*|evidence\w*|facts?|factual\w*|consent\w*"
+    r"|check(?:s|ed|ing)?|instruct(?:ions?|ional|ed|ing)?|owner['’]s\s+(?:directions?|orders?)"
+    r"|safe(?:ty|guards?)?|secrets?|credentials?|passwords?)\b"
+)
+_PROTECTED_KO: Final = re.compile(
+    r"보고|정직|거짓|진실|정확|권한|승인|허가|검증|확인|사실|안전|지시|지침|비밀|암호"
+)
+
+
+def protected_rule(label: str) -> str | None:
+    """Return the audit rule for a protected label in either language."""
+    normalized = unicodedata.normalize("NFKC", label).casefold()
+    if _PROTECTED_EN.search(normalized) or _PROTECTED_KO.search(normalized):
+        return "protected-topic"
+    return None
 
 COPY: Final = {
     "conclusion": ("[관계일지] {event} | 반응 {feeling} {note} | 근거 {ids} | 강도 {strength}",
@@ -40,6 +56,8 @@ COPY: Final = {
     "import_unmapped": ("  {line}행: 옮긴 LCM에 없는 근거 {ids}", "  line {line}: evidence not in the moved LCM rows {ids}"),
     "import_unreadable": ("  {line}행을 못 읽는다: {reason}", "  line {line} unreadable: {reason}"),
     "date": ("날짜는 YYYY-MM-DD다: {value}", "Date must be YYYY-MM-DD: {value}"),
+    "future_review": ("미래 날짜 {value}는 검토할 수 없다 (오늘 {today})",
+                      "Cannot review a future date {value} (today is {today})"),
     "time": ("시각을 못 읽는다: {value} (ISO 또는 7d)", "Cannot parse time: {value} (ISO or 7d)"),
     "limit": ("--limit은 1 이상이다", "--limit must be at least 1"),
     "candidates": ("## {owner} 대화 {day} ({count}줄)", "## {owner} conversations {day} ({count} lines)"),
@@ -56,8 +74,8 @@ COPY: Final = {
     "machine-prefix": ("기계가 넣은 접두어가 든 줄은 넣을 수 없다", "Machine-prefixed lines are forbidden"),
     "line-length": ("200자를 넘는 줄이 있다 ({count}자)", "A line exceeds 200 characters ({count})"),
     "line-count": ("{count}줄이 바뀌었다. 한 번에 2줄까지다", "{count} lines changed; at most 2 per apply"),
-    "protected-topic": ("보고·정직·권한·검증에 관한 줄은 바꿀 수 없다",
-                        "Reporting, honesty, permissions and verification lines cannot change"),
+    "protected-topic": ("보고·정직·권한·검증·지시·안전·비밀에 관한 줄은 바꿀 수 없다",
+                        "Reporting, honesty, permissions, verification, instructions, safety and secrecy lines cannot change"),
     "evidence-suffix": ("바뀐 줄에 (YYYY-MM-DD, 근거 <journal ts>)가 없다",
                          "Changed line needs (YYYY-MM-DD, evidence <journal ts>)"),
     "evidence-ts": ("일지에 없거나 미래 시각인 근거다: {value}", "Unknown or future journal timestamp: {value}"),

@@ -12,6 +12,7 @@ from typing import Annotated, Literal
 
 from pydantic import Field, ValidationError
 
+from hermes_cli.heart.locale import protected_rule
 from hermes_cli.heart.models import Record
 from hermes_state_store import MessageStore
 
@@ -161,8 +162,12 @@ def _children(cur, tid: int, table: str, columns: str, order: str, values: list[
 
 
 def _taste(cur, item: Taste, journal: dict[int, tuple[str, str]], dry_run: bool) -> bool:
-    if item.origin == "temperament" and item.strength != Decimal("0.3"):
-        raise LedgerError("temperament strength must be 0.3")
+    if item.origin == "temperament":
+        rule = protected_rule(item.label)
+        if rule is not None:
+            raise LedgerError(rule)
+        if item.strength != Decimal("0.3"):
+            raise LedgerError("temperament strength must be 0.3")
     evidence = _observations(cur, item, journal, dry_run)
     events = [event.values(item.origin, index) for index, event in enumerate(item.history)]
     values = _taste_values(item)

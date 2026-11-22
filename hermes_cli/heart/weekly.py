@@ -5,15 +5,19 @@ from __future__ import annotations
 import datetime as dt
 import json
 from collections import Counter
+from contextlib import ExitStack
 from pathlib import Path
 
 from pydantic import TypeAdapter
 
+from agent.secret_scope import reset_multiplex_context, set_multiplex_context
 from hermes_cli.heart import rows, storage
 from hermes_cli.heart.locale import text
 from hermes_cli.heart.models import Change, Insight
+from hermes_cli.heart.refiner import review as review_tastes
 from hermes_cli.profiles import get_profile_dir, list_profile_names
 from hermes_cli.work.env import current
+from hermes_constants import hermes_home_key, reset_hermes_home_override, set_hermes_home_override
 
 
 def read_insights(path: Path) -> dict[str, Insight]:
@@ -38,7 +42,7 @@ def stats_line(row: Insight | None) -> str:
 
 def in_week(timestamp: str, end: dt.date) -> bool:
     parsed = storage.parse_ts(timestamp)
-    return parsed is not None and end - dt.timedelta(days=6) <= parsed.astimezone().date() <= end
+    return parsed is not None and end - dt.timedelta(days=6) <= storage.profile_date(parsed) <= end
 
 
 def section(profile: str, end: dt.date) -> str:
@@ -47,9 +51,15 @@ def section(profile: str, end: dt.date) -> str:
     heart = home / "heart"
     if not heart.is_dir():
         return "\n".join(lines + [text("inactive")])
-    with rows.open_store(home) as store:
-        entries = [entry for entry in rows.entries(store) if in_week(entry.ts, end)]
-    changes = [change for change in storage.records(heart / "changes.jsonl", Change) if in_week(change.ts, end)]
+    with ExitStack() as scope:
+        if hermes_home_key(home) != hermes_home_key():
+            # The caller's HERMES_TIMEZONE only applies to its own section.
+            scope.callback(reset_hermes_home_override, set_hermes_home_override(home))
+            scope.callback(reset_multiplex_context, set_multiplex_context(True))
+        with rows.open_store(home) as store:
+            entries = [entry for entry in rows.entries(store) if in_week(entry.ts, end)]
+            review_tastes(store, end, weekly=True)
+        changes = [change for change in storage.records(heart / "changes.jsonl", Change) if in_week(change.ts, end)]
     applied = [change for change in changes if change.added or change.removed]
     refused = Counter(change.refused for change in changes if change.refused)
     review = sum(entry.via == "review" for entry in entries)
@@ -72,7 +82,7 @@ def section(profile: str, end: dt.date) -> str:
 
 
 def weekly(args) -> None:
-    end = storage.day(args.week_ending)
+    end = storage.review_day(args.week_ending)
     names = list_profile_names()
     insights = read_insights(Path(args.insight_stats)) if args.insight_stats else {}
     blocks = [text("weekly_title", day=end.isoformat()), "",

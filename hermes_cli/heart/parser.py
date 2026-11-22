@@ -7,7 +7,7 @@ import sqlite3
 import sys
 
 TARGET_KINDS = ("topic", "task_type", "tone", "tool", "method", "media", "other")
-ROUTES = ("reaction", "outcome", "exposure")
+ROUTES = ("reaction", "outcome", "exposure", "consistency")
 DEFAULT_CANDIDATE_LIMIT = 40
 
 
@@ -28,7 +28,7 @@ def build(subparsers) -> None:
     write.add_argument("--via", choices=("turn", "review"), default="turn")
     write.add_argument("--pref-target", help="The taste this entry bears on (short, no names)")
     write.add_argument("--pref-kind", choices=TARGET_KINDS)
-    write.add_argument("--pref-dir", choices=("like", "dislike"))
+    write.add_argument("--pref-dir", choices=("like", "dislike", "ignored"))
     write.add_argument("--pref-route", choices=ROUTES, help="A reaction needs an owner message; the others do not")
     write.set_defaults(heart_fn=_fn("journal", "write"))
     listing = subparsers.add_parser("list", help="Read only this agent's journal")
@@ -46,6 +46,9 @@ def build(subparsers) -> None:
     review = subparsers.add_parser("review-input", help="Conversations, journal, self-note and recent edits for daily review")
     review.add_argument("--date")
     review.set_defaults(heart_fn=_fn("journal", "review_input"))
+    refine = subparsers.add_parser("refine", help="Apply the daily taste review to this agent's journal")
+    refine.add_argument("--date")
+    refine.set_defaults(heart_fn=_fn("refiner", "daily"))
     apply = subparsers.add_parser("self-apply", help="Apply a checked self-note candidate")
     apply.add_argument("--file", required=True)
     apply.set_defaults(heart_fn=_fn("selfnote", "apply"))

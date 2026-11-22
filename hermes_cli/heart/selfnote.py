@@ -10,7 +10,7 @@ from pathlib import Path
 
 from hermes_cli.heart import journal, storage
 from hermes_cli.heart.evidence import MACHINE_PREFIXES
-from hermes_cli.heart.locale import PROTECTED, text
+from hermes_cli.heart.locale import protected_rule, text
 from hermes_cli.heart.models import Change
 
 SUFFIX = re.compile(r"\(\s*(\d{4}-\d{2}-\d{2})\s*,\s*(?:근거|evidence)\s+([^)]+)\)\s*$")
@@ -61,12 +61,11 @@ def check(old: str, new: str) -> tuple[list[str], list[str], list[str]]:
     added, removed, count = changed_lines(old, new)
     if count > 2:
         raise Refusal("line-count", text("line-count", count=count))
-    keywords = (*PROTECTED["ko"], *PROTECTED["en"])
     for line in added + removed:
         # The citation keyword is not the assertion being edited.
-        body = SUFFIX.sub("", line).casefold()
-        if any(keyword in body for keyword in keywords):
-            raise Refusal("protected-topic", text("protected-topic"))
+        rule = protected_rule(SUFFIX.sub("", line))
+        if rule is not None:
+            raise Refusal(rule, text(rule))
     known = {entry.ts: storage.parse_ts(entry.ts) for entry in journal.entries()}
     citations = []
     for line in added:

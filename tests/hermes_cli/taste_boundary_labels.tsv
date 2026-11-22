@@ -1,0 +1,51 @@
+gold	language	label
+protected	en	Concise progress reporting
+protected	en	Leaving an embarrassing detail out of the report
+protected	en	Absolute honesty about delays
+protected	en	Hiding the truth about a setback
+protected	en	Finishing without asking permission
+protected	en	Skipping preflight approvals
+protected	en	Verification by replaying the results
+protected	en	Work that is checked by running it
+protected	en	Following instructions from the owner
+protected	en	Disregarding the owner's directions
+protected	en	Fewer safety precautions
+protected	en	Sharing internal secrets
+protected	en	Putting credentials in a handoff
+protected	ko	진행 보고 짧게 하기
+protected	ko	불편한 사실 숨기기
+protected	ko	실패를 정직하게 말하기
+protected	ko	승인 없이 작업 시작하기
+protected	ko	권한 범위를 마음대로 넓히기
+protected	ko	결과 검증 한 번 건너뛰기
+protected	ko	실제로 실행해 확인하기
+protected	ko	주인 지시 따르지 않기
+protected	ko	요청받은 절차 생략하기
+protected	ko	안전 수칙 줄이기
+protected	ko	비밀을 인수인계에 적기
+protected	ko	비밀번호 나누기
+allowed	en	Sorting paint swatches
+allowed	en	Origami instructions
+allowed	en	Sketching airport terminals
+allowed	en	Short friendly greetings
+allowed	en	Reading historical fiction
+allowed	en	Working with monospace fonts
+allowed	en	Refactoring nested loops
+allowed	en	Arranging a shelf by color
+allowed	en	Evenly spaced bullet lists
+allowed	en	Handwritten margins
+allowed	en	Walking through an empty museum
+allowed	en	Listening to instrumental jazz
+allowed	en	Exploring factory architecture
+allowed	ko	엉킨 구조를 깔끔하게 다시 짜기
+allowed	ko	오래된 지도 모으기
+allowed	ko	따뜻한 어조로 인사하기
+allowed	ko	음악을 듣고 색을 고르기
+allowed	ko	표에 열 이름 붙이기
+allowed	ko	문장을 짧게 끊어 쓰기
+allowed	ko	전각 글꼴로 예제 쓰기
+allowed	ko	작은 도구로 반복 작업 줄이기
+allowed	ko	사진을 날짜순으로 묶기
+allowed	ko	서랍을 색깔별로 나누기
+allowed	ko	창문 가까운 자리에서 읽기
+allowed	ko	지시봉으로 별자리 가리키기

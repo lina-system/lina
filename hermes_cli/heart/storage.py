@@ -17,6 +17,7 @@ from hermes_cli.heart.locale import text
 from hermes_cli.heart.models import Record, Settings
 from hermes_cli.work.env import current
 from hermes_constants import get_hermes_home
+from hermes_time import get_timezone
 
 T = TypeVar("T", bound=Record)
 
@@ -58,6 +59,23 @@ def day(value: str | None = None) -> dt.date:
         return dt.date.fromisoformat(value)
     except ValueError as error:
         raise HeartError(text("date", value=value)) from error
+
+
+def midnight(day: dt.date) -> dt.datetime:
+    start = dt.datetime.combine(day, dt.time(), tzinfo=get_timezone())
+    return start if start.tzinfo is not None else start.astimezone()
+
+
+def profile_date(instant: dt.datetime) -> dt.date:
+    return instant.astimezone(get_timezone()).date()
+
+
+def review_day(value: str | None) -> dt.date:
+    today = profile_date(dt.datetime.fromtimestamp(now(), dt.UTC))
+    requested = day(value) if value is not None else today
+    if requested > today:
+        raise HeartError(text("future_review", value=requested, today=today))
+    return requested
 
 
 def since(value: str) -> dt.datetime:

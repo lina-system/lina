@@ -23,6 +23,12 @@ leave the scene count at zero and continue.
 
 ## 2. Read the journal and current self-note
 
+When a scene supports a concrete taste, include `--pref-target`, `--pref-kind`,
+`--pref-dir` and `--pref-route` on its journal entry. After recording the day's
+entries, run `lina heart refine` even on a day with no new evidence. It applies
+decay and expires unsupported candidates. Use `--pref-dir ignored` for an
+ignored owner reaction. Core promotion belongs to `lina heart weekly`.
+
 Run `lina heart review-input`. It includes today's entries with their exact
 journal timestamps, the full `SOUL.self.md`, and the last five changes. Above
 1300 characters, it suggests the oldest dated lines needed to get below 1300.
