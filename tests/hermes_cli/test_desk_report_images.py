@@ -12,6 +12,8 @@ from pathlib import Path
 from unittest.mock import MagicMock
 from urllib.parse import unquote
 
+import pytest
+
 from hermes_cli import desk_report_files as files
 from hermes_cli.lina_reports_page import render
 from hermes_state_reports import Report
@@ -65,6 +67,7 @@ class DeskReportImages(unittest.TestCase):
 
         return registry_images(self.copies.parent, self.row, body, deny, desk_root=self.root)
 
+    @pytest.mark.platforms("posix")
     def test_live_order_four_rejections_and_forty_approved(self):
         names = [f"plot-{n}.png" for n in reversed(range(41))]
         for name in names:
@@ -81,6 +84,7 @@ class DeskReportImages(unittest.TestCase):
         self.assertEqual(source.images[1].data, names[1].encode())
         self.assertEqual(len(source.diagnostics), 4)
 
+    @pytest.mark.platforms("posix")
     def test_snapshot_order_four_rejections_and_copy_integrity(self):
         unused = self.copy_image("unused.png")
         self.copy_image("plot%20one.svg", b"<svg/>")
@@ -106,6 +110,7 @@ class DeskReportImages(unittest.TestCase):
         with self.assertRaises((ValueError, OSError)):
             self.imported(body)
 
+    @pytest.mark.platforms("posix")
     def test_snapshot_uses_first_forty_references_across_all_allowed_extensions(self):
         extensions = ("png", "jpg", "jpeg", "gif", "webp", "svg")
         names = [f"image-{i}.{extensions[i % 6]}" for i in range(41)]
@@ -115,6 +120,7 @@ class DeskReportImages(unittest.TestCase):
         self.assertEqual([i.src for i in images], names[:40])
         self.assertEqual(len(diagnostics), 1)
 
+    @pytest.mark.platforms("posix")
     def test_snapshot_rejects_missing_and_non_string_path_metadata(self):
         self.copy_image("unused.png")
         self.copy_image("chart.png")
@@ -130,6 +136,7 @@ class DeskReportImages(unittest.TestCase):
                         self.imported(body)
             metadata["path"] = original
 
+    @pytest.mark.platforms("posix")
     def test_import_reports_all_bad_rows_by_ordinal_or_slug(self):
         from hermes_cli.desk_report_registry import import_registry
 
@@ -153,6 +160,7 @@ class DeskReportImages(unittest.TestCase):
             "second: registry image 1 path must be a nonempty string",
         ])
 
+    @pytest.mark.platforms("posix")
     def test_markdown_size_is_measured_in_bytes_before_stripping(self):
         self.doc.write_bytes(b"# Title" + b" " * (2 * 1024**2 - 7))
         self.assertEqual(files.read_source(self.root, self.rel, []).title, "Title")
@@ -161,6 +169,7 @@ class DeskReportImages(unittest.TestCase):
         with self.assertRaises(files.Refused):
             files.read_source(self.root, self.rel, [])
 
+    @pytest.mark.platforms("posix")
     def test_snapshot_and_live_apply_deny_markers_and_links(self):
         names = ["ok.png", "blocked/a.jpg", "marked/a.gif", "alias/a.webp", "private/a.png",
                  "%2e%2e/other.png", "hard.png"]
@@ -183,6 +192,7 @@ class DeskReportImages(unittest.TestCase):
         self.assertEqual([i.src for i in imported], ["ok.png"])
         self.assertEqual(len(diagnostics), len(names) - 1)
 
+    @pytest.mark.platforms("posix")
     def test_snapshot_markdown_checks_existing_ancestors_before_missing_file(self):
         for folder in ("사람", "인물", "people", "person", "카톡", "카카오", "kakao", "katalk",
                        "메일", "mail", "murmur", "private", "개인"):
@@ -193,12 +203,14 @@ class DeskReportImages(unittest.TestCase):
         with self.assertRaises(files.Refused):
             files.current_identity(self.root, self.rel, [])
 
+    @pytest.mark.platforms("posix")
     def test_only_inline_markdown_images_are_approved(self):
         (self.folder / "one.png").touch()
         self.doc.write_text("`![code](one.png)`\n\n```\n![code](one.png)\n```\n\n"
                             "![ref][key]\n\n[key]: one.png\n\n<img src=\"one.png\">")
         self.assertEqual(files.read_source(self.root, self.rel, []).images, ())
 
+    @pytest.mark.platforms("posix")
     def test_current_identity_does_not_consume_body_or_images(self):
         self.assertIsNone(files.current_identity(self.root, self.rel, []))
         self.doc.write_bytes(b"\xff")
