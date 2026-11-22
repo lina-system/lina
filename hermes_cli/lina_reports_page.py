@@ -9,16 +9,19 @@ open, so it shows the newest version.
 from __future__ import annotations
 
 import html
+import re
 import time
+from collections.abc import Mapping
 from urllib.parse import urlparse
 from xml.etree.ElementTree import Element
 
 from hermes_state_reports import Report
 
 REFRESH_SECONDS = 30
+IMAGE_COUNT = 40
 SAFE_SCHEMES = {"http", "https", "mailto", ""}
 HEADERS = {
-    "Content-Security-Policy": "default-src 'none'; img-src https: data:; style-src 'unsafe-inline'; "
+    "Content-Security-Policy": "default-src 'none'; img-src 'self' https: data:; style-src 'unsafe-inline'; "
                                "base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "no-referrer",
@@ -32,7 +35,10 @@ _STYLE = ("body{font:16px/1.55 -apple-system,system-ui,sans-serif;max-width:46re
 
 
 def _safe(url: str) -> bool:
-    parsed = urlparse(url.strip())
+    try:
+        parsed = urlparse(url.strip())
+    except ValueError:
+        return False
     return parsed.scheme.lower() in SAFE_SCHEMES and (parsed.scheme or not parsed.netloc)
 
 
@@ -44,22 +50,83 @@ def _drop_unsafe_addresses(root: Element) -> None:
                 del element.attrib[attribute]
 
 
-def body_html(markdown_text: str) -> str:
+def _markdown(*, inline_images_only: bool = False):
     import markdown
-    from markdown.treeprocessors import Treeprocessor
-
-    class _Addresses(Treeprocessor):
-        def run(self, root):
-            _drop_unsafe_addresses(root)
+    from markdown.preprocessors import Preprocessor
 
     md = markdown.Markdown(extensions=["tables", "fenced_code", "sane_lists"])
     md.preprocessors.deregister("html_block")
     md.inlinePatterns.deregister("html")
-    md.treeprocessors.register(_Addresses(md), "addresses", 0)
+    if inline_images_only:
+        md.inlinePatterns.deregister("image_reference")
+        md.inlinePatterns.deregister("short_image_ref")
+
+        class _DeskFences(Preprocessor):
+            def run(self, lines):
+                # Python-Markdown accepts a colon in a fenced class attribute,
+                # but not in a bare language name such as the legacy lina:chart.
+                fence = ""
+                for index, line in enumerate(lines):
+                    if fence:
+                        if line.rstrip() == fence:
+                            fence = ""
+                    elif match := re.fullmatch(r"(`{3,}|~{3,})(.*)", line):
+                        fence, info = match.groups()
+                        if re.fullmatch(r"lina:[\w-]+", info.strip()):
+                            lines[index] = f"{fence}{{.{info.strip()}}}"
+                return lines
+
+        md.preprocessors.register(_DeskFences(md), "desk_fences", 26)
+    return md
+
+
+def image_sources(markdown_text: str) -> tuple[str, ...]:
+    """Inline image destinations in document order, using the page's Markdown grammar."""
+    from markdown.treeprocessors import Treeprocessor
+
+    sources: list[str] = []
+
+    class _Sources(Treeprocessor):
+        def run(self, root):
+            for element in root.iter("img"):
+                sources.append(element.get("src", ""))
+
+    md = _markdown(inline_images_only=True)
+    md.treeprocessors.register(_Sources(md), "sources", -1)
+    md.convert(markdown_text)
+    return tuple(sources)
+
+
+def _asset_path(url: str) -> bool:
+    return (url.startswith("/") and not url.startswith("//") and "\\" not in url
+            and all(ord(char) >= 32 and ord(char) != 127 for char in url))
+
+
+def body_html(markdown_text: str, image_urls: Mapping[str, str] | None = None) -> str:
+    from markdown.treeprocessors import Treeprocessor
+
+    class _Addresses(Treeprocessor):
+        def run(self, root):
+            if image_urls is not None:
+                visible = 0
+                for image in root.iter("img"):
+                    url = image_urls.get(image.get("src", ""))
+                    if url and _asset_path(url) and visible < IMAGE_COUNT:
+                        image.set("src", url)
+                        visible += 1
+                    else:
+                        # Keep the tail, which may contain the rest of this paragraph.
+                        image.tag = "span"
+                        image.text = image.get("alt", "")
+                        image.attrib.clear()
+            _drop_unsafe_addresses(root)
+
+    md = _markdown(inline_images_only=image_urls is not None)
+    md.treeprocessors.register(_Addresses(md), "addresses", -1)
     return md.convert(markdown_text)
 
 
-def render(report: Report) -> str:
+def render(report: Report, image_urls: Mapping[str, str] | None = None) -> str:
     updated = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(report.updated_at))
     meta = f"{html.escape(report.agent)} · version {report.version} · {updated}"
     return (f"<!doctype html><html><head><meta charset=\"utf-8\">"
@@ -67,4 +134,4 @@ def render(report: Report) -> str:
             f"<meta http-equiv=\"refresh\" content=\"{REFRESH_SECONDS}\">"
             f"<title>{html.escape(report.title)}</title><style>{_STYLE}</style></head><body>"
             f"<header><h1>{html.escape(report.title)}</h1><p>{html.escape(report.summary)}</p><p>{meta}</p></header>"
-            f"<main>{body_html(report.body)}</main></body></html>")
+            f"<main>{body_html(report.body, image_urls)}</main></body></html>")

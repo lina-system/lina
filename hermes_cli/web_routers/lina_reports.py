@@ -17,7 +17,7 @@ from contextlib import closing
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from starlette.concurrency import run_in_threadpool
 
 router = APIRouter()
@@ -82,10 +82,57 @@ async def get_report(request: Request, report_id: str, version: Optional[int] = 
                          "versions": versions})
 
 
-@router.get("/reports/{report_id}/page")
-async def report_page(request: Request, report_id: str):
+async def _page(request: Request, *, report_id: str = "", slug: str | None = None):
+    import hermes_state_reports as reports
+    from hermes_cli.desk_reports import DESK_AGENT
     from hermes_cli.lina_reports_page import HEADERS, render
+
     if not _page_admitted(request):
         return JSONResponse({"detail": "Unauthorized"}, status_code=401)
-    report, _ = await _report(request, report_id, None)
-    return HTMLResponse(render(report), headers=HEADERS)
+
+    def read(conn):
+        key = report_id
+        if slug is not None:
+            row = conn.execute("SELECT report_id FROM reports.desk_alias WHERE slug = %s", (slug,)).fetchone()
+            if not row or not row[0]:
+                return None, None
+            key = row[0]
+        report = reports.get(conn, key)
+        if report is None or (report.private and not _owner_session(request)):
+            return None, None
+        image_urls = None
+        if report.agent == DESK_AGENT:
+            rows = conn.execute("SELECT src, position FROM reports.desk_image WHERE report_id = %s",
+                                (key,)).fetchall()
+            prefix = request.scope.get("root_path", "").rstrip("/")
+            image_urls = {src: f"{prefix}/reports/{key}/images/{pos}" for src, pos in rows}
+        return report, image_urls
+
+    report, urls = await run_in_threadpool(_read, read)
+    if report is None:
+        raise HTTPException(status_code=404, detail="no such report")
+    return HTMLResponse(render(report, urls), headers=HEADERS)
+
+
+@router.get("/reports/{report_id}/page")
+async def report_page(request: Request, report_id: str):
+    return await _page(request, report_id=report_id)
+
+
+@router.get("/r/{slug}")
+async def legacy_page(request: Request, slug: str):
+    return await _page(request, slug=slug)
+
+
+@router.get("/reports/{report_id}/images/{position}")
+async def report_image(request: Request, report_id: str, position: int):
+    if not _page_admitted(request):
+        return JSONResponse({"detail": "Unauthorized"}, status_code=401)
+    row = await run_in_threadpool(_read, lambda conn: conn.execute(
+        "SELECT i.mime, i.data FROM reports.desk_image i JOIN reports.report r USING (report_id, agent_id) "
+        "WHERE i.report_id = %s AND i.position = %s AND r.desk_state = 'active' AND (NOT r.private OR %s)",
+        (report_id, position, _owner_session(request))).fetchone())
+    if row is None:
+        raise HTTPException(status_code=404, detail="no such image")
+    return Response(row[1], media_type=row[0], headers={"Cache-Control": "no-store",
+                    "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox; default-src 'none'"})

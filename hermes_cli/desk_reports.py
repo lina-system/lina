@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import sys
 from contextlib import closing
@@ -15,13 +17,34 @@ from hermes_cli.desk_report_files import ALLOWED, Refused, Source, identity, rea
 DESK_AGENT = "desk:reports"
 
 
+def _save_images(conn, report_id: str, images) -> bool:
+    signatures = [(image.src, image.mime, hashlib.sha256(image.data).hexdigest()) for image in images]
+    previous = conn.execute("SELECT src, mime, digest FROM reports.desk_image WHERE report_id = %s "
+                            "ORDER BY position", (report_id,)).fetchall()
+    if previous == signatures:
+        return False
+    conn.execute("DELETE FROM reports.desk_image WHERE report_id = %s", (report_id,))
+    for position, ((src, mime, digest), image) in enumerate(zip(signatures, images)):
+        conn.execute("INSERT INTO reports.desk_image (report_id, agent_id, position, src, mime, digest, data) "
+                     "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                     (report_id, DESK_AGENT, position, src, mime, digest, image.data))
+    return True
+
+
 def _save(conn, source: Source, report_id: str | None) -> tuple[str, str]:
+    title = source.title
+    for reason in source.diagnostics:
+        print(f"{source.path}: {reason}", file=sys.stderr)
     if report_id:
         conn.execute("UPDATE reports.report SET desk_state = 'active' WHERE report_id = %s", (report_id,))
         current = reports.get(conn, report_id)
+        override = conn.execute("SELECT given_title FROM reports.desk_alias WHERE report_id = %s",
+                                (report_id,)).fetchone()
+        if override and override[0]:
+            title = override[0]
     else:
         current = None
-    title = reports.one_line(source.title)[:reports.TITLE_MAX]
+    title = reports.one_line(title)[:reports.TITLE_MAX]
     if current is None or (current.title, current.body) != (title, source.body):
         current = reports.save(conn, agent=DESK_AGENT, title=title, summary=title, body=source.body,
                                report_id=report_id)
@@ -30,6 +53,8 @@ def _save(conn, source: Source, report_id: str | None) -> tuple[str, str]:
         event = "unchanged"
     conn.execute("UPDATE reports.report SET desk_path = %s, desk_file_id = %s, desk_state = 'active' "
                  "WHERE report_id = %s", (source.path, source.identity, current.report_id))
+    if _save_images(conn, current.report_id, source.images) and event == "unchanged":
+        event = "updated"
     return current.report_id, event
 
 
@@ -172,12 +197,15 @@ def cmd_desk_report(args) -> int:
     try:
         deny = _deny_patterns(get_default_hermes_root() / "report-deny")
         with closing(reports.agent_connection(DESK_AGENT)) as conn:
+            if args.desk_action == "import-reports":
+                from hermes_cli.desk_report_registry import import_registry
+                return import_registry(conn, Path(args.registry), root, deny)
             if args.desk_action == "sync-reports":
                 return _sync(conn, root, deny)
             report_id, event = _register(conn, root, args.path, deny)
         _announce(report_id, event)
         print(reports.page_url(report_id, resolve_public_url()))
-    except (Refused, reports.ReportError) as exc:
+    except (Refused, reports.ReportError, json.JSONDecodeError) as exc:
         print(f"refused: {exc}", file=sys.stderr)
         return 2
     except (OSError, UnicodeError, StoreUnavailableError) as exc:
