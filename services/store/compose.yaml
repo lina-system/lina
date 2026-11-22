@@ -21,6 +21,9 @@ services:
     image: pgvector/pgvector:0.8.7-pg15-bookworm@sha256:88164492558c9773a1e17a8305abaca7863e05b3d8bbcdb792774890a2047e06
     restart: unless-stopped
     command: ["postgres", "-c", "max_connections=200"]
+    # Docker gives a container 64 MB of /dev/shm; Postgres parallel queries over a populated store need more
+    # ("could not resize shared memory segment", seen in reembed: no embedding endpoint: set embedding.base_url in config.yaml (docs/store.md) over a migrated copy).
+    shm_size: 1gb
     environment:
       POSTGRES_USER: lina
       POSTGRES_DB: lina
