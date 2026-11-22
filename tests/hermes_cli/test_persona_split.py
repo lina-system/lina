@@ -14,6 +14,57 @@ def _sha(text: str) -> str:
     return sha256(text.encode("utf-8")).hexdigest()
 
 
+def test_shared_layers_cover_only_their_homes_and_trace_replacements() -> None:
+    rule = "- Check the original source before publishing any report.\n"
+    variant = rule.replace("any report", "the report")
+    work = "- Put finished tasks in the queue.\n"
+    sources = {
+        home: f"# {home}\n## Policy\n{rule}## Work\n{work}"
+        for home in ("one", "two", "three")
+    }
+    sources.update(reviewer=f"# Reviewer\n## Policy\n{variant}", translator=" \r\nNo headings.\r")
+    result = split_personas(sources, {}, exempt={"translator"})
+
+    assert result.common == {h: "" if h == "translator" else "## Policy\n" + rule for h in sources}
+    assert result.work == {h: "## Work\n" + work if h in ("one", "two", "three") else "" for h in sources}
+    assert result.personas["reviewer"] == "# Reviewer\n"
+    assert result.personas["translator"] == sources["translator"]
+    assert len(result.ledger) == 8
+    replaced, = (r for r in result.ledger if r["disposition"] == "replaced")
+    assert replaced["location"] == {"start_line": 3, "end_line": 3}
+    canonical = replaced["canonical"]
+    assert canonical["home"] in ("one", "two", "three")
+    assert canonical["location"] == {"start_line": 3, "end_line": 3}
+    assert canonical["raw_sha256"] == _sha(rule)
+    assert replaced["reason"] == "replaced by common: common:" + _sha(rule.strip())[:12]
+    assert 0.90 <= replaced["ratio"] < 1
+    assert result.summary["counts"] == {"common": 3, "work": 3, "replaced": 1, "persona": 1}
+    assert result.summary["layers"]["common"] == {"paragraphs": 1, "characters": len("## Policy\n" + rule)}
+    assert result.summary["layers"]["work"] == {"paragraphs": 1, "characters": len("## Work\n" + work)}
+
+
+def test_incomplete_and_competing_near_matches_stay_in_the_persona() -> None:
+    first = "- Check the original source before publishing report A.\n"
+    second = first.replace("A.", "B.")
+    variant = first.replace("A.", "C.")
+    for body, missing in ((first, {"empty": ""}), (first + second, {})):
+        sources = dict.fromkeys(("one", "two", "three", "four"), body)
+        sources.update(reviewer=variant, **missing)
+        result = split_personas(sources, {})
+        row, = (r for r in result.ledger if r["home"] == "reviewer")
+        assert row["near_matches"]
+        assert result.personas["reviewer"] == variant
+        assert result.common["reviewer"] == result.work["reviewer"] == ""
+
+
+@pytest.mark.parametrize("missing", [{}, {"empty": ""}])
+def test_conflicting_exact_order_stops_either_layer(missing) -> None:
+    first, second = "- Verify a receipt.\n", "- Open a window.\n"
+    sources = {"one": first + second, "two": second + first, "three": first + second, **missing}
+    with pytest.raises(ValueError, match="order"):
+        split_personas(sources, {})
+
+
 def test_split_preserves_the_multiset_and_order_of_each_homes_units() -> None:
     shared = "- Check stock\r\n  - Count crates\r\n"
     shared_variant = "- Check  stock\n  - Count crates\n"
@@ -26,21 +77,21 @@ def test_split_preserves_the_multiset_and_order_of_each_homes_units() -> None:
         "builder": (
             "# Orchard\r\n"
             "## Routine\r\n"
-            f"{shared}\n{second}\n{shared}"
+            f"{shared}\n{second}\n{shared_variant}"
             f"## Packing\r{private_list}"
             f"## Old signs\n{dropped}"
             f"## Schedule\n{partly}\n{extras}"
         ),
         "operator": second + shared + "\n" + partly,
-        "planner": shared_variant + second + "\n" + partly,
+        "planner": second + shared + "\n" + partly,
         "auditor": second + shared,
         "reviewer": "# Review\nCheck the receipts.\r\n",
         "empty": "",
     }
     original_units = {
-        "builder": [shared, second, shared, private_list, dropped, partly, extras],
+        "builder": [shared, second, shared_variant, private_list, dropped, partly, extras],
         "operator": [second, shared, partly],
-        "planner": [shared_variant, second, partly],
+        "planner": [second, shared, partly],
         "auditor": [second, shared],
         "reviewer": ["Check the receipts.\r\n"],
         "empty": [],
@@ -50,17 +101,18 @@ def test_split_preserves_the_multiset_and_order_of_each_homes_units() -> None:
 
     assert result.personas == {
         # The builder's own Routine heading governs its common units, so they stay with it.
-        "builder": f"# Orchard\r\n## Routine\r\n{shared}\n{second}\n{shared}## Packing\r{private_list}## Schedule\n{partly}\n{extras}",
+        "builder": f"# Orchard\r\n## Routine\r\n{shared}\n{second}\n{shared_variant}## Packing\r{private_list}## Schedule\n{partly}\n{extras}",
         "operator": "\n" + partly,
         "planner": "\n" + partly,
         "auditor": "",
         "reviewer": sources["reviewer"],
         "empty": "",
     }
-    assert result.common == {
+    assert result.common == dict.fromkeys(sources, "")
+    assert result.work == {
         "builder": "",
         "operator": second + "\n" + shared,
-        "planner": shared_variant + "\n" + second,
+        "planner": second + "\n" + shared,
         "auditor": second + "\n" + shared,
         "reviewer": "",
         "empty": "",
@@ -78,7 +130,7 @@ def test_split_preserves_the_multiset_and_order_of_each_homes_units() -> None:
             key=lambda line: bool(line.strip()) and not line.startswith("#"),
         )
         persona_units = ["".join(lines) for is_unit, lines in runs if is_unit]
-        common_lines = result.common[home].splitlines(keepends=True)
+        common_lines = result.work[home].splitlines(keepends=True)
         common_runs = groupby(common_lines, key=lambda line: bool(line.strip()) and not line.startswith("#"))
         common_units = ["".join(lines) for is_unit, lines in common_runs if is_unit]
         source_lines = sources[home].splitlines(keepends=True)
@@ -92,7 +144,7 @@ def test_split_preserves_the_multiset_and_order_of_each_homes_units() -> None:
                 continue
             positions = row.get("heading_lines", [])
             headings.update((pos, source_lines[pos - 1]) for pos in positions)
-            if row["disposition"] == "common":
+            if row["disposition"] == "work":
                 common_heading_lines.update(positions)
             elif row["disposition"] == "persona":
                 personal_heading_lines.update(positions)
@@ -112,7 +164,7 @@ def test_split_preserves_the_multiset_and_order_of_each_homes_units() -> None:
             original + original_headings
         )
 
-    assert result.summary["counts"] == {"common": 6, "persona": 9, "dropped": 1}
+    assert result.summary["counts"] == {"work": 6, "persona": 9, "dropped": 1}
     assert result.summary["group_histogram"]["4"] == {
         "groups": 2,
         "occurrences": 9,
@@ -120,11 +172,11 @@ def test_split_preserves_the_multiset_and_order_of_each_homes_units() -> None:
     }
     assert result.summary["homes"]["builder"] == {
         "source_chars": len(sources["builder"]),
-        "persona_chars": 2 * len(shared) + len(second) + len(private_list) + len(partly) + len(extras),
+        "persona_chars": len(shared) + len(shared_variant) + len(second) + len(private_list) + len(partly) + len(extras),
         "common_chars": 0,
         "dropped_chars": len(dropped),
         "membership": {"common": 3, "partly_shared": 1, "single": 3},
-        "counts": {"persona": 6, "dropped": 1},
+        "counts": {"common": 0, "work": 0, "replaced": 0, "persona": 6, "dropped": 1},
     }
     assert {
         key: result.summary[key]
@@ -173,14 +225,16 @@ def test_near_single_uses_maximum_directional_ratio_against_all_other_homes() ->
     assert result.summary["near"] == 4
 
 
-def test_two_homes_are_partly_shared_even_when_every_home_has_the_unit() -> None:
+def test_two_homes_can_share_the_universal_layer_below_the_work_quorum() -> None:
     text = "- Store the spare key\n"
     variant = "- Store the  spare key\r\n"
 
     result = split_personas({"one": text, "two": variant}, {})
 
     assert [row["membership"] for row in result.ledger] == ["partly_shared"] * 2
-    assert result.personas == {"one": text, "two": variant}
+    assert result.personas == {"one": "", "two": ""}
+    assert result.common == {"one": text, "two": text}
+    assert result.work == {"one": "", "two": ""}
 
 
 def test_headings_without_body_text_survive_in_the_persona() -> None:

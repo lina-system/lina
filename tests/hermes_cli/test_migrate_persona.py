@@ -3,6 +3,8 @@
 import argparse
 import hashlib
 import json
+import re
+from html import unescape
 
 import pytest
 
@@ -26,9 +28,10 @@ def test_dry_run_then_apply_to_copies(tmp_path, capsys):
     root = tmp_path / "install"
     args = ["--home", root]
     original = {}
-    for name in ("default", "one", "two"):
+    for name in ("default", "author", "editor", "reviewer"):
         source = tmp_path / f"{name}.md"
-        original[source] = f"- Shared item\r\n\r\n- {name}\n\n- Remove this\n".encode()
+        work = "" if name == "reviewer" else "- Shared work item\r\n\r\n"
+        original[source] = f"- Shared item\r\n\r\n{work}- {name}\n\n- Remove this\n".encode()
         source.write_bytes(original[source])
         args.extend(["--source", f"{name}={source}"])
     digest = hashlib.sha256(b"- Remove this").hexdigest()
@@ -38,7 +41,7 @@ def test_dry_run_then_apply_to_copies(tmp_path, capsys):
     code, preview = _invoke(args, capsys)
     assert code == 0
     assert not root.exists()
-    assert len(preview["ledger"]) == 9
+    assert len(preview["ledger"]) == 15
 
     for _ in range(2):
         code, applied = _invoke([*args, "--apply"], capsys)
@@ -48,14 +51,19 @@ def test_dry_run_then_apply_to_copies(tmp_path, capsys):
         name = source.stem
         home = root if name == "default" else root / "profiles" / name
         assert (home / "SOUL.md").read_bytes().strip() == f"- {name}".encode()
-        assert (home / "SOUL.common.md").read_bytes() == b"- Shared item\r\n"
+        assert (home / COMMON_PERSONA_FILE).read_bytes() == b"- Shared item\r\n"
+        work_layer = home / "SOUL.work.md"
+        if name == "reviewer":
+            assert not work_layer.exists()
+        else:
+            assert work_layer.read_bytes() == b"- Shared work item\r\n"
         ledger = [json.loads(line) for line in (home / "persona-ledger.jsonl").read_text().splitlines()]
         assert ledger == [row for row in preview["ledger"] if row["home"] == name]
         assert any(row.get("reason") == "superseded" for row in ledger)
         assert source.read_bytes() == raw
 
 
-@pytest.mark.parametrize("filename", ["SOUL.md", "SOUL.common.md"])
+@pytest.mark.parametrize("filename", ["SOUL.md", COMMON_PERSONA_FILE, "SOUL.work.md"])
 def test_conflict_is_detected_before_any_persona_is_written(tmp_path, capsys, filename):
     source = tmp_path / "source.md"
     source.write_text("Copied paragraph\n")
@@ -70,6 +78,141 @@ def test_conflict_is_detected_before_any_persona_is_written(tmp_path, capsys, fi
     assert code != 0
     assert existing.read_text() == "Local edits\n"
     assert not (root / "profiles" / "first").exists()
+
+
+def test_empty_persona_layers_keep_existing_empty_file_and_skip_missing_file(tmp_path, capsys):
+    source = tmp_path / "source.md"
+    source.write_text("A local identity.\n", encoding="utf-8")
+    root = tmp_path / "install"
+    root.mkdir()
+    existing = root / "SOUL.work.md"
+    existing.touch()
+    before = existing.stat()
+
+    code, result = _invoke(["--home", root, "--source", f"default={source}", "--apply"], capsys)
+
+    assert code == 0, result
+    assert (root / "SOUL.md").read_bytes() == source.read_bytes()
+    assert not (root / COMMON_PERSONA_FILE).exists()
+    assert existing.read_bytes() == b""
+    assert existing.stat().st_ino == before.st_ino
+
+
+def test_missing_named_home_blocks_apply_before_default_persona_is_written(tmp_path, monkeypatch, capsys):
+    root = tmp_path / "install"
+    monkeypatch.setenv("HERMES_HOME", str(root))
+    monkeypatch.setenv("LINA_HOME", str(root))
+    args = ["--home", root, "--apply"]
+    for name in ("default", "reviewer"):
+        source = tmp_path / f"{name}.md"
+        source.write_text(f"A local identity for {name}.\n", encoding="utf-8")
+        args.extend(["--source", f"{name}={source}"])
+
+    code, result = _invoke(args, capsys)
+
+    assert code == 1
+    assert "Named profile home does not exist" in result["error"]
+    assert not root.exists()
+
+
+@pytest.mark.parametrize("alias", ["same path", "source hard link", "destination hard link"])
+def test_pair_report_alias_blocks_apply_before_any_write(tmp_path, capsys, alias):
+    source = tmp_path / "source.md"
+    source.write_bytes(b"A local identity.\n")
+    root = tmp_path / "install"
+    soul = root / "SOUL.md"
+    report = tmp_path / "pairs.md"
+    if alias == "same path":
+        report = source
+    elif alias == "source hard link":
+        report.hardlink_to(source)
+    else:
+        root.mkdir()
+        soul.write_bytes(source.read_bytes())
+        report.hardlink_to(soul)
+
+    code, result = _invoke(
+        ["--home", root, "--source", f"default={source}", "--report-pairs", report, "--apply"],
+        capsys,
+    )
+
+    assert code == 1
+    expected_error = "more than once" if alias == "same path" else "aliases"
+    assert expected_error in result["error"]
+    assert report.read_bytes() == source.read_bytes() == b"A local identity.\n"
+    assert not (root / "persona-ledger.jsonl").exists()
+    assert soul.exists() == (alias == "destination hard link")
+
+
+def test_pair_report_preserves_source_spans_and_respects_repeatable_exemptions(tmp_path, capsys):
+    root = tmp_path / "install"
+    report = tmp_path / "pairs.md"
+    canonical = "- Record the status and outcome for each review.\r\n  Use </td> | & &#10; with ````.  \r\n"
+    original = canonical.replace("each review", "every review").replace("\r\n", "\n").rstrip("\n")
+    canonical_homes = ("author", "coordinator", "designer", "facilitator", "maintainer", "planner")
+    exempt_sources = {
+        "editor": canonical.replace("each review", "each revision"),
+        "reviewer": canonical.replace("outcome", "result"),
+    }
+    args = ["--home", root, "--report-pairs", report]
+    sources = dict.fromkeys(canonical_homes, canonical) | exempt_sources | {"writer": original}
+    for name, raw in sources.items():
+        source = tmp_path / f"{name}.md"
+        source.write_bytes(raw.encode())
+        args.extend(["--source", f"{name}={source}"])
+    for name in exempt_sources:
+        args.extend(["--exempt", name])
+
+    code, result = _invoke(args, capsys)
+
+    assert code == 0, result
+    assert not root.exists()
+    replacements = [row for row in result["ledger"] if row["disposition"] == "replaced"]
+    assert [row["home"] for row in replacements] == ["writer"]
+    replacement = replacements[0]
+    assert replacement["canonical"]["home"] in canonical_homes
+    assert replacement["canonical"]["raw_sha256"] == hashlib.sha256(canonical.encode()).hexdigest()
+    assert 0.9 <= replacement["ratio"] < 1
+    markdown = report.read_text(encoding="utf-8")
+    assert re.search(r"<th[^>]*>Original</th>\s*<th[^>]*>Canonical</th>", markdown)
+    row = re.search(r"<tbody>\s*<tr>(.*?)</tr>\s*</tbody>", markdown, re.DOTALL)
+    assert row is not None
+    cells = re.findall(r"<td><p>[^<]*</p><pre><code>([^<]*)</code></pre></td>", row[1])
+    assert [unescape(cell) for cell in cells] == [original, canonical]
+
+
+@pytest.mark.parametrize("path", ["SOUL.md", "SOUL.md/pairs.md", "profiles"])
+def test_report_path_cannot_overlap_a_planned_home_file(tmp_path, capsys, path):
+    source = tmp_path / "source.md"
+    source.write_bytes(b"A local identity.\n")
+    reviewer = tmp_path / "reviewer.md"
+    reviewer.write_bytes(b"A reviewer identity.\n")
+    root = tmp_path / "install"
+
+    code, result = _invoke(
+        ["--home", root, "--source", f"default={source}", "--source", f"reviewer={reviewer}",
+         "--report-pairs", root / path, "--apply"],
+        capsys,
+    )
+
+    assert code == 1
+    assert "conflicts with a planned output" in result["error"]
+    assert not root.exists()
+
+
+def test_dry_run_can_write_only_the_requested_report_inside_home(tmp_path, capsys):
+    source = tmp_path / "source.md"
+    source.write_bytes(b"A local identity.\n")
+    root = tmp_path / "install"
+    report = root / "pairs.md"
+
+    code, result = _invoke(
+        ["--home", root, "--source", f"default={source}", "--report-pairs", report], capsys,
+    )
+
+    assert code == 0, result
+    assert tuple(root.iterdir()) == (report,)
+    assert "No replacements." in report.read_text(encoding="utf-8")
 
 
 @pytest.fixture
