@@ -181,7 +181,7 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         # Injection audit. Off unless the logging key enables it: the record holds the user's representation.
         self._injection_log_path: Optional[str] = None
         self._injection_log_lock = threading.Lock()
-        # Pinned injection.sessionStart names; None means unpinned and everything renders.
+        # Effective injection.sessionStart names; None means everything renders.
         self._session_start_components: Optional[frozenset] = None
         self._query_rewrite_enabled = False
         self._injection_frequency = "every-turn"  # or "first-turn"
@@ -279,12 +279,25 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
                 logger.debug("Honcho not configured — plugin inactive")
                 return
 
+            from pathlib import Path
+
+            from hermes_cli.heart.taste_context import has_tastes
+            from hermes_constants import get_hermes_home
+            from hermes_state_store import StoreUnavailableError
+
             self._config = cfg
             self._recall_mode = cfg.recall_mode
             self._recall_sync = getattr(cfg, "recall_sync", False)
             look = _HostLookup(_host_block(cfg.raw, cfg.host or ""), cfg.raw)
             self._injection_log_path = self._resolve_injection_log_path(look)
-            self._session_start_components = self._resolve_session_start(look)
+            allowed = self._resolve_session_start(look)
+            # Honcho can supply context even when the local taste store is unavailable.
+            with contextlib.suppress(StoreUnavailableError):
+                if has_tastes(Path(kwargs.get("hermes_home") or get_hermes_home())):
+                    if allowed is None:
+                        allowed = frozenset(name for name, _, _ in _CONTEXT_SECTIONS)
+                    allowed = allowed - {"aiRepresentation", "aiCard"}
+            self._session_start_components = allowed
             logger.debug("Honcho recall_mode: %s", self._recall_mode)
             for name in ("injection_frequency", "context_cadence", "dialectic_cadence",
                          "dialectic_depth_levels", "reasoning_heuristic"):
@@ -474,7 +487,7 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         return frozenset(str(x) for x in listed)
 
     def _format_first_turn_context(self, ctx: dict) -> str:
-        """Render the prefetch context, keeping only the ``injection.sessionStart`` components when pinned.
+        """Render the prefetch context using the effective ``injection.sessionStart`` selection.
         The summary passes usable_honcho_summary here, so a contaminated one never reaches _base_context_cache."""
         ctx = {**ctx, "summary": usable_honcho_summary(ctx.get("summary")) or ""}
         allowed = self._session_start_components
@@ -488,7 +501,7 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
                 continue
             parts.append(f"## {header}\n{value}")
         if suppressed:
-            logger.debug("Honcho session-start injection filtered by config: kept %s, suppressed %s",
+            logger.debug("Honcho session-start injection filtered: kept %s, suppressed %s",
                          [n for n, k, _ in _CONTEXT_SECTIONS if ctx.get(k) and (allowed is None or n in allowed)],
                          suppressed)
         return "\n\n".join(parts)
