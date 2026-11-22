@@ -16,8 +16,9 @@ import json
 import logging
 import os
 import re
+from dataclasses import replace
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from agent.delegation_context import owned_kanban_task
 from agent.prompt_builder import (
@@ -31,6 +32,9 @@ from agent import prompt_builder as _pb
 from agent.runtime_cwd import resolve_agent_cwd, resolve_context_cwd
 from hermes_constants import get_default_hermes_root, get_hermes_home
 from utils import is_truthy_value
+
+if TYPE_CHECKING:
+    from hermes_cli.plugins import RenderedPluginSystemPromptSection
 
 logger = logging.getLogger(__name__)
 _PLUGIN_SECTION_FRAME_RE = re.compile(
@@ -112,6 +116,33 @@ def _active_profile_name(agent: Any, ambient) -> str:
         return "default"
 
 
+def _self_note_sections(
+    agent: Any, previous: tuple[RenderedPluginSystemPromptSection, ...],
+) -> tuple[RenderedPluginSystemPromptSection, ...]:
+    from agent.self_note_section import SELF_NOTE_SECTION_ID, render_self_note_section, self_note_without_core_tastes
+    from agent.turn_context_taste import owner_taste_home
+
+    frozen = tuple(section for section in previous if section.id == SELF_NOTE_SECTION_ID)
+    taste_home = owner_taste_home(agent)
+    # A non-owner turn can compact a shared session. Keep its canonical owner bytes;
+    # outbound request assembly strips the core block from that turn's copy.
+    if taste_home is None and any(self_note_without_core_tastes(s.content) != s.content for s in frozen):
+        return frozen
+    home = taste_home or _agent_home(agent) or get_hermes_home()
+    try:
+        return render_self_note_section(home, taste_home=taste_home)
+    except Exception as exc:
+        logger.warning("Could not render the self-note section (%s)", type(exc).__name__, exc_info=True)
+        if frozen or taste_home is None or isinstance(exc, (OSError, UnicodeDecodeError)):
+            return frozen
+    # First build with an unavailable taste store still has an ordinary note.
+    try:
+        return render_self_note_section(home)
+    except (OSError, UnicodeDecodeError) as exc:
+        logger.warning("Could not read the ordinary self note (%s)", type(exc).__name__)
+        return ()
+
+
 def _frozen_plugin_prompt_sections(agent: Any) -> tuple:
     """Render plugin sections once per session and freeze them on the agent,
     led by the core sections: the Korean writing rule of a Korean agent
@@ -126,22 +157,22 @@ def _frozen_plugin_prompt_sections(agent: Any) -> tuple:
         rendered = _restore_plugin_prompt_sections(stored_prompt)
     else:
         from agent.korean_rule_section import render_korean_rule_section
-        from agent.self_note_section import render_self_note_section
         from agent.standing_rules_section import SECTION_ID, render_standing_rules_section
-        core = (*render_korean_rule_section(), *render_self_note_section(_agent_home(agent) or get_hermes_home()))
+        previous = getattr(agent, "_plugin_system_prompt_sections_previous", ())
+        core = (*render_korean_rule_section(), *_self_note_sections(agent, previous))
         try:
             rules = render_standing_rules_section(agent)
         except Exception as exc:
             logger.warning("Could not render standing rules (%s); retaining the previous section", type(exc).__name__)
-            rules = tuple(s for s in getattr(agent, "_plugin_system_prompt_sections_previous", ()) if s.id == SECTION_ID)
+            rules = tuple(s for s in previous if s.id == SECTION_ID)
         core = (*rules, *core)
         try:
             from hermes_cli.plugins import render_system_prompt_sections
             rendered = (*core, *render_system_prompt_sections(_plugin_session_info(agent)))
         except Exception as exc:
-            rendered = getattr(agent, "_plugin_system_prompt_sections_previous", None)
-            if rendered:
+            if previous:
                 logger.warning("Plugin system prompt sections failed to re-render (%s); keeping the previous frozen sections", exc)
+                rendered = previous
             else:
                 logger.warning("Plugin system prompt sections could not be rendered: %s", exc)
                 rendered = core
@@ -149,7 +180,7 @@ def _frozen_plugin_prompt_sections(agent: Any) -> tuple:
     return rendered
 
 
-def _restore_plugin_prompt_sections(prompt: str) -> tuple:
+def _restore_plugin_prompt_sections(prompt: str) -> tuple[RenderedPluginSystemPromptSection, ...]:
     """Recover frozen section bytes from the persisted full prompt.  Only the
     exact canonical container emitted by core is accepted — user/project text
     may resemble a frame."""
@@ -157,8 +188,19 @@ def _restore_plugin_prompt_sections(prompt: str) -> tuple:
         MAX_SYSTEM_PROMPT_SECTION_CHARS, PLUGIN_SECTIONS_END, PLUGIN_SECTIONS_START,
         RenderedPluginSystemPromptSection, format_system_prompt_sections,
     )
-    start = prompt.rfind(PLUGIN_SECTIONS_START)
-    end = prompt.find(PLUGIN_SECTIONS_END, start + len(PLUGIN_SECTIONS_START)) if start >= 0 else -1
+    # Renderer-owned tail headings are reserved in their bodies. A quoted plugin
+    # marker in ordinary memory or environment prose must not shadow the frame.
+    limit = len(prompt)
+    for heading, terminator in (
+        (_pb.NOTES_HEADING, _pb.NOTES_END),
+        (_pb.RUNTIME_ENVIRONMENT_HEADING, _pb.RUNTIME_ENVIRONMENT_END),
+    ):
+        if prompt.endswith(f"\n\n{terminator}", 0, limit):
+            anchor = prompt.rfind(f"\n\n{heading}\n\n", 0, limit)
+            if anchor >= 0:
+                limit = anchor
+    start = prompt.rfind(PLUGIN_SECTIONS_START, 0, limit)
+    end = prompt.find(PLUGIN_SECTIONS_END, start + len(PLUGIN_SECTIONS_START), limit) if start >= 0 else -1
     if end < 0:
         return ()
     after_end = end + len(PLUGIN_SECTIONS_END)
@@ -167,14 +209,47 @@ def _restore_plugin_prompt_sections(prompt: str) -> tuple:
         return ()
     framed = prompt[start:after_end]
     restored = []
-    for match in _PLUGIN_SECTION_FRAME_RE.finditer(framed):
+    cursor = len(PLUGIN_SECTIONS_START) + 1
+    frame_end = len(framed) - len(PLUGIN_SECTIONS_END) - 1
+    while cursor < frame_end:
+        match = _PLUGIN_SECTION_FRAME_RE.match(framed, cursor)
+        if match is None:
+            return ()
         content_len = int(match.group("chars"))
-        content = framed[match.end() : match.end() + content_len]
-        if content_len > MAX_SYSTEM_PROMPT_SECTION_CHARS or len(content) != content_len:
-            continue
+        content_end = match.end() + content_len
+        if content_len > MAX_SYSTEM_PROMPT_SECTION_CHARS or content_end > frame_end:
+            return ()
+        content = framed[match.end():content_end]
         restored.append(RenderedPluginSystemPromptSection(id=match.group("id"), content=content,
                                                           position="after_memory", plugin="persisted-prompt"))
+        cursor = content_end + 2
     return tuple(restored) if format_system_prompt_sections(restored) == framed else ()
+
+
+def strip_core_tastes_from_prompt(prompt: str) -> str:
+    """Remove generated core tastes from a copy of the renderer-owned section."""
+    from agent.self_note_section import SELF_NOTE_SECTION_ID, self_note_without_core_tastes
+    from hermes_cli.plugins import format_system_prompt_sections
+
+    sections = _restore_plugin_prompt_sections(prompt)
+    copied = []
+    for section in sections:
+        if section.id == SELF_NOTE_SECTION_ID:
+            content = self_note_without_core_tastes(section.content)
+            if content != section.content:
+                if content:
+                    copied.append(replace(section, content=content))
+                continue
+        copied.append(section)
+    if tuple(copied) == sections:
+        return prompt
+    framed = format_system_prompt_sections(sections)
+    # The exact frame can also be quoted in the notes, after the profile
+    # metadata. Locate the renderer's occurrence with its following anchor.
+    start = max(prompt.rfind(framed + f"\n\n{anchor}") for anchor in ("Active Hermes profile:", "Conversation started:"))
+    before, after = prompt[:start], prompt[start + len(framed):]
+    replacement = format_system_prompt_sections(copied)
+    return before + replacement + (after if replacement else after.removeprefix("\n\n"))
 
 
 def restore_plugin_prompt_sections(agent: Any, prompt: str) -> None:

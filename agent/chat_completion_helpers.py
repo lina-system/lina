@@ -2120,18 +2120,16 @@ _EMPTY_SUMMARY_RESPONSE = "I reached the iteration limit and couldn't generate a
 
 
 def _iteration_summary_api_messages(agent, messages: list) -> list:
-    """Wire-ready messages for the summary call, mirroring the main loop's api_messages build
-    (sidecar substitution, tool-call repair, thinking-only drop, underscore-key sweep).
+    """Mirror the main request. Keep reasoning_details for transports that rebuild signed thinking blocks."""
+    from agent.turn_context_taste import request_taste_view
 
-    ``reasoning_details`` is kept: the anthropic_messages converter rebuilds signed thinking
-    blocks from it, and the chat-completions transport already drops it on the wire for routes
-    that do not replay it (``_chat_summary_attempt`` -> ``_build_api_kwargs``)."""
     needs_sanitize = agent._should_sanitize_tool_calls()
     sanitize_model = agent.model
     if needs_sanitize and agent.provider == "moa":
         # MoA: agent.model is the virtual preset; use the real aggregator so Gemini keeps thought_signature.
         agg_slot = getattr(getattr(agent, "client", None), "last_aggregator_slot", None)
         sanitize_model = (agg_slot or {}).get("model") or sanitize_model
+    effective_system, messages = request_taste_view(agent, agent._cached_system_prompt or "", messages)
     api_messages = []
     for msg in messages:
         api_msg = msg.copy()
@@ -2157,7 +2155,6 @@ def _iteration_summary_api_messages(agent, messages: list) -> list:
             agent._sanitize_tool_calls_for_strict_api(api_msg, model=sanitize_model)
         api_messages.append(api_msg)
 
-    effective_system = agent._cached_system_prompt or ""
     if agent.ephemeral_system_prompt:
         effective_system = (effective_system + "\n\n" + agent.ephemeral_system_prompt).strip()
     if effective_system:

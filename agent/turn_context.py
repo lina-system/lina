@@ -30,6 +30,7 @@ from agent.date_note import stage_date_note
 from agent.prompt_refresh import refresh_warm_prompt
 from agent.message_metadata import (
     PERSISTENCE_ONLY_MESSAGE_FIELDS, PRE_LLM_BLOCK_WITHHELD_PROMPT, append_message, stamp_message_timestamp,
+    stamp_message_uid,
 )
 from agent.model_metadata import (
     estimate_messages_tokens_rough,
@@ -39,6 +40,13 @@ from agent.model_metadata import (
 from agent.image_token_cost import bind_image_token_cost
 from agent.usage_anchor import anchored_context_tokens, restore_usage_anchor
 from agent.turn_author import parse_turn_author
+from agent.turn_context_taste import (
+    admitted_source_row,
+    owner_taste_prompt_scope,
+    owner_turn_taste_suffix,
+    request_taste_view,
+    resolve_owner_taste_home,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -189,7 +197,7 @@ def consume_date_note(agent: Any) -> str:
     return _pop_turn_note(agent, "_date_note")
 
 
-def recall_tool_rows(agent: Any, ext_prefetch_cache: str, at: int) -> list[dict[str, Any]]:
+def recall_tool_rows(agent: Any, ext_prefetch_cache: str, at: int, *, taste_suffix: str = "") -> list[dict[str, Any]]:
     """The turn's recall as a tool round the runtime makes right after the user message (lina#21):
     ``assistant(tool_calls=[memory_recall])`` then its ``tool`` result, the fenced block. Found memory
     is the last thing in the request and is never spliced into a user row or the system prompt, so the
@@ -198,20 +206,17 @@ def recall_tool_rows(agent: Any, ext_prefetch_cache: str, at: int) -> list[dict[
 
     call_id = prelude_call_id(getattr(agent, "session_id", "") or "", RECALL_TOOL_NAME, {}, at)
     call = {"id": call_id, "type": "function", "function": {"name": RECALL_TOOL_NAME, "arguments": "{}"}}
+    recall = build_memory_context_block(ext_prefetch_cache)
+    content = "\n\n".join(part for part in (recall, taste_suffix) if part)
     return [{"role": "assistant", "content": "", "tool_calls": [call]},
             {"role": "tool", "tool_call_id": call_id, "name": RECALL_TOOL_NAME,
-             "content": build_memory_context_block(ext_prefetch_cache)}]
+             "content": content}]
 
 
-def _recall_as_tool_result(agent: Any, moa_active: bool) -> bool:
-    """Recall rides a tool result unless the home opted into the old append (``memory.auto_recall_append``)
-    or the route never stamps sidecars (MoA, codex_app_server), which keeps composing it live. The call
-    needs ``memory_recall`` in the request's tools (strict providers reject an undefined tool name), so
-    a session whose memory toolset is gated off keeps the append too."""
-    manager = getattr(agent, "_memory_manager", None)
+def _can_send_recall_tool_result(agent: Any, moa_active: bool) -> bool:
+    """Only routes with the declared recall tool can carry a synthetic recall round."""
     return RECALL_TOOL_NAME in (getattr(agent, "valid_tool_names", None) or ()) and not (
-        moa_active or getattr(agent, "api_mode", None) == "codex_app_server"
-        or getattr(manager, "auto_recall_append", False))
+        moa_active or getattr(agent, "api_mode", None) == "codex_app_server")
 
 
 def append_notes_to_multimodal_content(content: Any, notes: Optional[str]) -> bool:
@@ -733,6 +738,8 @@ def _stage_turn_user_message(
     # CLI input is stamped when staged; gateway input may carry the platform event
     # time. Preserve either value and cover any legacy unstamped handoff.
     stamp_message_timestamp(user_msg, timestamp=persist_user_timestamp)
+    # Start-of-turn compaction can copy this input before the first DB insert.
+    stamp_message_uid(user_msg)
 
     # Synthesized turns stamp their transcript type so the crash persist writes a typed
     # row; the model still receives role/content unchanged (api_messages strips both).
@@ -1151,8 +1158,10 @@ def build_turn_context(
     install_safe_stdio()
 
     # Reset first: a cached gateway agent must never carry the previous turn's bot author into a human turn.
+    author_supplied = turn_author is not None
     turn_author = parse_turn_author(turn_author)
     agent._turn_author = turn_author
+    agent._owner_taste_allowed = False
 
     # Recover a rotated session before binding log/turn ids or copying client history so
     # everything in this turn belongs to the canonical child.
@@ -1209,6 +1218,10 @@ def build_turn_context(
         agent, user_message, persist_user_message, persist_user_timestamp,
         persist_user_platform_id, persist_user_display_kind, persist_user_display_metadata,
     )
+    taste_home = (
+        resolve_owner_taste_home(agent, user_msg, turn_author)
+        if turn_author is not None or not author_supplied else None
+    )
     _hydrate_from_history(agent, conversation_history)
     # Every estimator this turn prices images at the cost learned from this model's real usage.
     bind_image_token_cost(agent)
@@ -1235,9 +1248,10 @@ def build_turn_context(
 
     # System prompt is cached per session for prefix caching. A warm agent (kept across turns)
     # first adopts any `hermes sessions refresh-prompts` request recorded since it set its prompt.
-    refresh_warm_prompt(agent, system_message, conversation_history)
-    if agent._cached_system_prompt is None:
-        restore_or_build_system_prompt(agent, system_message, conversation_history)
+    with owner_taste_prompt_scope(agent, taste_home):
+        refresh_warm_prompt(agent, system_message, conversation_history)
+        if agent._cached_system_prompt is None:
+            restore_or_build_system_prompt(agent, system_message, conversation_history)
     active_system_prompt = agent._cached_system_prompt
     # `/delegation <backend> --now`: after the pin restore, so a fresh agent rebuilds too.
     from agent.delegation_backends import apply_requested_tool_rebuild
@@ -1274,15 +1288,19 @@ def build_turn_context(
         conversation_history=conversation_history, blocks=_blocks,
     )
     plugin_block_message = _blocks[0] if _blocks else ""  # first veto wins
-    compaction = CompactionOutcome(
-        messages=messages, active_system_prompt=active_system_prompt,
-        conversation_history=conversation_history, current_turn_user_idx=current_turn_user_idx,
-    ) if plugin_block_message else run_turn_start_compaction(
-        agent, messages=messages, system_message=system_message,
-        active_system_prompt=active_system_prompt, conversation_history=conversation_history,
-        current_turn_user_idx=current_turn_user_idx, user_message=user_message,
-        effective_task_id=effective_task_id,
-    )
+    if plugin_block_message:
+        compaction = CompactionOutcome(
+            messages=messages, active_system_prompt=active_system_prompt,
+            conversation_history=conversation_history, current_turn_user_idx=current_turn_user_idx,
+        )
+    else:
+        with owner_taste_prompt_scope(agent, taste_home):
+            compaction = run_turn_start_compaction(
+                agent, messages=messages, system_message=system_message,
+                active_system_prompt=active_system_prompt, conversation_history=conversation_history,
+                current_turn_user_idx=current_turn_user_idx, user_message=user_message,
+                effective_task_id=effective_task_id,
+            )
     messages = compaction.messages
     active_system_prompt = compaction.active_system_prompt
     conversation_history = compaction.conversation_history
@@ -1299,10 +1317,19 @@ def build_turn_context(
     # A vetoed prompt never leaves the host: no external-memory prefetch, no titling call.
     ext_prefetch_cache = "" if plugin_block_message else _memory_turn_start_and_prefetch(
         agent, original_user_message, turn_author)
+    source_row = admitted_source_row(messages, current_turn_user_idx, user_msg)
+    agent._owner_taste_allowed = taste_home is not None and not plugin_block_message
+
     recall_rows: list[dict[str, Any]] = []
-    if ext_prefetch_cache and _recall_as_tool_result(agent, moa_active) and current_turn_user_idx == len(messages) - 1:
-        recall_rows = recall_tool_rows(agent, ext_prefetch_cache, len(messages))
-        ext_prefetch_cache = ""
+    if _can_send_recall_tool_result(agent, moa_active) and current_turn_user_idx == len(messages) - 1:
+        taste_suffix = ""
+        if taste_home is not None and source_row is not None and not plugin_block_message:
+            taste_suffix = owner_turn_taste_suffix(taste_home, _memory_query_text(original_user_message))
+        tool_recall = ""
+        if not getattr(getattr(agent, "_memory_manager", None), "auto_recall_append", False):
+            tool_recall, ext_prefetch_cache = ext_prefetch_cache, ""
+        if tool_recall or taste_suffix:
+            recall_rows = recall_tool_rows(agent, tool_recall, len(messages), taste_suffix=taste_suffix)
 
     # Title the session now: titling depends only on the user's ask (before any injected
     # context lands on list content), so it runs concurrently with the turn. Daemon thread,
@@ -1328,13 +1355,6 @@ def build_turn_context(
     for row in recall_rows:
         append_message(messages, row)
 
-    # A compaction re-anchor can name an older user row. Only the actual inbound
-    # dict (or a copy carrying its durable identity) may authorize a memory tool.
-    source_row = messages[current_turn_user_idx] if 0 <= current_turn_user_idx < len(messages) else None
-    if source_row is not user_msg and not (
-        source_row and user_msg.get("message_uid") and source_row.get("message_uid") == user_msg["message_uid"]
-    ):
-        source_row = None
     _persist_turn_start(agent, messages, conversation_history, pending_cli_message,
                         source_row=None if plugin_block_message else source_row, turn_author=turn_author)
 
@@ -1475,7 +1495,7 @@ def build_api_messages(
     # Final system message = cached prompt + ephemeral additions (API-time only).
     # Plugin/recall context goes into the user message, never the system prompt: the
     # prompt is built ONCE per session and replayed verbatim (stable cache prefix).
-    effective_system = active_system_prompt or ""
+    effective_system, api_messages = request_taste_view(agent, active_system_prompt or "", api_messages)
     if agent.ephemeral_system_prompt:
         effective_system = (effective_system + "\n\n" + agent.ephemeral_system_prompt).strip()
     if effective_system:

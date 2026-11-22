@@ -1249,6 +1249,10 @@ def _sync_failover_system_message(agent, api_messages, active_system_prompt):
     sp = getattr(agent, "_cached_system_prompt", None)
     if not isinstance(sp, str) or not sp:
         return active_system_prompt
+    if not getattr(agent, "_owner_taste_allowed", False):
+        from agent.system_prompt import strip_core_tastes_from_prompt
+
+        sp = strip_core_tastes_from_prompt(sp)
     if api_messages and api_messages[0].get("role") == "system":
         effective = (sp + "\n\n" + agent.ephemeral_system_prompt).strip() if agent.ephemeral_system_prompt else sp
         if not _rewrite_system_content_blocks(api_messages[0], effective):
