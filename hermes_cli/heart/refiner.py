@@ -35,7 +35,9 @@ _OWN_JOURNAL = """
 
 def _journals(cur, agent: str, day: dt.date):
     cur.execute(f"""
-        SELECT uid, native FROM memory.messages j
+        SELECT j.uid, j.native, EXISTS (
+            SELECT 1 FROM memory.taste_consumed c WHERE c.agent_id=j.agent_id AND c.journal_uid=j.uid
+        ) FROM memory.messages j
         WHERE agent_id=%s AND {_OWN_JOURNAL} AND ts >= %s AND ts < %s AND native->'pref' IS NOT NULL
         ORDER BY ts, message_id FOR SHARE
     """, (agent, storage.midnight(day), storage.midnight(day + dt.timedelta(days=1))))
@@ -156,7 +158,10 @@ def review(store: MessageStore, day: dt.date, *, weekly: bool = False) -> Counte
         if cur.fetchone():
             return Counter({"later-review": 1})
         if not weekly:
-            for uid, native in _journals(cur, agent, day):
+            for uid, native, consumed in _journals(cur, agent, day):
+                if consumed:
+                    counts["consumed"] += 1
+                    continue
                 try:
                     entry = Entry.model_validate(native)
                 except ValidationError:
@@ -164,7 +169,10 @@ def review(store: MessageStore, day: dt.date, *, weekly: bool = False) -> Counte
                 else:
                     result = _observe(cur, agent, day, uid, entry)
                 counts[result] += 1
-                if result not in {"written", "present"}:
+                if result in {"written", "present"}:
+                    cur.execute("INSERT INTO memory.taste_consumed(agent_id,journal_uid,consumed_on)"
+                                " VALUES (%s,%s,%s) ON CONFLICT DO NOTHING", (agent, uid, day))
+                else:
                     logger.info("Taste evidence refused: journal=%s rule=%s", uid, result)
         tastes = _tastes(cur, agent, day)
         if weekly:

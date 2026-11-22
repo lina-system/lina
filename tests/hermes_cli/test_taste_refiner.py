@@ -64,6 +64,40 @@ def test_turn_from_another_day_is_refused(sandbox, memory_store_sql):
     refusals(sandbox["alpha"], memory_store_sql)
 
 
+def test_expiry_day_rerun_does_not_recreate_candidate(sandbox, memory_store_sql):
+    home = sandbox["alpha"]
+    sql = memory_store_sql
+    first = DAY - timedelta(days=14)
+    turn(sql, "first", day=first)
+    journal(home, first, "dislike", ("first",))
+    daily(first)
+    assert sql("SELECT status, origin, valence, first_seen FROM memory.tastes") == [
+        ("candidate", "outcome", "dislike", first)]
+    assert sql("SELECT sign, weight::float FROM memory.taste_evidence") == [(-1, 0.225)]
+
+    turn(sql)
+    journal(home, DAY, "like")
+    assert "written=1" in daily(DAY)
+    assert sql("SELECT count(*) FROM memory.tastes WHERE live") == [(0,)]
+    assert sql("SELECT count(*) FROM memory.taste_evidence") == [(0,)]
+    events = sql("SELECT * FROM memory.taste_events ORDER BY event_id")
+    assert events
+    replay = daily(DAY)
+    assert sql("SELECT count(*) FROM memory.tastes") == [(0,)]
+    assert sql("SELECT count(*) FROM memory.taste_evidence") == [(0,)]
+    assert sql("SELECT * FROM memory.taste_events ORDER BY event_id") == events
+    assert "consumed=1" in replay
+
+
+def test_retry_accepts_journal_after_citation_arrives(sandbox, memory_store_sql):
+    journal(sandbox["alpha"], DAY, "like", ("late-turn",))
+    assert "citation=1" in daily(DAY)
+    assert memory_store_sql("SELECT count(*) FROM memory.taste_evidence") == [(0,)]
+    turn(memory_store_sql, "late-turn")
+    assert "written=1" in daily(DAY)
+    assert memory_store_sql("SELECT message_uids FROM memory.taste_evidence") == [(["late-turn"],)]
+
+
 def test_signed_score_flip_and_rerun_persist_once(sandbox, memory_store_sql):
     sql = memory_store_sql
     for name in ("spacing", "columns", "tiles"):
