@@ -35,6 +35,8 @@ COPY: Final = {
                        "Journal: {lines} lines read, {written} rows written, {present} already present, "
                        "{unreadable} unreadable"),
     "import_dry": ("(--dry-run: 아무것도 쓰지 않았다. 숫자는 쓸 양이다)", "(--dry-run: nothing written; counts are what would be)"),
+    "import_ledger": ("장부: {records}건 읽음, {written}건 씀, {present}건 이미 있음, 오류 {errors}건",
+                      "Ledger: {records} records read, {written} written, {present} already present, errors: {errors}"),
     "import_unmapped": ("  {line}행: 옮긴 LCM에 없는 근거 {ids}", "  line {line}: evidence not in the moved LCM rows {ids}"),
     "import_unreadable": ("  {line}행을 못 읽는다: {reason}", "  line {line} unreadable: {reason}"),
     "date": ("날짜는 YYYY-MM-DD다: {value}", "Date must be YYYY-MM-DD: {value}"),

@@ -62,7 +62,7 @@ One record per (agent, target).
 | `origin` | The route that created it (below). |
 | `evidence[]` | Items `{date, route, sign, weight, journal_uid, message_uids, note}`. **Change 1:** every item points at `memory.messages` uids (the journal row and the turns it cites), not at `state.db` message ids, which no longer exist on a LINA home (§2). |
 | `first_seen` | Date the candidate was created. |
-| `history[]` | `{date, from, to, reason, by}` per change of status, strength or valence; append-only; used for rollback. **Change 2:** kept as rows of the taste event log, not as a list inside the record. **Change 3:** `by` is `agent`, `review` or `owner`. |
+| `history[]` | `{date, from, to, reason, by}` per change of status, strength or valence; append-only; used for rollback. **Change 2:** kept as rows of the taste event log, not as a list inside the record. **Change 3:** `by` is `agent`, `review` or `owner`. A trial temperament creation with `by=seed` is imported as `changed_by=review` with reason `created`, retaining `origin=temperament` and strength `0.3`. |
 | `baseline` | The day-0 forced-choice answer, if one exists, so what experience added is told apart from what the base model already prefers. |
 | `protected_check` | `{passed, at, rule}`: the result of the boundary check (§5) at the last write. |
 

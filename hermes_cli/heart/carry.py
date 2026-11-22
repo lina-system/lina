@@ -14,6 +14,7 @@ from pydantic import ValidationError
 
 from hermes_cli.heart import rows, storage
 from hermes_cli.heart.journal import conclusion
+from hermes_cli.heart.ledger import LedgerResult, import_ledger
 from hermes_cli.heart.locale import text
 from hermes_cli.heart.models import Entry, Pref, Record
 from hermes_state_store import MessageStore
@@ -45,11 +46,12 @@ class Carried:
     present: int = 0
     unmapped: list[tuple[int, list[str]]] = field(default_factory=list)
     unreadable: list[tuple[int, str]] = field(default_factory=list)
+    ledger: LedgerResult = field(default_factory=LedgerResult)
 
     @property
     def ok(self) -> bool:
-        """Every journal line became a row (an unmapped citation is listed, its entry kept)."""
-        return not self.unreadable
+        """All journal lines and ledger records were accounted for."""
+        return not self.unreadable and not self.ledger.errors
 
     def as_dict(self) -> dict:
         return {**asdict(self), "ok": self.ok, "counted": self.lines == self.written + self.present + len(self.unreadable)}
@@ -111,12 +113,13 @@ def _trial_lines(path: Path, report: Carried) -> list[tuple[int, dict, TrialLine
     return parsed
 
 
-def _journal(path: Path, store: MessageStore, report: Carried, dry_run: bool) -> None:
+def _journal(path: Path, store: MessageStore, report: Carried, dry_run: bool) -> dict[int, tuple[str, str]]:
     parsed = _trial_lines(path, report)
     cited = {item["store_id"] for _, _, trial in parsed for item in trial.evidence
              if isinstance(item.get("store_id"), int)}
     mapped = rows.lcm_uids(store, cited) if cited else {}
     written = []
+    references = {}
     for number, raw, trial in parsed:
         uids, unmapped = [], []
         for item in trial.evidence:
@@ -128,7 +131,9 @@ def _journal(path: Path, store: MessageStore, report: Carried, dry_run: bool) ->
         if unmapped:
             report.unmapped.append((number, [str(item.get("store_id", json.dumps(item))) for item in unmapped]))
         entry = Entry(**trial.model_dump(exclude={"evidence"}), evidence=tuple(uids))
-        written.append(rows.row(rows.row_uid(store.agent_id, raw), entry, conclusion(entry),
+        uid = rows.row_uid(store.agent_id, raw)
+        references[number] = (uid, trial.ts)
+        written.append(rows.row(uid, entry, conclusion(entry),
                                 {"unmapped_evidence": unmapped} if unmapped else None))
     if dry_run:
         report.present = len(rows.present(store, (row["uid"] for row in written)))
@@ -136,6 +141,7 @@ def _journal(path: Path, store: MessageStore, report: Carried, dry_run: bool) ->
     else:
         report.written = rows.put(store, written)
         report.present = len(written) - report.written
+    return references
 
 
 def carry(source: Path, home: Path, agent: str, *, dry_run: bool = False) -> Carried:
@@ -147,14 +153,22 @@ def carry(source: Path, home: Path, agent: str, *, dry_run: bool = False) -> Car
     for relative, path in _inputs(source, report):
         _copy(relative, path, home, report, dry_run)
     journal = source / JOURNAL
+    ledger = source / "heart/preferences.json"
     if journal.is_symlink():
         report.skipped.append((JOURNAL, "symlink"))
-    elif journal.is_file():
-        if not dry_run:
+    has_journal = not journal.is_symlink() and journal.is_file()
+    has_ledger = not ledger.is_symlink() and ledger.is_file()
+    if has_journal or has_ledger:
+        if has_journal and not dry_run:
             # The heart directory marks an agent that keeps a journal (daily review, weekly page), as journal.write does.
             storage.private_dir(home / "heart")
         with closing(MessageStore(agent)) as store:
-            _journal(journal, store, report, dry_run)
+            references = _journal(journal, store, report, dry_run) if has_journal else {}
+            if has_ledger:
+                if report.unreadable:
+                    report.ledger.errors.append("ledger import requires a readable journal")
+                else:
+                    report.ledger = import_ledger(ledger, store, references, dry_run=dry_run)
     return report
 
 
@@ -175,6 +189,11 @@ def command(args) -> None:
         print(text("import_unmapped", line=number, ids=",".join(ids)))
     for number, reason in report.unreadable:
         print(text("import_unreadable", line=number, reason=reason))
+    ledger = report.ledger
+    print(text("import_ledger", records=ledger.records, written=ledger.written, present=ledger.present,
+               errors=len(ledger.errors)))
+    for reason in ledger.errors:
+        print(f"  heart/preferences.json: {reason}")
     if args.dry_run:
         print(text("import_dry"))
     if not report.ok:
