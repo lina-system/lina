@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from hermes_constants import (
-    COMMON_PERSONA_FILE, get_hermes_home, get_scratch_dir, get_skills_dir,
+    COMMON_PERSONA_FILE, WORK_PERSONA_FILE, get_hermes_home, get_scratch_dir, get_skills_dir,
     is_wsl, reset_hermes_home_override, set_hermes_home_override,
 )
 
@@ -1571,13 +1571,24 @@ def load_soul_md(context_length: Optional[int] = None, home_override: Path | Non
 
 def load_common_persona(context_length: int | None = None, home_override: Path | None = None) -> str | None:
     """Load the owning profile's ordered shared persona as one prompt section."""
+    return _load_persona_section(COMMON_PERSONA_FILE, context_length, home_override)
+
+
+def load_work_persona(context_length: int | None = None, home_override: Path | None = None) -> str | None:
+    """Load the owning profile's optional work persona."""
+    return _load_persona_section(WORK_PERSONA_FILE, context_length, home_override)
+
+
+def _load_persona_section(
+    filename: str, context_length: int | None, home_override: Path | None,
+) -> str | None:
     from agent.safe_worker_policy import safe_worker_enabled
 
     if safe_worker_enabled():
         return None
 
     home = Path(home_override) if home_override is not None else get_hermes_home()
-    path = home / COMMON_PERSONA_FILE
+    path = home / filename
     try:
         content = _read_text_with_timeout(path, encoding="utf-8", preserve_newlines=True)
     except FileNotFoundError:
@@ -1592,7 +1603,9 @@ def load_common_persona(context_length: int | None = None, home_override: Path |
     content = strip_legacy_protocol(content)
     if not content.strip():
         return None
-    scanned = _scan_context_content(content, path.name, user_authored=_soul_is_user_authored(home))
+    # The work file has no protected-instruction write gate, so scan it fail-closed.
+    user_authored = filename == COMMON_PERSONA_FILE and _soul_is_user_authored(home)
+    scanned = _scan_context_content(content, path.name, user_authored=user_authored)
     # The context scanner drops a leading BOM, but it belongs to the raw unit.
     if scanned == content.removeprefix("\ufeff"):
         scanned = content

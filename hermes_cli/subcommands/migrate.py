@@ -48,7 +48,11 @@ def build_migrate_parser(subparsers) -> None:
                          help="Destination profile and read-only persona file (repeat for each home)")
     persona.add_argument("--home", required=True, help="Destination installation data root, separate from the inputs")
     persona.add_argument("--drop", metavar="FILE", help="Approved drops, one normalized sha256:reason per line")
-    persona.add_argument("--apply", action="store_true", help="Write the split and ledgers (default: dry run)")
+    persona.add_argument("--exempt", action="append", default=[], metavar="PROFILE",
+                         help="Keep a profile's original persona and exclude it from both shared layers (repeatable)")
+    persona.add_argument("--report-pairs", metavar="FILE",
+                         help="Write a side-by-side Markdown replacement report, even in a dry run")
+    persona.add_argument("--apply", action="store_true", help="Write the persona layers and ledgers (default: dry run)")
     persona.set_defaults(func=_cmd_migrate_persona)
     configure(migrate_subparsers.add_parser("skills", help="Inventory legacy skill layers and distinct copies"))
 

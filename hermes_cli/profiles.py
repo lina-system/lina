@@ -23,7 +23,8 @@ from hermes_cli.profiles_config import _migrate_profile_config_if_outdated
 from hermes_cli.home_data_layout import PM_RUNTIME_ROOT_DIRS, SECRET_CACHE_STORES
 from hermes_cli.profiles_remove import _rmtree_make_writable, _rmtree_with_retry, wait_profile_unowned
 from hermes_constants import (
-    COMMON_PERSONA_FILE, LOCAL_RUNTIME_ROOT_DIRS, PROFILE_ID_RE, clear_named_profile_deleted, mark_named_profile_deleted,
+    COMMON_PERSONA_FILE, LOCAL_RUNTIME_ROOT_DIRS, PROFILE_ID_RE, WORK_PERSONA_FILE,
+    clear_named_profile_deleted, mark_named_profile_deleted,
     named_profile_has_identity, named_profile_is_deleted, named_profile_is_live,
 )
 from hermes_cli.config_backend import (
@@ -40,7 +41,7 @@ _PROFILE_ID_RE = PROFILE_ID_RE  # legacy alias; hermes_constants.PROFILE_ID_RE i
 _PROFILE_DIRS = ["memories", "sessions", "skills", "skins", "logs", "plans", "workspace", "cron", "home"]
 
 # Files copied during --clone (if they exist in the source).
-_CLONE_CONFIG_FILES = ["config.yaml", ".env", "SOUL.md", COMMON_PERSONA_FILE]
+_CLONE_CONFIG_FILES = ["config.yaml", ".env", "SOUL.md", COMMON_PERSONA_FILE, WORK_PERSONA_FILE]
 # Subdirectory files copied during --clone: memory files are part of the agent's curated
 # identity, as important as SOUL.md for continuity.
 _CLONE_SUBDIR_FILES = ["memories/MEMORY.md", "memories/USER.md"]
@@ -976,7 +977,7 @@ def _clone_file(source_dir: Path, profile_dir: Path, relpath: str) -> None:
 # Files a clone edits in place after copying. A ``--clone-all`` copy preserves symlinks
 # (``symlinks=True``), so a symlinked source ``.env`` would otherwise be edited THROUGH the link and
 # the channel stripping would mutate the SOURCE profile. These are materialized as real files first.
-_CLONE_MATERIALIZE = (".env", "config.yaml", "auth.json", "SOUL.md", COMMON_PERSONA_FILE)
+_CLONE_MATERIALIZE = (".env", "config.yaml", "auth.json", "SOUL.md", COMMON_PERSONA_FILE, WORK_PERSONA_FILE)
 
 
 def _materialize_symlinked_files(profile_dir: Path) -> list[str]:
@@ -1167,7 +1168,7 @@ def create_profile(
     """Create a new profile directory and return its path.
 
     ``clone_from`` defaults to the active profile when cloning. ``clone_all`` copies all state;
-    ``clone_config`` copies config.yaml/.env/SOUL.md, installed skills, and identity files.
+    ``clone_config`` copies config.yaml, .env, installed skills, and identity files.
     Either clone strips the source's messaging channels — bot tokens, allowlists, platform
     sections, pairing/session state — unless ``clone_channels`` opts in: a copied bot credential
     makes two gateways fight over one bot (``hermes_cli.profile_channels``; callers list what

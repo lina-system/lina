@@ -576,9 +576,9 @@ def _memory_parts(agent: Any) -> list[str]:
 
 
 def _identity_parts(agent: Any, ctx_len: Optional[int]) -> tuple[list[str | None], bool]:
-    """Shared persona and profile SOUL.md, then the copy overlay.
+    """Common persona, work persona, profile SOUL.md, then the copy overlay.
 
-    Use the default identity when neither persona supplied content. Cron keeps
+    Use the default identity when no persona supplied content. Cron keeps
     these identity sections while skipping project context.
     Returns ``(parts, soul_loaded)``.
     """
@@ -587,9 +587,10 @@ def _identity_parts(agent: Any, ctx_len: Optional[int]) -> tuple[list[str | None
         return [DEFAULT_AGENT_IDENTITY], False
     home = _agent_home(agent)
     common = _pb.load_common_persona(ctx_len, home_override=home)
+    work = _pb.load_work_persona(ctx_len, home_override=home)
     _soul_content = _pb.load_soul_md(ctx_len, home_override=home)
-    local_identity = _soul_content or (None if common else DEFAULT_AGENT_IDENTITY)
-    parts = [common, local_identity, _pb.load_copy_overlay(ctx_len, home_override=home)]
+    local_identity = _soul_content or (None if common or work else DEFAULT_AGENT_IDENTITY)
+    parts = [common, work, local_identity, _pb.load_copy_overlay(ctx_len, home_override=home)]
     return parts, bool(_soul_content)
 
 
