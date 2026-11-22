@@ -135,6 +135,21 @@ def test_modes_without_the_api_content_sidecar_never_get_a_rules_notice(monkeypa
     assert line in rules.standing_rules_note(agent, [])
 
 
+def test_oversized_rules_in_modes_without_a_notice_keep_whole_rules_and_name_the_tool(monkeypatch):
+    from agent import standing_rules_section as rules
+
+    lines = tuple(f"- all (2026-01-01): Rule {i:02}. " + "Use a short sentence. " * 4 for i in range(40))
+    monkeypatch.setattr(rules, "read_rule_lines", lambda agent: lines)
+    for extra in ({"provider": "moa"}, {"api_mode": "codex_app_server"}):
+        section, = rules.render_standing_rules_section(SimpleNamespace(**extra))
+        text = section.content
+        assert len(text) <= 4000
+        assert "next user message" not in text and "standing_rule tool" in text
+        shown = [line for line in lines if line in text]
+        assert shown and len(shown) < len(lines) and list(lines[:len(shown)]) == shown
+        assert f"{len(shown)} of 40 lines shown" in text
+
+
 def test_each_notice_supersedes_an_earlier_update_for_a_rule_that_was_never_frozen(monkeypatch):
     from agent import standing_rules_section as rules
 

@@ -21,6 +21,11 @@ _OVERFLOW = "Rules exceed the frozen section budget:"
 _NOTICE_HEAD = "[System: Standing rules update for frozen section "
 
 
+def _notice_channel(agent: Any) -> bool:
+    """MoA and codex_app_server turns never stamp the api_content sidecar, so no turn notice can be read back."""
+    return not (getattr(agent, "provider", None) == "moa" or getattr(agent, "api_mode", None) == "codex_app_server")
+
+
 def read_rule_lines(agent: Any) -> tuple[str, ...]:
     from agent.system_prompt import _agent_home
     from hermes_constants import get_hermes_home
@@ -65,9 +70,20 @@ def render_standing_rules_section(agent: Any) -> tuple:
     if safe_worker_enabled() or not (lines := read_rule_lines(agent)):
         return ()
     content = "\n".join((BOUNDARY, *lines))
-    if len(content) > MAX_SYSTEM_PROMPT_SECTION_CHARS:
+    if len(content) > MAX_SYSTEM_PROMPT_SECTION_CHARS and _notice_channel(agent):
         content = (f"{BOUNDARY}\n{_OVERFLOW} {len(lines)} lines, {len(content)} characters. "
                    "The next user message carries the complete list.")
+    elif len(content) > MAX_SYSTEM_PROMPT_SECTION_CHARS:
+        # No turn notice reaches this mode, so keep as many whole rules as fit and name the tool for the rest.
+        def render(shown: tuple[str, ...]) -> str:
+            tail = (f"{_OVERFLOW} {len(shown)} of {len(lines)} lines shown. "
+                    "Read the complete list with the standing_rule tool, action list.")
+            return "\n".join((BOUNDARY, *shown, tail))
+
+        kept: tuple[str, ...] = ()
+        while len(kept) < len(lines) and len(render((*kept, lines[len(kept)]))) <= MAX_SYSTEM_PROMPT_SECTION_CHARS:
+            kept = (*kept, lines[len(kept)])
+        content = render(kept)
     return (RenderedPluginSystemPromptSection(id=SECTION_ID, content=content, position="after_memory", plugin="core"),)
 
 
@@ -80,7 +96,7 @@ def standing_rules_note(agent: Any, history: list) -> str:
     # MoA and codex_app_server turns never stamp the api_content sidecar, so a sent notice could not be
     # read back from history and would repeat on every later turn (and replay would drop it from the
     # cached prefix). Those modes skip it, as stage_skills_index_note does.
-    if getattr(agent, "provider", None) == "moa" or getattr(agent, "api_mode", None) == "codex_app_server":
+    if not _notice_channel(agent):
         return ""
     try:
         current = read_rule_lines(agent)
