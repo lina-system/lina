@@ -192,6 +192,35 @@ def test_import_respects_the_forgotten_target_cooldown(
         ) == [("forgotten", None, forgotten), ("active", TOMBSTONE_LABEL, None)]
 
 
+@pytest.mark.parametrize("stored", [True, False], ids=["stored", "pending"])
+@pytest.mark.parametrize("age, expected_code", [(89, 1), (90, 0)])
+def test_dry_run_matches_cooldown_import(sandbox, tmp_path, memory_store_sql, stored, age, expected_code):
+    [(today,)] = memory_store_sql("SELECT CURRENT_DATE")
+    forgotten = today - timedelta(days=200)
+    first_seen = (forgotten + timedelta(days=age)).isoformat()
+    tombstone = _tombstone(forgotten)
+    if stored:
+        initial = _source(tmp_path / "initial", tombstones=[tombstone])
+        assert invoke("import", "--from", str(initial))[0] == 0
+    source = _source(tmp_path / "trial", records=[_temperament(TOMBSTONE_LABEL, first_seen)],
+                     tombstones=[] if stored else [tombstone])
+
+    before = _ledger_rows(memory_store_sql)
+    preview, preview_out, _ = invoke("import", "--from", str(source), "--dry-run")
+    assert _ledger_rows(memory_store_sql) == before
+    actual, actual_out, _ = invoke("import", "--from", str(source))
+    after = _ledger_rows(memory_store_sql)
+    assert actual == expected_code
+    assert preview == actual, preview_out + actual_out
+    count = 1 if stored else 2
+    written = len(after[0]) - len(before[0])
+    assert written == (0 if expected_code else count)
+    summary = f"Ledger: {count} records read, {written} written, 0 already present, errors: {expected_code}"
+    assert summary in preview_out and summary in actual_out
+    if expected_code:
+        assert after == before
+
+
 def test_import_rejects_malformed_preferences_json(sandbox, tmp_path, moved_lcm, memory_store_sql):
     source = _source(tmp_path / "trial")
     (source / "heart/preferences.json").write_text('{"version": 1, "records": [', encoding="utf-8")

@@ -204,6 +204,29 @@ def _record_error(exc: ValidationError) -> list[str]:
             for e in exc.errors(include_input=False, include_url=False)]
 
 
+def _preview_reservation(cur, item: Taste | Tombstone, pending: dict) -> None:
+    if isinstance(item, Tombstone):
+        label_hash = bytes.fromhex(item.label_hash)
+        first_seen = forgotten_on = item.date
+    else:
+        label_hash = hashlib.sha256(item.label.encode()).digest()
+        first_seen, forgotten_on = item.first_seen, None
+    reservations = pending.setdefault((item.kind, label_hash), [])
+    # Mirror 0028's exclusion range for both stored rows and inserts accepted by this preview.
+    cur.execute("""
+        SELECT span, span && ANY(%s::daterange[]) OR EXISTS (
+            SELECT 1 FROM memory.tastes
+            WHERE agent_id = public.lina_current_agent() AND target_kind = %s AND label_hash = %s
+              AND daterange(first_seen, forgotten_on + 90, '[)') && span
+        )
+        FROM (SELECT daterange(%s::date, %s::date + 90, '[)') AS span) AS candidate
+        """, (reservations, item.kind, label_hash, first_seen, forgotten_on))
+    span, overlaps = cur.fetchone()
+    if overlaps:
+        raise LedgerError("target overlaps the forgotten-target cooldown")
+    reservations.append(span)
+
+
 def _items(ledger: Ledger, errors: list[str]) -> Iterator[tuple[str, Taste | Tombstone]]:
     seen_ids: set[str] = set()
     seen_targets: set[tuple] = set()
@@ -236,6 +259,7 @@ def import_ledger(path: Path, store: MessageStore, journal: dict[int, tuple[str,
         return result
 
     result.records = len(ledger.records) + len(ledger.tombstones)
+    pending = {}
     try:
         with store.write(), store._writer_cursor() as cur:
             # A second importer for the same agent must see the committed event log before comparing it.
@@ -250,6 +274,8 @@ def import_ledger(path: Path, store: MessageStore, journal: dict[int, tuple[str,
                             inserted = _taste(cur, item, journal, dry_run)
                             result.evidence += len(item.evidence)
                             result.events += len(item.history)
+                        if dry_run and inserted:
+                            _preview_reservation(cur, item, pending)
                         result.written += int(inserted)
                         result.present += int(not inserted)
                 except (LedgerError, psycopg.IntegrityError, psycopg.DataError) as exc:
