@@ -595,7 +595,11 @@ ratio of 0.90 or above, taking the larger ratio of the two directions.
 
 Add `--apply` to write `SOUL.common.md`, the remaining `SOUL.md`, and `persona-ledger.jsonl`
 in each destination home. `SOUL.common.md` contains that home's common units in source order,
-with their original heading chains. The stable prompt loads it before `SOUL.md` and
+under the headings that most homes share, so the file is byte-identical across homes with the
+same common units. A home's leading level-1 title (when deeper sections follow it) names the
+home and stays in its persona. A unit under any other heading that cannot travel (one that only
+this home has) stays in the persona with that heading, because the heading changes what the unit
+says. The stable prompt loads the common file before `SOUL.md` and
 `SOUL.overlay.md`. Both persona files travel with the profile when it is cloned, renamed,
 or exported and imported. Source files must be outside the destination. An identical rerun is safe.
 An existing destination persona can be split if its bytes still match its source. Conflicting
