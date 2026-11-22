@@ -494,6 +494,10 @@ def _consume_user_interrupt(agent, active: bool = True) -> tuple[bool, Any]:
 def _codex_developer_instructions(agent) -> str:
     """The prompt composition the standard loop sends as its system message (turn_context order)."""
     developer_instructions = getattr(agent, "_cached_system_prompt", None) or ""
+    if not getattr(agent, "_owner_taste_allowed", False):
+        from agent.system_prompt import strip_core_tastes_from_prompt
+
+        developer_instructions = strip_core_tastes_from_prompt(developer_instructions)
     if getattr(agent, "ephemeral_system_prompt", None):
         developer_instructions = (developer_instructions + "\n\n" + agent.ephemeral_system_prompt).strip()
     return developer_instructions
@@ -615,6 +619,12 @@ def _ensure_codex_session(agent, messages: list[dict[str, Any]] | None = None) -
             return
         _close_codex_session(agent)
     resume_thread_id = None if getattr(agent, "_codex_session_prompt", None) is not None else _stored_codex_thread_id(agent)
+    if resume_thread_id and not getattr(agent, "_owner_taste_allowed", False):
+        from agent.system_prompt import strip_core_tastes_from_prompt
+
+        cached = getattr(agent, "_cached_system_prompt", None) or ""
+        if strip_core_tastes_from_prompt(cached) != cached:
+            resume_thread_id = None
     from agent.runtime_cwd import resolve_agent_cwd
     from agent.transports.codex_app_server_session import CodexAppServerSession, _ServerRequestRouting
     from hermes_cli.codex_runtime_switch import get_configured_codex_binary
@@ -649,7 +659,9 @@ def _ensure_codex_session(agent, messages: list[dict[str, Any]] | None = None) -
     agent._codex_session_prompt = developer_instructions
     agent._codex_session_model_provider = model_provider
     from agent.codex_runtime_history_seed import render_history_seed
-    history_seed = render_history_seed(messages) or None
+    from agent.turn_context_taste import redact_owner_taste_rows
+    # A fresh thread's seed becomes developer instructions. Picks belong only to tool results.
+    history_seed = render_history_seed(redact_owner_taste_rows(messages or [])) or None
     # The model always rides along: codex's home is shared, while the Hermes model is per profile/session,
     # so omitting it ran codex's own default instead of the selection.
     agent._codex_session = CodexAppServerSession(

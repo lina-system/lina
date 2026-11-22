@@ -968,7 +968,7 @@ def build_cache_parity_fork(
     write_origin: str = "background_review",
 ) -> tuple[Any, dict[str, Any], bool]:
     """Construct a detached AIAgent fork with warm prompt-cache parity (shared with ``/btw``): same
-    runtime/credentials as the parent, byte-identical system prompt / tools[] / reasoning config on
+    runtime/credentials as the parent, shared system prompt / tools[] / reasoning config on
     the same-model path, shared session_id for prefix warmth, full persistence detachment (no
     state.db writes, rotation, or external memory providers; in-place-only compaction). Returns
     ``(fork_agent, runtime_dict, routed)``; ``routed`` means a different model (cache cold —
@@ -1007,15 +1007,20 @@ def build_cache_parity_fork(
     # Same model only: share the warm cached system prompt (~26% cost cut; a rebuilt prompt misses
     # the byte-exact prefix key) and pin session_start so any re-render (compression, plugin
     # hooks) stays byte-identical.
-    # Inherit the parent's cached system prompt verbatim so the review fork's outbound HTTP request hits the
-    # same Anthropic/OpenRouter prefix cache the parent warmed. Without this, the fork rebuilds the system
+    # Inherit the parent's cached system prompt, removing owner-only core tastes for background reviews,
+    # to reuse the longest matching request prefix. Without this, the fork rebuilds the system
     # prompt from scratch (fresh _hermes_now() timestamp, fresh session_id, narrower toolset → different
     # skills_prompt) and the byte-exact prefix-cache key misses. See issue #25322 and PR #17276 for the full
     # analysis + measured impact (~26% end-to-end cost reduction on Sonnet 4.5). When routed to a different
     # model the parent's cached prompt is for the wrong model/cache key and would miss anyway, so let the
     # routed fork build its own.
     if not _routed:
-        review_agent._cached_system_prompt = agent._cached_system_prompt
+        parent_prompt = agent._cached_system_prompt
+        if write_origin == "background_review" and isinstance(parent_prompt, str):
+            from agent.system_prompt import strip_core_tastes_from_prompt
+
+            parent_prompt = strip_core_tastes_from_prompt(parent_prompt)
+        review_agent._cached_system_prompt = parent_prompt
         review_agent.session_start = agent.session_start
         # Cache-scope parity (#109964): the fork shares the parent's physical session_id and
         # byte-identical prefix, but is _persist_disabled (declared scope fails closed) and
@@ -1208,13 +1213,16 @@ def _run_review_fork(
     try:
         if review_run is None or review_run.begin_request(st.review_agent):
             # Routed -> digest (cache cold anyway); same model -> full snapshot (warm cache reads).
+            from agent.turn_context_taste import redact_owner_taste_rows
+
+            history = redact_owner_taste_rows(messages_snapshot)
             result = st.review_agent.run_conversation(
                 user_message=(
                     prompt + "\n\nYou can only call " + memory_phrase_prompt +
                     "management tools. Other tools will be denied "
                     "at runtime — do not attempt them." + prompt_extra
                 ),
-                conversation_history=_digest_history(messages_snapshot) if _routed else messages_snapshot,
+                conversation_history=_digest_history(history) if _routed else history,
             )
             st.rule_proposal = _rule_proposal(result)
     finally:

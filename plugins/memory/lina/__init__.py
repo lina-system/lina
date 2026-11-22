@@ -22,6 +22,7 @@ work record, repos and memory; ``memory_search`` and ``memory_open`` forward to 
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Optional
 
@@ -182,6 +183,40 @@ class LinaMemoryProvider(MemoryProvider):
             self._policy, history, start, agent_context=self._init.get("agent_context", ""),
             platform=self._init.get("platform", ""), author=author, agent_ref=f"agent:{agent}",
             person_ref=links.row_refs([handle])[0] if handle else None, owner_handle=owner_handle)
+
+    def is_owner_turn(self, row: Mapping[str, Any], author: Mapping[str, Any] | None) -> bool:
+        """Identify owner input before an inbound row has a persisted message UID."""
+        platform = self._init.get("platform", "")
+        if row.get("role") != "user" or platform in ("", "api_server"):
+            return False
+        signals = signals_for_turn(
+            [row], agent_context=self._init.get("agent_context", ""), platform=platform,
+            turn_author=author, turn_start=0,
+        )
+        if self._policy.rule(self._policy.route_for(signals)).speaker != "owner":
+            return False
+        sender = str(author.get("id") or "") if author else ""
+        if platform in _LOCAL_PLATFORMS:
+            return not (
+                author or self._init.get("user_id") or self._init.get("gateway_session_key")
+                or speaker.is_shared_room(row)
+            )
+        # A cached agent's user_id identifies the session opener, not this turn's sender.
+        if not sender or sender.startswith("bot:"):
+            return False
+
+        try:
+            from psycopg import Error as PostgresError
+        except ImportError:
+            return False
+
+        from hermes_state_store import StoreUnavailableError
+
+        try:
+            person = self._registry.person_of(("gateway_user", f"{platform}:{sender}"))
+            return person == self._registry.person_of(OWNER_HANDLE)
+        except (StoreUnavailableError, PostgresError):
+            return False
 
     @property
     def _rule_source_uid(self) -> str | None:

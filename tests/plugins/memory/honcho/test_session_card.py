@@ -4,7 +4,12 @@ recall carries only dialectic results; a slow card leaves the prompt without it 
 import logging
 import threading
 import time
+from pathlib import Path
+from unittest.mock import Mock
 
+import pytest
+
+from hermes_constants import reset_hermes_home_override, set_hermes_home_override
 from plugins.memory.honcho import HonchoMemoryProvider
 from plugins.memory.honcho.client import HonchoClientConfig
 
@@ -91,3 +96,101 @@ def test_a_slow_card_builds_the_prompt_without_it_within_the_base_wait(caplog):
         assert any("person card not ready" in r.getMessage() for r in caplog.records)
     finally:
         gate.set()
+
+
+@pytest.mark.parametrize(
+    "has_profile_tastes,pin,owner_page,expected",
+    [
+        pytest.param(True, None, None, {"summary", "representation", "card"}, id="tastes"),
+        pytest.param(False, None, None, {"summary", "representation", "card", "ai_representation", "ai_card"},
+                     id="no-tastes"),
+        pytest.param(True, ["aiCard", "peerCard"], None, {"card"}, id="tastes-with-host-pin"),
+        pytest.param(False, ["aiCard", "peerCard"], None, {"ai_card", "card"}, id="no-tastes-with-host-pin"),
+        pytest.param(None, ["aiCard", "peerCard"], None, {"ai_card", "card"}, id="taste-store-unavailable"),
+        pytest.param(True, [], None, set(), id="empty-host-pin"),
+        pytest.param(True, None, "Owner brain card", {"summary", "owner_page"}, id="tastes-with-owner-page"),
+    ],
+)
+def test_lina_session_card_respects_tastes_of_the_bound_profile_and_honcho_pins(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    has_profile_tastes: bool | None,
+    pin: list[str] | None,
+    owner_page: str | None,
+    expected: set[str],
+) -> None:
+    from hermes_cli.heart import taste_context
+    from hermes_state_store import StoreUnavailableError
+    from plugins.memory.honcho import client, session
+    from plugins.memory.lina import LinaMemoryProvider
+
+    launch_home = tmp_path / "launch"
+    profile_home = tmp_path / "profile"
+    launch_home.mkdir()
+    profile_home.mkdir()
+    monkeypatch.setenv("HERMES_HOME", str(launch_home))
+    taste_home = profile_home if has_profile_tastes else launch_home
+
+    def has_tastes(home: Path) -> bool:
+        if has_profile_tastes is None:
+            raise StoreUnavailableError("fixture taste store unavailable")
+        return home == taste_home
+
+    monkeypatch.setattr(taste_context, "has_tastes", has_tastes)
+
+    raw = {} if pin is None else {
+        "injection": {"sessionStart": ["peerRepresentation"]},
+        "hosts": {"hermes": {"injection": {"sessionStart": pin}}},
+    }
+    cfg = HonchoClientConfig(
+        api_key="test-key", enabled=True, host="hermes", raw=raw, recall_sync=True, save_messages=False, timeout=2,
+    )
+    sections = {
+        "summary": "We planned a garden bed.",
+        "representation": "Prefers seedlings.",
+        "card": CARD,
+        "ai_representation": "Explains the planting schedule.",
+        "ai_card": "Answers gardening questions.",
+    }
+    manager = Mock(spec=session.HonchoSessionManager)
+    manager.get_prefetch_context.return_value = sections
+    monkeypatch.setattr(HonchoClientConfig, "from_global_config", lambda: cfg)
+    monkeypatch.setattr(client, "get_honcho_client", Mock())
+    monkeypatch.setattr(session, "HonchoSessionManager", Mock(return_value=manager))
+    monkeypatch.setattr(LinaMemoryProvider, "_page_card", lambda self: owner_page)
+    provider = LinaMemoryProvider()
+    # The manager passes its owning home explicitly even when another profile
+    # owns the caller's current context.
+    token = set_hermes_home_override(launch_home)
+    try:
+        provider.initialize("taste-session", hermes_home=str(profile_home), cwd=str(tmp_path))
+        block = provider.session_card_block()
+    finally:
+        try:
+            provider.shutdown()
+        finally:
+            reset_hermes_home_override(token)
+
+    if owner_page:
+        sections = {**sections, "owner_page": owner_page}
+    assert {key for key, text in sections.items() if text in block} == expected
+
+
+def test_taste_query_error_preserves_lazy_init_and_configured_cards(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from psycopg import OperationalError
+
+    from hermes_cli.heart import taste_context
+
+    cfg = HonchoClientConfig(
+        api_key="synthetic", enabled=True, recall_mode="tools",
+        raw={"injection": {"sessionStart": ["aiRepresentation", "aiCard"]}},
+    )
+    monkeypatch.setattr(HonchoClientConfig, "from_global_config", lambda: cfg)
+    monkeypatch.setattr(taste_context, "has_tastes", Mock(side_effect=OperationalError("synthetic query failure")))
+    provider = HonchoMemoryProvider()
+    kwargs = {"hermes_home": str(tmp_path), "cwd": str(tmp_path)}
+    provider.initialize("synthetic-session", **kwargs)
+    assert provider._lazy_init_kwargs == kwargs
+    assert provider._session_start_components == {"aiRepresentation", "aiCard"}

@@ -27,7 +27,7 @@ def notes_of(row: Mapping[str, Any]) -> Optional[dict[str, Any]]:
     return notes if isinstance(notes, dict) else None
 
 
-def _shared_room(row: Mapping[str, Any]) -> bool:
+def is_shared_room(row: Mapping[str, Any]) -> bool:
     notes = notes_of(row) or {}
     return any(part.get("kind") == "sender_label" for part in notes.get("parts") or ())
 
@@ -52,7 +52,7 @@ def turn_speakers(policy: Policy, messages: Sequence[Any], turn_start: Any, *, a
             kind = policy.rule(policy.route_for(signals_for_turn(
                 rows, agent_context=agent_context, platform=platform, turn_author=dict(author) or None,
                 turn_start=index))).speaker
-            if kind == "owner" and _shared_room(row) and not owner_handle():
+            if kind == "owner" and is_shared_room(row) and not owner_handle():
                 kind = "outside"
         elif (rule := policy.rule_for_role(str(role))) is not None:
             kind = rule.speaker
