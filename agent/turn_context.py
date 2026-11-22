@@ -15,6 +15,7 @@ import time
 import uuid
 from contextlib import suppress
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from agent.conversation_compression import recover_rotated_compression_session
@@ -545,6 +546,7 @@ class TurnContext:
     plugin_block_message: str = ""  # ``pre_llm_call`` veto: the turn ends with this, no inference
     ext_prefetch_cache: str = ""  # external-memory prefetch, reused across iterations
     preflight_compression_blocked: bool = False  # immediate retry proved ineffective
+    owner_taste_home: Path | None = None
 
 
 def _persist_under_lock(agent: Any, fn, failure_msg: str, pending_cli_message: Any) -> None:
@@ -1365,6 +1367,7 @@ def build_turn_context(
         current_turn_user_idx=current_turn_user_idx, should_review_memory=should_review_memory,
         plugin_user_context=plugin_user_context, plugin_block_message=plugin_block_message,
         ext_prefetch_cache=ext_prefetch_cache, preflight_compression_blocked=compaction.blocked,
+        owner_taste_home=taste_home if agent._owner_taste_allowed else None,
     )
 
 

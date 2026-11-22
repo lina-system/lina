@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
 
@@ -19,7 +20,15 @@ if TYPE_CHECKING:
 
 _OPEN: Final = "<owner-taste-picks>\n"
 _CLOSE: Final = "\n</owner-taste-picks>"
-_PROMPT_SCOPE: ContextVar[tuple[AIAgent, Path | None] | None] = ContextVar(
+
+
+@dataclass
+class _PromptScope:
+    agent: AIAgent
+    home: Path | None
+
+
+_PROMPT_SCOPE: ContextVar[_PromptScope | None] = ContextVar(
     "owner_taste_prompt_scope", default=None,
 )
 
@@ -27,7 +36,7 @@ _PROMPT_SCOPE: ContextVar[tuple[AIAgent, Path | None] | None] = ContextVar(
 def owner_taste_home(agent: AIAgent) -> Path | None:
     """The admitted turn's home while its frozen prompt is being rendered."""
     scope = _PROMPT_SCOPE.get()
-    return scope[1] if scope and scope[0] is agent else None
+    return scope.home if scope and scope.agent is agent else None
 
 
 def admitted_source_row(messages, index: int, admitted: dict) -> dict | None:
@@ -49,10 +58,13 @@ def request_taste_view(agent, prompt: str, messages: list[dict]) -> tuple[str, l
 
 @contextmanager
 def owner_taste_prompt_scope(agent: AIAgent, home: Path | None) -> Iterator[None]:
-    token = _PROMPT_SCOPE.set((agent, home))
+    scope = _PromptScope(agent, home)
+    token = _PROMPT_SCOPE.set(scope)
     try:
         yield
     finally:
+        # A compression worker may retain a copied context after the admitting turn exits.
+        scope.home = None
         _PROMPT_SCOPE.reset(token)
 
 

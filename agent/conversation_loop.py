@@ -12,6 +12,7 @@ import json
 import logging
 import re
 import time
+from contextlib import ExitStack
 from dataclasses import dataclass, field, fields
 from typing import Any, Dict, List, Optional
 
@@ -1644,6 +1645,7 @@ def _codex_app_server_turn(agent: Any, s: Any) -> Optional[dict[str, Any]]:
 def _run_conversation_turn(
     agent,
     user_message: Any,
+    turn_scopes: ExitStack,
     system_message: str | None = None,
     conversation_history: list[dict[str, Any]] | None = None,
     task_id: str | None = None,
@@ -1715,6 +1717,8 @@ def _run_conversation_turn(
         )
     except PreflightCompressionTimedOut as _preflight_timeout_exc:
         return _preflight_timeout_result(agent, _preflight_timeout_exc, conversation_history)
+    from agent.turn_context_taste import owner_taste_prompt_scope
+    turn_scopes.enter_context(owner_taste_prompt_scope(agent, _ctx.owner_taste_home))
     # Voice turns may run on auxiliary.voice_chat: bound after the prompt/row/compaction were settled
     # against the main model, undone in finalize_turn (and run_conversation's finally on early exits).
     from agent.voice_turn_route import begin_voice_turn_route
@@ -1837,11 +1841,12 @@ def run_conversation(
     agent._turn_user_intervened = False
     # Images attached natively to this user turn stay visible to vision_analyze for the turn, so
     # it does not embed the same pixels a second time into the same request (#76411).
-    with native_turn_images(user_message), memory_tool_turn(getattr(agent, "_memory_manager", None)):
+    with ExitStack() as turn_scopes, native_turn_images(user_message), memory_tool_turn(getattr(agent, "_memory_manager", None)):
         try:
             result = _run_conversation_turn(
                 agent,
                 user_message,
+                turn_scopes,
                 system_message=system_message,
                 conversation_history=conversation_history,
                 task_id=task_id,
