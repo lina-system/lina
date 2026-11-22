@@ -1,12 +1,15 @@
 """Daily and weekly taste reviews through the heart CLI on a disposable store."""
 
+import time
 from datetime import UTC, date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 
+import hermes_time
 from hermes_cli.heart import storage
-from hermes_cli.heart.models import Entry, Pref
-from tests.hermes_cli.test_heart_journal import invoke, put_entry, sandbox
+from hermes_cli.heart.models import Change, Entry, Pref
+from tests.hermes_cli.test_heart_journal import database, invoke, put_entry, sandbox
 
 __all__ = ["sandbox"]
 DAY = date(2025, 6, 1)
@@ -149,3 +152,57 @@ def test_future_review_refuses_without_writes(sandbox, tmp_path, memory_store_sq
     assert snapshot() == before
     assert code == 2 and "future" in error.lower() and tomorrow.isoformat() in error
     assert invoke(command, flag, DAY.isoformat(), *flags)[0] == 0
+
+
+@pytest.fixture
+def la_evening(sandbox, monkeypatch):
+    instant = datetime(2025, 6, 2, 1, tzinfo=UTC)
+    try:
+        with monkeypatch.context() as patch:
+            patch.setenv("TZ", "UTC")
+            time.tzset()
+            patch.setenv("HERMES_TIMEZONE", "America/Los_Angeles")
+            hermes_time.reset_cache()
+            assert hermes_time.get_timezone() == ZoneInfo("America/Los_Angeles")
+            assert instant.astimezone().utcoffset() == timedelta(0)
+            patch.setattr(storage, "now", instant.timestamp)
+            yield instant
+    finally:
+        time.tzset()
+        hermes_time.reset_cache()
+
+
+@pytest.mark.platforms("posix")
+def test_refine_reads_evening_journal_and_citation_on_profile_day(sandbox, la_evening, memory_store_sql):
+    home = sandbox["alpha"]
+    [uid] = database(home, [("owner", "assistant", "Synthetic turn", la_evening.timestamp() - 60)])
+    put_entry(home, Entry(ts=la_evening.isoformat(), event="Synthetic task", feeling="calm", note="Synthetic",
+                          evidence=(uid,), strength=3,
+                          pref=Pref(target="spacing", kind="method", dir="like", route="outcome")))
+    assert invoke("refine")[0] == 0
+    assert memory_store_sql("SELECT observed_on,message_uids FROM memory.taste_evidence") == [(DAY, [uid])]
+    assert memory_store_sql("SELECT changed_at FROM memory.taste_events WHERE reason='created'") == [
+        (datetime(2025, 6, 1, 7, tzinfo=UTC),)]
+
+
+@pytest.mark.platforms("posix")
+def test_refine_ages_active_status_from_profile_day(la_evening, memory_store_sql):
+    sql = memory_store_sql
+    [(tid,)] = sql("INSERT INTO memory.tastes(agent_id,target_kind,label,status,origin,valence,strength,first_seen)"
+                   " VALUES ('alpha','method','spacing','active','outcome','like',0.4,'2025-05-31') RETURNING id")
+    # The previous status change was on May 31 in Los Angeles.
+    sql("INSERT INTO memory.taste_events(agent_id,taste_id,changed_at,reason,changed_by,from_status,to_status)"
+        " VALUES ('alpha',%s,'2025-06-01T01:00:00Z','status_changed','review','candidate','active')", (tid,))
+    assert invoke("refine")[0] == 0
+    assert sql("SELECT status FROM memory.tastes") == [("dormant",)]
+
+
+@pytest.mark.platforms("posix")
+def test_weekly_includes_profile_evening_until_local_midnight(sandbox, la_evening, tmp_path):
+    changes = sandbox["alpha"] / "heart" / "changes.jsonl"
+    storage.append(changes, Change(ts=la_evening.isoformat(), added=("Sunday evening",)))
+    storage.append(changes, Change(ts="2025-06-02T07:00:00Z", added=("Monday midnight",)))
+    assert invoke("weekly", "--week-ending", "2025-06-01", "--out-dir", str(tmp_path))[0] == 0
+    page = (tmp_path / "250601.md").read_text()
+    assert "Sunday evening" in page
+    assert "Monday midnight" not in page

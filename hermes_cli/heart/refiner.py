@@ -33,16 +33,12 @@ _OWN_JOURNAL = """
 """
 
 
-def _midnight(day: dt.date) -> dt.datetime:
-    return dt.datetime.combine(day, dt.time()).astimezone()
-
-
 def _journals(cur, agent: str, day: dt.date):
     cur.execute(f"""
         SELECT uid, native FROM memory.messages j
         WHERE agent_id=%s AND {_OWN_JOURNAL} AND ts >= %s AND ts < %s AND native->'pref' IS NOT NULL
         ORDER BY ts, message_id FOR SHARE
-    """, (agent, _midnight(day), _midnight(day + dt.timedelta(days=1))))
+    """, (agent, storage.midnight(day), storage.midnight(day + dt.timedelta(days=1))))
     return cur.fetchall()
 
 
@@ -53,7 +49,7 @@ def _citations(cur, agent: str, entry: Entry, day: dt.date) -> bool:
     cur.execute(f"""
         SELECT uid,speaker FROM memory.messages m
         WHERE uid=ANY(%s) AND agent_id=%s AND {_OWN_TURN} AND ts >= %s AND ts < %s FOR SHARE
-    """, (list(cited), agent, _midnight(day), _midnight(day + dt.timedelta(days=1))))
+    """, (list(cited), agent, storage.midnight(day), storage.midnight(day + dt.timedelta(days=1))))
     found = dict(cur.fetchall())
     return cited == found.keys() and (not entry.reaction or "owner" in found.values())
 
@@ -61,7 +57,7 @@ def _citations(cur, agent: str, entry: Entry, day: dt.date) -> bool:
 def _event(cur, agent: str, tid: int, day: dt.date, reason: str, before: tuple, after: tuple) -> None:
     cur.execute(f"INSERT INTO memory.taste_events(agent_id,taste_id,{EVENT}) "
                 "VALUES (%s,%s,%s,%s,'review',%s,%s,%s,%s,%s,%s)",
-                (agent, tid, _midnight(day), reason, before[0], after[0], before[1], after[1], before[2], after[2]))
+                (agent, tid, storage.midnight(day), reason, before[0], after[0], before[1], after[1], before[2], after[2]))
 
 
 def _observe(cur, agent: str, day: dt.date, uid: str, entry: Entry) -> str:
@@ -90,7 +86,7 @@ def _observe(cur, agent: str, day: dt.date, uid: str, entry: Entry) -> str:
         cur.execute("INSERT INTO memory.tastes(agent_id,target_kind,label,status,valence,strength,origin,first_seen,"
                     "protected_passed,protected_at) VALUES (%s,%s,%s,'candidate','indifferent',0,%s,%s,true,%s)"
                     " ON CONFLICT DO NOTHING RETURNING id",
-                    (agent, pref.kind, pref.target, pref.route, day, _midnight(day)))
+                    (agent, pref.kind, pref.target, pref.route, day, storage.midnight(day)))
         if not (created := cur.fetchone()):
             return "reserved-target"
         tid, = created
@@ -128,7 +124,7 @@ def _tastes(cur, agent: str, day: dt.date) -> list[Taste]:
         FROM memory.tastes t WHERE agent_id=%s AND live AND first_seen<=%s ORDER BY id FOR UPDATE
     """, (agent, day))
     return [Taste(tid, status, origin, valence, float(strength), first, protected_rule(label) is None,
-                  tuple(items[tid]), since.astimezone().date() if since else first)
+                  tuple(items[tid]), storage.profile_date(since) if since else first)
             for tid, status, origin, valence, strength, first, label, since in cur.fetchall()]
 
 
@@ -145,7 +141,7 @@ def _apply(cur, agent: str, day: dt.date, taste: Taste, decision: Decision) -> N
     else:
         cur.execute("UPDATE memory.tastes SET status=%s,strength=%s,valence=%s,protected_passed=true,"
                     "protected_at=%s,protected_rule=NULL WHERE agent_id=%s AND id=%s",
-                    (*after, _midnight(day), agent, taste.id))
+                    (*after, storage.midnight(day), agent, taste.id))
 
 
 def review(store: MessageStore, day: dt.date, *, weekly: bool = False) -> Counter:
@@ -154,7 +150,7 @@ def review(store: MessageStore, day: dt.date, *, weekly: bool = False) -> Counte
     with store.write(), store._writer_cursor() as cur:
         # Share the importer's per-agent lock. Evidence, history and the daily budget commit together.
         cur.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 357))", (agent,))
-        tomorrow = _midnight(day + dt.timedelta(days=1))
+        tomorrow = storage.midnight(day + dt.timedelta(days=1))
         cur.execute("SELECT 1 FROM memory.taste_events WHERE agent_id=%s AND changed_at >= %s LIMIT 1",
                     (agent, tomorrow))
         if cur.fetchone():
@@ -176,7 +172,7 @@ def review(store: MessageStore, day: dt.date, *, weekly: bool = False) -> Counte
         else:
             cur.execute("SELECT count(*) FROM memory.taste_events WHERE agent_id=%s AND reason='status_changed' "
                         "AND changed_at >= %s AND changed_at < %s AND to_status IS DISTINCT FROM 'core'",
-                        (agent, _midnight(day), tomorrow))
+                        (agent, storage.midnight(day), tomorrow))
             decisions = daily_decisions(tastes, day, changes_today=cur.fetchone()[0])
         by_id = {taste.id: taste for taste in tastes}
         for decision in decisions:

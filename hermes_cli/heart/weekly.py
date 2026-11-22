@@ -39,7 +39,7 @@ def stats_line(row: Insight | None) -> str:
 
 def in_week(timestamp: str, end: dt.date) -> bool:
     parsed = storage.parse_ts(timestamp)
-    return parsed is not None and end - dt.timedelta(days=6) <= parsed.astimezone().date() <= end
+    return parsed is not None and end - dt.timedelta(days=6) <= storage.profile_date(parsed) <= end
 
 
 def section(profile: str, end: dt.date) -> str:
