@@ -39,6 +39,26 @@ EXCLUDED: Final = (
 )
 
 
+@pytest.mark.usefixtures("standing_rules")
+def test_turn_identifies_applicable_room_even_when_frozen_rules_are_current(tmp_path, memory_store_sql):
+    from agent.standing_rules_section import standing_rules_note
+
+    home = tmp_path / "profiles" / PROFILE
+    home.mkdir(parents=True)
+    (channel_id,), = memory_store_sql(
+        "SELECT identity_id FROM memory.identity_keys WHERE source='messages_room' AND key='discord:10001'"
+    )
+    with SessionDB(home / "state.db") as db:
+        agent = SimpleNamespace(session_id=SESSION, _session_db=db, _gateway_session_key=GATEWAY_KEY)
+        _frozen_plugin_prompt_sections(agent)
+        current = standing_rules_note(agent, [])
+        assert f"channel:{channel_id}" in current
+        assert CHANNEL not in current
+        elsewhere = SimpleNamespace(session_id=SESSION, _session_db=db, _gateway_session_key="unregistered")
+        _frozen_plugin_prompt_sections(elsewhere)
+        assert not standing_rules_note(elsewhere, [])
+
+
 @pytest.fixture
 def standing_rules(
     _memory_store: ProcessStore,

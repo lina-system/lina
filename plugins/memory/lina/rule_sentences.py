@@ -70,7 +70,7 @@ _EN_RULE: Final = re.compile(
 )
 _KO_RULE: Final = re.compile(
     r"(?:(?:앞으로(?:는)?|항상|늘|꼭) )*(?:"
-    r"(?:(?:답변|답|보고서|보고)(?:을|를|는|은)? )?(?:짧게|간단히|간결하게|존댓말로|한국어로|영어로) "
+    r"(?:(?:답변|답|보고서|보고)(?:을|를|는|은)? )?(?:짧게|간단히|간결하게|존댓말로|반말로|한국어로|영어로) "
     r"(?:답(?:변)?해|써|말해|보고해)|"
     r"(?:결론|결과|요점)부터 (?:써|말해|답해|알려)|"
     r"(?:나를|나) 언급한 (?:메시지|글)만 (?:알려|보여)|"
@@ -156,7 +156,8 @@ def _rule(clause: str, current: str, place: str | None) -> Interpretation:
             target = f"agent:{name}"
         clause = clause[audience.end():]
 
-    if not (_EN_RULE.fullmatch(clause) or _KO_RULE.fullmatch(clause)):
+    room_register = location and location.startswith("channel:") and clause == "반말"
+    if not (room_register or _EN_RULE.fullmatch(clause) or _KO_RULE.fullmatch(clause)):
         return Interpretation(target=current, refusal=_refusal_reason(clause))
     scope: Literal["all", "agent", "place"] = "agent"
     if location:
