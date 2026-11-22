@@ -52,3 +52,6 @@ def build_desk_parser(subparsers) -> None:
     register.set_defaults(func=cmd_desk_report)
     sync = sub.add_parser("sync-reports", help="Sync registered Desk reports once")
     sync.set_defaults(func=cmd_desk_report)
+    legacy = sub.add_parser("import-reports", help="Import a retired report registry and preserve its old links")
+    legacy.add_argument("registry", help="Directory containing index.json and its report copies")
+    legacy.set_defaults(func=cmd_desk_report)

@@ -124,4 +124,4 @@ def test_the_migration_applies_once_runs_again_unchanged_and_gives_both_tables_a
         policies = conn.execute("SELECT c.relname, c.relforcerowsecurity FROM pg_policy p "
                                 "JOIN pg_class c ON c.oid = p.polrelid JOIN pg_namespace n ON n.oid = c.relnamespace "
                                 "WHERE n.nspname = 'reports' AND p.polname = 'lina_agent_rows' ORDER BY 1").fetchall()
-    assert policies == [("report", True), ("report_version", True)]
+    assert policies == [("desk_alias", True), ("desk_image", True), ("report", True), ("report_version", True)]
