@@ -417,6 +417,24 @@ def test_a_failed_core_render_preserves_the_previous_self_note_bytes(home, core_
     assert NOTE_B in fresh and CORE_A not in fresh
 
 
+@pytest.mark.parametrize("metadata", ["Active Hermes profile: example", "Conversation started: 2026-11-15"])
+def test_core_removal_preserves_a_quoted_frame_and_its_metadata(home, core_by_home, metadata):
+    from agent.prompt_builder import NOTES_END, NOTES_HEADING
+    from agent.system_prompt import strip_core_tastes_from_prompt
+
+    _write_note(home, NOTE_A)
+    sid = "20261115_090000_aaaaaa"
+    note_only = build_system_prompt(_agent(sid))
+    core_by_home[home] = (CORE_A,)
+    with_core = _build_admitted(_agent(sid), home)
+    first = with_core.index(PLUGIN_SECTIONS_START)
+    last = with_core.index(PLUGIN_SECTIONS_END, first) + len(PLUGIN_SECTIONS_END)
+    excerpt = with_core[first:last]
+    notes = f"\n\n{NOTES_HEADING}\n\n{excerpt}\n\n{metadata}\n\n{NOTES_END}"
+
+    assert strip_core_tastes_from_prompt(with_core + notes) == note_only + notes
+
+
 def test_core_tastes_follow_the_admitted_profile_instead_of_the_shared_session_db(
     home, core_by_home, tmp_path,
 ):

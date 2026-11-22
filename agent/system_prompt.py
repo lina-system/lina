@@ -181,6 +181,11 @@ def _frozen_plugin_prompt_sections(agent: Any) -> tuple:
 
 
 def _restore_plugin_prompt_sections(prompt: str) -> tuple[RenderedPluginSystemPromptSection, ...]:
+    frame = _parse_plugin_prompt_frame(prompt)
+    return frame[2] if frame is not None else ()
+
+
+def _parse_plugin_prompt_frame(prompt: str) -> tuple[int, int, tuple[RenderedPluginSystemPromptSection, ...]] | None:
     """Recover frozen section bytes from the persisted full prompt.  Only the
     exact canonical container emitted by core is accepted — user/project text
     may resemble a frame."""
@@ -202,11 +207,11 @@ def _restore_plugin_prompt_sections(prompt: str) -> tuple[RenderedPluginSystemPr
     start = prompt.rfind(PLUGIN_SECTIONS_START, 0, limit)
     end = prompt.find(PLUGIN_SECTIONS_END, start + len(PLUGIN_SECTIONS_START), limit) if start >= 0 else -1
     if end < 0:
-        return ()
+        return None
     after_end = end + len(PLUGIN_SECTIONS_END)
     # The renderer-owned line that follows the container: the active-profile line, then the start date.
     if not prompt[after_end:].startswith(("\n\nActive Hermes profile:", "\n\nConversation started:")):
-        return ()
+        return None
     framed = prompt[start:after_end]
     restored = []
     cursor = len(PLUGIN_SECTIONS_START) + 1
@@ -214,16 +219,18 @@ def _restore_plugin_prompt_sections(prompt: str) -> tuple[RenderedPluginSystemPr
     while cursor < frame_end:
         match = _PLUGIN_SECTION_FRAME_RE.match(framed, cursor)
         if match is None:
-            return ()
+            return None
         content_len = int(match.group("chars"))
         content_end = match.end() + content_len
         if content_len > MAX_SYSTEM_PROMPT_SECTION_CHARS or content_end > frame_end:
-            return ()
+            return None
         content = framed[match.end():content_end]
         restored.append(RenderedPluginSystemPromptSection(id=match.group("id"), content=content,
                                                           position="after_memory", plugin="persisted-prompt"))
         cursor = content_end + 2
-    return tuple(restored) if format_system_prompt_sections(restored) == framed else ()
+    if format_system_prompt_sections(restored) != framed:
+        return None
+    return start, after_end, tuple(restored)
 
 
 def strip_core_tastes_from_prompt(prompt: str) -> str:
@@ -231,7 +238,10 @@ def strip_core_tastes_from_prompt(prompt: str) -> str:
     from agent.self_note_section import SELF_NOTE_SECTION_ID, self_note_without_core_tastes
     from hermes_cli.plugins import format_system_prompt_sections
 
-    sections = _restore_plugin_prompt_sections(prompt)
+    frame = _parse_plugin_prompt_frame(prompt)
+    if frame is None:
+        return prompt
+    start, end, sections = frame
     copied = []
     for section in sections:
         if section.id == SELF_NOTE_SECTION_ID:
@@ -243,11 +253,7 @@ def strip_core_tastes_from_prompt(prompt: str) -> str:
         copied.append(section)
     if tuple(copied) == sections:
         return prompt
-    framed = format_system_prompt_sections(sections)
-    # The exact frame can also be quoted in the notes, after the profile
-    # metadata. Locate the renderer's occurrence with its following anchor.
-    start = max(prompt.rfind(framed + f"\n\n{anchor}") for anchor in ("Active Hermes profile:", "Conversation started:"))
-    before, after = prompt[:start], prompt[start + len(framed):]
+    before, after = prompt[:start], prompt[end:]
     replacement = format_system_prompt_sections(copied)
     return before + replacement + (after if replacement else after.removeprefix("\n\n"))
 
