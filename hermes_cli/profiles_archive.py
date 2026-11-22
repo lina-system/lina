@@ -15,7 +15,7 @@ from hermes_cli.archive_safe import archive_root_dirs, make_targz, normalize_arc
 
 logger = logging.getLogger("hermes_cli.profiles")
 
-from hermes_constants import COMMON_PERSONA_FILE, LOCAL_RUNTIME_ROOT_DIRS
+from hermes_constants import COMMON_PERSONA_FILE, LOCAL_RUNTIME_ROOT_DIRS, WORK_PERSONA_FILE
 
 # Infrastructure excluded from --clone-all ONLY when the source is the default profile
 # (``~/.hermes``): git checkout (+ ~3 GB venv), worktrees, sibling profiles, shared bins,
@@ -206,7 +206,7 @@ _DEFAULT_EXPORT_EXCLUDE_ROOT = DEFAULT_EXPORT_EXCLUDE_ROOT = frozenset({
 # (#58394). Add new artifacts here when introduced in ``hermes_constants``.
 _DEFAULT_EXPORT_INCLUDE_ROOT = frozenset({
     # Configuration / persona
-    "config.yaml", "SOUL.md", COMMON_PERSONA_FILE, "MEMORY.md", "USER.md", "todo.json",
+    "config.yaml", "SOUL.md", COMMON_PERSONA_FILE, WORK_PERSONA_FILE, "MEMORY.md", "USER.md", "todo.json",
     "system_prompt.md", "AGENTS.md", "CLAUDE.md", ".cursorrules",
     # Desktop appearance overlay (written/applied by the desktop app's export/import).
     "desktop.json",

@@ -82,6 +82,23 @@ def test_same_membership_has_exact_prefix_before_distinct_personas(install: Path
     assert root_prompt.startswith("Root-only unit.\n\nSynthetic persona for install.")
 
 
+def test_work_persona_follows_common_and_precedes_home_and_overlay(install: Path) -> None:
+    home = install / "profiles" / "reviewer"
+    agent = _make_agent(home)
+    common = "Synthetic common rules."
+    work = "Synthetic work rules.\r\n\r\n    Preserve indentation."
+    _write_common(install, reviewer=common)
+    (install / "SOUL.work.md").write_text("Synthetic default work rules.", encoding="utf-8")
+    (home / "SOUL.work.md").write_bytes(work.encode("utf-8"))
+
+    prompt = build_system_prompt(agent)
+
+    assert prompt.split("\n\n", 4)[:4] == [
+        common, work, "Synthetic persona for reviewer.", "Synthetic overlay for reviewer.",
+    ]
+    assert "Synthetic default work rules." not in prompt
+
+
 def test_all_common_prohibition_keeps_its_heading_in_each_prompt(install: Path) -> None:
     source = "## Never do these\n- Delete production data\n"
     split = split_personas(dict.fromkeys(("alpha", "beta", "gamma"), source), {})
@@ -153,14 +170,19 @@ def test_legacy_messaging_filtered_from_common_units(install: Path, source: str,
         pytest.param(" \n ", id="blank-section"),
     ],
 )
-def test_no_common_block_preserves_persona_and_overlay(install: Path, section: str | None) -> None:
+def test_absent_optional_layers_preserve_persona_and_overlay(install: Path, section: str | None) -> None:
+    home = install / "profiles" / "alpha"
+    agent = _make_agent(home)
     _write_common(install, default="Only the default profile owns this.")
+    (install / "SOUL.work.md").write_text("Only the default profile owns these work rules.", encoding="utf-8")
     if section is not None:
         _write_common(install, alpha=section)
+        (home / "SOUL.work.md").write_text(section, encoding="utf-8")
 
-    prompt = build_system_prompt(_make_agent(install / "profiles" / "alpha"))
+    prompt = build_system_prompt(agent)
 
     assert prompt.startswith("Synthetic persona for alpha.\n\nSynthetic overlay for alpha.\n\n")
+    assert "Only the default profile owns" not in prompt
 
 
 def test_common_persona_respects_the_context_file_budget(install: Path) -> None:
@@ -191,12 +213,14 @@ def test_all_common_persona_needs_no_local_identity(install: Path, monkeypatch: 
 
 def test_safe_worker_suppresses_the_persona_layers(install: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _write_common(install, alpha="Synthetic shared identity.")
-    agent = _make_agent(install / "profiles" / "alpha")
+    home = install / "profiles" / "alpha"
+    agent = _make_agent(home)
+    (home / "SOUL.work.md").write_text("Synthetic work identity.", encoding="utf-8")
     monkeypatch.setattr("agent.safe_worker_policy.safe_worker_enabled", lambda: True)
 
     prompt = build_system_prompt(agent)
 
     assert prompt.startswith(DEFAULT_AGENT_IDENTITY.strip() + "\n\n")
-    for marker in ("Synthetic shared identity.", "Synthetic persona for", "Synthetic overlay for",
+    for marker in ("Synthetic shared identity.", "Synthetic work identity.", "Synthetic persona for", "Synthetic overlay for",
                    "Synthetic project context."):
         assert marker not in prompt

@@ -12,6 +12,7 @@ import sys
 from collections.abc import Callable, Mapping, MutableMapping
 from contextvars import ContextVar, Token
 from pathlib import Path
+from typing import Final
 
 _profile_fallback_warned: bool = False
 _UNSET = object()
@@ -58,6 +59,7 @@ LINA_HOME_ENV = "LINA_HOME"
 # Basename of LINA's default home. Hermes Agent's own home (``~/.hermes``) is never opened.
 LINA_HOME_DIRNAME = ".lina"
 COMMON_PERSONA_FILE = "SOUL.common.md"
+WORK_PERSONA_FILE: Final = "SOUL.work.md"
 # LINA's gateway service names. Hermes Agent's (``hermes-gateway``, ``ai.hermes.gateway``, ``Hermes_Gateway``)
 # may be live on the same account, so LINA never takes them.
 GATEWAY_SERVICE_BASE = "lina-gateway"
