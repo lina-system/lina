@@ -37,7 +37,7 @@ def test_late_compaction_refreshes_only_the_live_owners_profile(tmp_path: Path, 
     note = home / SELF_NOTE_FILENAME
     note.write_text("Original voice.", encoding="utf-8")
     (other / SELF_NOTE_FILENAME).write_text("Other voice.", encoding="utf-8")
-    tastes = {home: ("- Etching.",), other: ("- Pastels.",)}
+    tastes: dict[Path, tuple[str, ...]] = {home: ("- Etching.",), other: ("- Pastels.",)}
     monkeypatch.setattr("hermes_cli.heart.taste_context.core_lines", tastes.__getitem__)
     monkeypatch.setattr("hermes_cli.heart.taste_context.pick_lines", lambda home, query: ())
 
