@@ -1,9 +1,10 @@
 """Daily and weekly taste reviews through the heart CLI on a disposable store."""
 
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
+from hermes_cli.heart import storage
 from hermes_cli.heart.models import Entry, Pref
 from tests.hermes_cli.test_heart_journal import invoke, put_entry, sandbox
 
@@ -122,3 +123,29 @@ def test_weekly_rechecks_decayed_strength_after_missed_reviews(sandbox, tmp_path
     assert code == 0, error
     assert sql("SELECT status FROM memory.tastes") == [("active",)]
     assert sql("SELECT count(*) FROM memory.taste_events WHERE to_status='core'") == [(0,)]
+
+
+@pytest.mark.parametrize(("command", "flag"), [("refine", "--date"), ("weekly", "--week-ending")])
+def test_future_review_refuses_without_writes(sandbox, tmp_path, memory_store_sql, monkeypatch, command, flag):
+    # UTC has reached June 2, but June 2 is still tomorrow in the invoking profile.
+    monkeypatch.setenv("HERMES_TIMEZONE", "America/Los_Angeles")
+    monkeypatch.setattr(storage, "now", lambda: datetime(2025, 6, 2, 1, tzinfo=UTC).timestamp())
+    sql = memory_store_sql
+    home = sandbox["alpha"]
+    (home / "heart").mkdir()
+    tomorrow = DAY + timedelta(days=1)
+    turn(sql, day=tomorrow)
+    journal(home, tomorrow, "like")
+    sql("INSERT INTO memory.tastes(agent_id,target_kind,label,status,origin,valence,strength,first_seen) "
+        "VALUES ('alpha','method','spacing','active','outcome','like',0.8,%s)", (DAY - timedelta(days=31),))
+
+    def snapshot():
+        return [sql(f"SELECT * FROM memory.{table} ORDER BY 1,2")
+                for table in ("tastes", "taste_evidence", "taste_events")]
+
+    before = snapshot()
+    flags = ("--out-dir", str(tmp_path / "weekly")) if command == "weekly" else ()
+    code, _, error = invoke(command, flag, tomorrow.isoformat(), *flags)
+    assert snapshot() == before
+    assert code == 2 and "future" in error.lower() and tomorrow.isoformat() in error
+    assert invoke(command, flag, DAY.isoformat(), *flags)[0] == 0

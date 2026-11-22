@@ -187,6 +187,7 @@ def review(store: MessageStore, day: dt.date, *, weekly: bool = False) -> Counte
 
 
 def daily(args) -> None:
+    day = storage.review_day(args.date)
     with rows.open_store(storage.home()) as store:
-        counts = review(store, storage.day(args.date))
+        counts = review(store, day)
     print(" ".join(f"{rule}={count}" for rule, count in sorted(counts.items())) or "updated=0")

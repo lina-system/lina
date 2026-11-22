@@ -74,7 +74,7 @@ def section(profile: str, end: dt.date) -> str:
 
 
 def weekly(args) -> None:
-    end = storage.day(args.week_ending)
+    end = storage.review_day(args.week_ending)
     names = list_profile_names()
     insights = read_insights(Path(args.insight_stats)) if args.insight_stats else {}
     blocks = [text("weekly_title", day=end.isoformat()), "",

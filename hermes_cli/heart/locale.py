@@ -56,6 +56,8 @@ COPY: Final = {
     "import_unmapped": ("  {line}행: 옮긴 LCM에 없는 근거 {ids}", "  line {line}: evidence not in the moved LCM rows {ids}"),
     "import_unreadable": ("  {line}행을 못 읽는다: {reason}", "  line {line} unreadable: {reason}"),
     "date": ("날짜는 YYYY-MM-DD다: {value}", "Date must be YYYY-MM-DD: {value}"),
+    "future_review": ("미래 날짜 {value}는 검토할 수 없다 (오늘 {today})",
+                      "Cannot review a future date {value} (today is {today})"),
     "time": ("시각을 못 읽는다: {value} (ISO 또는 7d)", "Cannot parse time: {value} (ISO or 7d)"),
     "limit": ("--limit은 1 이상이다", "--limit must be at least 1"),
     "candidates": ("## {owner} 대화 {day} ({count}줄)", "## {owner} conversations {day} ({count} lines)"),
