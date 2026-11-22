@@ -127,7 +127,14 @@ def _frozen_plugin_prompt_sections(agent: Any) -> tuple:
     else:
         from agent.korean_rule_section import render_korean_rule_section
         from agent.self_note_section import render_self_note_section
+        from agent.standing_rules_section import SECTION_ID, render_standing_rules_section
         core = (*render_korean_rule_section(), *render_self_note_section(_agent_home(agent) or get_hermes_home()))
+        try:
+            rules = render_standing_rules_section(agent)
+        except Exception as exc:
+            logger.warning("Could not render standing rules (%s); retaining the previous section", type(exc).__name__)
+            rules = tuple(s for s in getattr(agent, "_plugin_system_prompt_sections_previous", ()) if s.id == SECTION_ID)
+        core = (*rules, *core)
         try:
             from hermes_cli.plugins import render_system_prompt_sections
             rendered = (*core, *render_system_prompt_sections(_plugin_session_info(agent)))

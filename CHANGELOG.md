@@ -213,6 +213,10 @@ Hermes Agent upstream changes are not listed here; see the upstream history on t
 
 - The `omo-task` caller shim: callers reach the worker only as `lina worker <verb>`. `lina install --shims` writes only `work` and removes an `omo-task` shim an older install wrote in `$LINA_HOME/bin` (a file of that name it did not write is left alone and named); the shim's routing of old IDs to the old tool, its `fork` refusal and its merged `list` are gone. `worker.legacy_omo_task` stays for the hub's end checks on runs the old tool started (lina#434).
 
+### Added
+
+- Sessions freeze the owner's applicable standing rules ahead of the self note and carry changes once on the next user message.
+
 ## [0.0.1-alpha.20261102.1] - 2026-11-02
 
 ### Added

@@ -893,6 +893,33 @@ class MessageStore:
             cur.execute(sql, [query, *patterns, query, *patterns, len(patterns), int(limit)])
             return [PartRow(*row) for row in cur.fetchall()]
 
+    def standing_rules(self, session_id: str, gateway_key: str, places: list[str]) -> list[tuple]:
+        """Active rules visible to this profile, including the current conversation's registered places."""
+        with self._cursor() as cur:
+            cur.execute("""
+                WITH conversation AS (
+                    SELECT identity_id FROM memory.identity_keys
+                    WHERE kind = 'conversation' AND (source, key) IN (
+                        ('hermes_session', %s), ('gateway_chat', %s))
+                    UNION
+                    SELECT DISTINCT conversation_id FROM memory.messages
+                    WHERE agent_id = %s AND source = 'agent' AND session_id = %s
+                        AND conversation_id IS NOT NULL AND forgotten_at IS NULL
+                ), places AS (
+                    SELECT unnest(%s::text[]) AS ref
+                    UNION SELECT 'channel:' || identity_id FROM conversation
+                    UNION SELECT 'source:' || k.source || ':' || k.key FROM memory.identity_keys k
+                        JOIN conversation USING (identity_id) WHERE k.kind = 'conversation'
+                )
+                SELECT scope, place_ref, (said_at AT TIME ZONE 'UTC')::date,
+                       CASE WHEN kind = 'conduct' THEN statement END
+                FROM memory.standing_rules
+                WHERE status = 'active' AND (scope <> 'place' OR place_ref IN (SELECT ref FROM places))
+                ORDER BY CASE scope WHEN 'all' THEN 0 WHEN 'agent' THEN 1 ELSE 2 END, said_at, rule_id
+                """, (f"{self.agent_id}:{session_id}", f"{self.agent_id}:{gateway_key}" if gateway_key else None,
+                      self.agent_id, session_id, places))
+            return cur.fetchall()
+
     def summary_grades(self, nodes: Sequence[tuple[int, str]]) -> dict[tuple[int, str], str]:
         """The grade of each ``(node id, session id)`` LCM-X summary this agent's store holds (``ctx.summary_grades``,
         migration 0018); a summary it does not hold is left out."""
