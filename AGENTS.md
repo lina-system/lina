@@ -116,6 +116,9 @@ Every former god file is a **facade** (public entry points + the names other pac
 
 ## Rules that apply everywhere
 
+- **Desk report links:** use `lina desk register <path>` for shareable Markdown under `1_Goals`
+  or `2_Areas`. Send a short summary and the returned URL. Keep personal material on the Desk.
+  See [Desk reports](docs/desk.md#sharing-a-desk-report) for scheduling and rollback.
 - **No defensive clutter:** no wrappers or `try/except: pass` around code that cannot fail, no flags
   nobody sets, no dead code wired in without E2E proof. Comments keep the WHY, cut the WHAT.
 - **Never infer process identity from argv substrings;** use
