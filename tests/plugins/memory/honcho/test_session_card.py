@@ -174,3 +174,23 @@ def test_lina_session_card_respects_tastes_of_the_bound_profile_and_honcho_pins(
     if owner_page:
         sections = {**sections, "owner_page": owner_page}
     assert {key for key, text in sections.items() if text in block} == expected
+
+
+def test_taste_query_error_preserves_lazy_init_and_configured_cards(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from psycopg import OperationalError
+
+    from hermes_cli.heart import taste_context
+
+    cfg = HonchoClientConfig(
+        api_key="synthetic", enabled=True, recall_mode="tools",
+        raw={"injection": {"sessionStart": ["aiRepresentation", "aiCard"]}},
+    )
+    monkeypatch.setattr(HonchoClientConfig, "from_global_config", lambda: cfg)
+    monkeypatch.setattr(taste_context, "has_tastes", Mock(side_effect=OperationalError("synthetic query failure")))
+    provider = HonchoMemoryProvider()
+    kwargs = {"hermes_home": str(tmp_path), "cwd": str(tmp_path)}
+    provider.initialize("synthetic-session", **kwargs)
+    assert provider._lazy_init_kwargs == kwargs
+    assert provider._session_start_components == {"aiRepresentation", "aiCard"}
