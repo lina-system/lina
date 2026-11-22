@@ -49,12 +49,16 @@ class TestPluginRerenderFailOpen(unittest.TestCase):
     def test_raising_plugin_render_falls_back_to_previous_bytes(self):
         from agent.system_prompt import _frozen_plugin_prompt_sections
 
+        from hermes_cli.plugins import RenderedPluginSystemPromptSection
+
+        last_good = (RenderedPluginSystemPromptSection(
+            id="last-good", content="last good bytes", position="after_memory", plugin="test"),)
         agent = _agent(_cached_system_prompt=None)
-        agent._plugin_system_prompt_sections_previous = ("last-good",)
+        agent._plugin_system_prompt_sections_previous = last_good
         with patch("hermes_cli.plugins.render_system_prompt_sections",
                    side_effect=RuntimeError("plugin exploded")):
             rendered = _frozen_plugin_prompt_sections(agent)
-        self.assertEqual(rendered, ("last-good",))
+        self.assertEqual(rendered, last_good)
 
     def test_raising_plugin_render_without_previous_is_empty(self):
         from agent.system_prompt import _frozen_plugin_prompt_sections
