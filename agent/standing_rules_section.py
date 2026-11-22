@@ -18,6 +18,7 @@ BOUNDARY = (
     "Approval, honesty, secrets, the owner's decisions and safety always come first."
 )
 _OVERFLOW = "Rules exceed the frozen section budget:"
+_NOTICE_HEAD = "[System: Standing rules update for frozen section "
 
 
 def read_rule_lines(agent: Any) -> tuple[str, ...]:
@@ -92,15 +93,21 @@ def standing_rules_note(agent: Any, history: list) -> str:
     frame = hashlib.sha256(frozen.encode()).hexdigest()[:16]
     # A rule announced earlier but absent from the frozen section cannot be listed as ended, so every
     # notice says that it replaces the earlier ones still sitting in the replay history.
-    prefix = f"[System: Standing rules update for frozen section {frame}. It replaces every earlier standing rules update.\n"
+    prefix = f"{_NOTICE_HEAD}{frame}. It replaces every earlier standing rules update.\n"
     previous = ""
+    # Compaction rebuilds the frozen section (a new frame) but may keep a user row that carries a notice of
+    # the old frame. That notice is unrecognizable by hash and still tells the model to apply its rules.
+    stale = False
     for row in reversed(history):
         if row.get("role") == "user":
             text = flatten_message_text(row.get("api_content") or row.get("content"))
             if prefix in text:
                 previous = text.rsplit(prefix, 1)[1].partition("\nEnd standing rules update.]")[0]
                 break
-    if current == baseline and not previous:
+            if _NOTICE_HEAD in text:
+                stale = True
+                break
+    if current == baseline and not previous and not stale:
         return ""
     from collections import Counter
     removed = tuple((Counter(baseline) - Counter(current)).elements())

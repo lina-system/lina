@@ -154,3 +154,30 @@ def test_each_notice_supersedes_an_earlier_update_for_a_rule_that_was_never_froz
     # that it replaces every earlier update still sitting in the replay history.
     assert second_rule in second and first_rule not in second
     assert "replaces every earlier standing rules update" in second
+
+
+def test_notice_kept_through_a_rebuild_is_retracted_when_the_rules_equal_the_new_baseline(monkeypatch):
+    # Rule B is announced after the freeze and then ended; compaction rebuilds the frozen section (new frame,
+    # so new hash) but keeps the user row that carried the B notice. The rebuilt section equals the current
+    # rules, yet the retained notice still tells the model to apply B.
+    from agent import standing_rules_section as rules
+
+    rule_b = "- agent (2026-01-01): Use bullets."
+    lines = []
+    monkeypatch.setattr(rules, "read_rule_lines", lambda agent: tuple(lines))
+    old_frame = (rules.RenderedPluginSystemPromptSection(
+        id=rules.SECTION_ID, content=rules.BOUNDARY, position="after_memory", plugin="core"),)
+    lines[:] = [rule_b]
+    announced = rules.standing_rules_note(SimpleNamespace(_plugin_system_prompt_sections_snapshot=old_frame), [])
+    assert rule_b in announced
+    history = [{"role": "user", "api_content": announced}]
+
+    sign_off = "- all (2026-01-02): Sign off."
+    rebuilt = (rules.RenderedPluginSystemPromptSection(
+        id=rules.SECTION_ID, content=rules.BOUNDARY + "\n" + sign_off, position="after_memory", plugin="core"),)
+    lines[:] = [sign_off]
+    new_agent = SimpleNamespace(_plugin_system_prompt_sections_snapshot=rebuilt)
+    retraction = rules.standing_rules_note(new_agent, history)
+    assert "replaces every earlier standing rules update" in retraction and rule_b not in retraction
+    # Once the retraction sits in history, the next turn adds nothing.
+    assert not rules.standing_rules_note(new_agent, [*history, {"role": "user", "api_content": retraction}])
