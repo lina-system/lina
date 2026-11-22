@@ -188,13 +188,19 @@ def daily_decisions(tastes: Sequence[Taste], day: date, *, changes_today: int = 
 
 
 def weekly_decisions(tastes: Sequence[Taste], day: date) -> list[Decision]:
-    """Promote eligible active rows using the latest daily scores and continuous active age."""
+    """Promote continuously active tastes using their evidence strength on the review day."""
     roster = {row.id: _state(row) for row in tastes if row.status in {"active", "core"}}
-    eligible = [row for row in tastes if row.status == "active" and row.protected_passed
-                and row.strength >= 0.6 and row.status_since is not None and (day - row.status_since).days >= 30]
+    eligible = []
+    for row in tastes:
+        if (row.status != "active" or not row.protected_passed
+                or row.status_since is None or (day - row.status_since).days < 30):
+            continue
+        scored = _daily_proposal(row, day)
+        if scored.strength >= 0.6:
+            eligible.append(scored)
     changes = []
     for row in sorted(eligible, key=lambda row: (row.valence != "dislike", -row.strength, row.id)):
-        decision = replace(_state(row), status="core")
+        decision = replace(row, status="core")
         if _fits(roster, decision):
             roster[row.id] = decision
             changes.append(decision)

@@ -103,3 +103,22 @@ def test_only_weekly_review_promotes_a_continuously_active_taste(sandbox, tmp_pa
         assert code == 0, error
     assert sql(lookup) == [("core",)]
     assert sql("SELECT count(*) FROM memory.taste_events WHERE reason='status_changed' AND to_status='core'") == [(1,)]
+
+
+def test_weekly_rechecks_decayed_strength_after_missed_reviews(sandbox, tmp_path, memory_store_sql):
+    home = sandbox["alpha"]
+    (home / "heart").mkdir()
+    sql = memory_store_sql
+    for offset, count in ((0, 1), (1, 3)):
+        day = DAY + timedelta(days=offset)
+        for index in range(count):
+            uid = f"past-{offset}-{index}"
+            turn(sql, uid, day=day)
+            journal(home, day, "like", (uid,))
+        daily(day)
+    assert sql("SELECT status,strength::float FROM memory.tastes") == [("active", 0.8)]
+    ending = day + timedelta(days=30)
+    code, _, error = invoke("weekly", "--week-ending", ending.isoformat(), "--out-dir", str(tmp_path / "weekly"))
+    assert code == 0, error
+    assert sql("SELECT status FROM memory.tastes") == [("active",)]
+    assert sql("SELECT count(*) FROM memory.taste_events WHERE to_status='core'") == [(0,)]

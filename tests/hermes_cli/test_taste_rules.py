@@ -197,4 +197,5 @@ def test_weekly_promotes_only_after_continuous_active_age_and_up_to_five():
     [promoted] = weekly_decisions([*reversed(eligible), *cores], DAY)
     assert (promoted.id, promoted.status) == (1, "core")
     assert weekly_decisions([eligible[-1], replace(active, id=4, status_since=None)], DAY) == []
-    assert weekly_decisions([replace(active, strength=0.59)], DAY) == []
+    below_threshold = replace(active, evidence=(*active.evidence[:-1], item("outcome", 0.15, 5)))
+    assert weekly_decisions([below_threshold], DAY) == []
