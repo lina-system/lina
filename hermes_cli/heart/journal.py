@@ -33,6 +33,12 @@ def pref(args) -> Pref | None:
         return None
     if any(value is None for value in given):
         raise storage.HeartError(text("pref"))
+    if args.pref_dir == "ignored" and args.pref_route != "reaction":
+        raise storage.HeartError("Only an owner reaction can be ignored")
+    if args.pref_route == "consistency" and args.via != "review":
+        raise storage.HeartError("Consistency evidence comes from the daily review")
+    if args.pref_route in ("consistency", "exposure") and args.pref_dir != "like":
+        raise storage.HeartError("Exposure and consistency carry positive evidence")
     return Pref(target=one_line(args.pref_target, "--pref-target", 80), kind=args.pref_kind,
                 dir=args.pref_dir, route=args.pref_route)
 

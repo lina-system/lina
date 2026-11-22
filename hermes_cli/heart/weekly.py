@@ -12,6 +12,7 @@ from pydantic import TypeAdapter
 from hermes_cli.heart import rows, storage
 from hermes_cli.heart.locale import text
 from hermes_cli.heart.models import Change, Insight
+from hermes_cli.heart.refiner import review as review_tastes
 from hermes_cli.profiles import get_profile_dir, list_profile_names
 from hermes_cli.work.env import current
 
@@ -49,6 +50,7 @@ def section(profile: str, end: dt.date) -> str:
         return "\n".join(lines + [text("inactive")])
     with rows.open_store(home) as store:
         entries = [entry for entry in rows.entries(store) if in_week(entry.ts, end)]
+        review_tastes(store, end, weekly=True)
     changes = [change for change in storage.records(heart / "changes.jsonl", Change) if in_week(change.ts, end)]
     applied = [change for change in changes if change.added or change.removed]
     refused = Counter(change.refused for change in changes if change.refused)
