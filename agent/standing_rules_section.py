@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 from contextlib import closing, nullcontext
 from typing import Any
 
@@ -104,6 +105,15 @@ def standing_rules_note(agent: Any, history: list) -> str:
         logger.warning("Could not read standing-rule changes (%s)", type(exc).__name__)
         return ""
     frozen = next((s.content for s in snapshot if s.id == SECTION_ID), "")
+    # The store has already resolved gateway aliases. Identify the channel by the
+    # same label the model sees, including when the frozen rules need no update.
+    channels = dict.fromkeys(match[1] for line in current if (match := re.match(r"^- (channel:[\w:.-]+) \(", line)))
+    location = f"[System: Current place for this turn: {', '.join(channels)}]" if channels else ""
+    update = _rules_update(current, frozen, history)
+    return "\n\n".join(part for part in (location, update) if part)
+
+
+def _rules_update(current: tuple[str, ...], frozen: str, history: list) -> str:
     baseline = tuple(line for line in frozen.splitlines()[1:] if not line.startswith(_OVERFLOW))
     # Tie the last announcement to its frame so an older notice cannot undo a successful compaction.
     frame = hashlib.sha256(frozen.encode()).hexdigest()[:16]
