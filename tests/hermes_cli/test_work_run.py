@@ -248,6 +248,68 @@ def test_accept_links_todo_without_holding_the_work_lock(work, monkeypatch, reco
         (1, None)]
 
 
+def _freeze_after_hand_off(work, monkeypatch):
+    from hermes_cli.work import common
+
+    call = runs._call_worker
+    freeze = work.work / "freeze"
+
+    def finish_then_freeze(*args):
+        call(*args)
+        freeze.touch()
+
+    monkeypatch.setattr(common, "freeze_wait", lambda: 0)
+    monkeypatch.setattr(runs, "_call_worker", finish_then_freeze)
+    return freeze
+
+
+@pytest.mark.parametrize("legacy_worker", [False, True], ids=["current", "before-upgrade"])
+def test_accept_retry_after_frozen_reentry_records_evidence_and_note_once(work, monkeypatch, legacy_worker):
+    from hermes_cli.worker.hub import Hub
+
+    monkeypatch.setattr(Hub, "_todo", lambda _hub, _job, *args: work.ok(*args))
+    work.ok("run", "submit", "T1", "--brief", str(work.brief))
+    (run_id,) = _jobs(work)
+    accept = ("run", "accept", run_id, "--note", "checked")
+    with monkeypatch.context() as interrupted:
+        if legacy_worker:
+            # A pre-upgrade worker wrote its verdict and both to-do entries, with no completion key.
+            interrupted.setitem(runs.CALLS, "accept", lambda h, rid, payload: h.verdict(rid, True, payload["note"]))
+        freeze = _freeze_after_hand_off(work, interrupted)
+        assert work.run(*accept)[0] == 75
+    assert _rows(work, "SELECT op FROM outbox WHERE done_at IS NULL") == [("accept",)]
+    freeze.unlink()
+
+    work.ok(*accept)
+    try:
+        todo = ledger.read_all()[0]["T1"]
+    finally:
+        ledger.close()
+    assert [e["ref"] for e in todo["evidence"]] == [f"omo:{run_id}"]
+    assert [n["text"] for n in todo["notes"]] == [f"{run_id} checked: checked"]
+    assert _rows(work, "SELECT count(*) FROM outbox WHERE op = 'accept' AND done_at IS NOT NULL") == [(1,)]
+
+
+def test_submit_retry_after_frozen_reentry_keeps_one_link(work, monkeypatch):
+    from hermes_cli.worker.hub import Hub
+
+    monkeypatch.setattr(Hub, "_todo", lambda _hub, _job, *args: work.ok(*args))
+    submit = ("run", "submit", "T1", "--brief", str(work.brief))
+    with monkeypatch.context() as interrupted:
+        freeze = _freeze_after_hand_off(work, interrupted)
+        assert work.run(*submit)[0] == 75
+    (run_id,) = _jobs(work)
+    assert _rows(work, "SELECT op FROM outbox WHERE done_at IS NULL") == [("submit",)]
+    freeze.unlink()
+
+    # An explicit submission first resumes the pending run, then reserves its own ID.
+    work.ok(*submit)
+    todo = next(r for r in work.json("--all")["items"] if r["id"] == "T1")
+    (new_run,) = _jobs(work).keys() - {run_id}
+    assert [link for link in todo["links"] if link.startswith("omo:")] == [f"omo:{run_id}", f"omo:{new_run}"]
+    assert _rows(work, "SELECT count(*) FROM outbox WHERE op = 'submit' AND done_at IS NOT NULL") == [(2,)]
+
+
 def test_a_cancel_the_device_did_not_acknowledge_stays_pending_and_the_run_is_not_cancelled(work, monkeypatch):
     """An unreachable device answers the cancel with a HubError ("the task is not cancelled, try again"). The run
     keeps going there, so the record must not say cancelled: the outbox row stays pending, ``cancelled_at`` stays

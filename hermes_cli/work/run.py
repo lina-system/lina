@@ -155,8 +155,29 @@ def _send(h, run_id: str, payload: dict) -> None:
     h.send(run_id, payload["message"], request_key=payload["request_key"])
 
 
+def _accept_recorded(job: dict, run_id: str, request_key: str | None = None) -> bool:
+    if job.get("verdict") != "accepted":
+        return False
+    if job.get("work_accept_key"):
+        return request_key is None or job["work_accept_key"] == request_key
+    # Older jobs have no completion key. The verdict alone predates the linked
+    # to-do commands, so only recognize an old acceptance whose effects exist.
+    if not job.get("todo"):
+        return True
+    todo = store.latest(ledger.db(), job["todo"]) or {}
+    ref = f"omo:{run_id}"
+    note = job.get("verdict_note")
+    return (any(e["ref"] == ref for e in todo.get("evidence", []))
+            and (not note or any(n["text"] == f"{run_id} checked: {note}" for n in todo.get("notes", []))))
+
+
 def _verdict(h, run_id: str, payload: dict) -> None:
-    h.verdict(run_id, VERDICT_OPS[payload["op"]], payload.get("note") or "")
+    accept = VERDICT_OPS[payload["op"]]
+    if accept and _accept_recorded(h.store.load(run_id) or {}, run_id, payload["request_key"]):
+        return
+    h.verdict(run_id, accept, payload.get("note") or "")
+    if accept:
+        h.store.update(run_id, work_accept_key=payload["request_key"])
 
 
 def _cancel(h, run_id: str, payload: dict) -> None:
@@ -352,6 +373,8 @@ def _need_run(run_id: str) -> tuple:
 def _hand_off(run_id: str, op: str, kind: str, payload: dict, who: str | None) -> None:
     with _dispatch_writer() as writer:
         _, owner_agent = _need_run(run_id)
+        if op == "accept" and _accept_recorded(hub().store.load(run_id) or {}, run_id):
+            return
         who = who or owner_agent
         db = ledger.db()
         with store.transaction(db):
