@@ -596,6 +596,10 @@
     "ReadFileAuthorizeAck": {
       "additionalProperties": false,
       "properties": {
+        "display_path": {
+          "title": "Display Path",
+          "type": "string"
+        },
         "identity": {
           "$ref": "#/$defs/FileIdentity"
         },
@@ -652,6 +656,7 @@
         "type",
         "ok",
         "resolved",
+        "display_path",
         "identity",
         "max_chars",
         "max_line_length",

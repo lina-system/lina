@@ -369,11 +369,12 @@ def render_compute_host() -> str:
 
 
 def render_all() -> dict[Path, str]:
-    return {
-        TS_OUT: _tidy(render_ts()),
-        OPENRPC_OUT: render_openrpc(),
-        COMPUTE_HOST_OUT: render_compute_host(),
-    }
+    outputs = {COMPUTE_HOST_OUT: render_compute_host()}
+    # The standalone agent checkout has no desktop workspace. When it is
+    # present, generate and verify both of its public protocol artifacts.
+    if (ROOT / "apps").is_dir():
+        outputs.update({TS_OUT: _tidy(render_ts()), OPENRPC_OUT: render_openrpc()})
+    return outputs
 
 
 def main(argv: list[str] | None = None) -> int:

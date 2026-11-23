@@ -167,6 +167,7 @@ class ReadFileAuthorizeAck(_PolicyFrame):
     type: Literal["read_file.policy.ack"]
     ok: Literal[True]
     resolved: str = Field(repr=False)
+    display_path: str = Field(repr=False)
     identity: FileIdentity
     max_chars: int
     max_line_length: int
