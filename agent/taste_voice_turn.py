@@ -53,15 +53,14 @@ def _picked_lines(current):
 
 def _prepare(agent, home, messages, current):
     from agent.taste_voice_store import reserve, task_targets
-    from agent.turn_context import recall_tool_rows
+    from agent.turn_context import _memory_query_text, recall_tool_rows
     from agent.turn_context_taste import _CLOSE, _OPEN
     from hermes_cli.heart.locale import protected_rule
 
     source = current[0]
     original = agent._persist_user_message_override
-    query = extract_user_instruction_from_skill_message(
-        original if original is not None else source.get("content")
-    ) or ""
+    text = _memory_query_text(original if original is not None else source.get("content"))
+    query = extract_user_instruction_from_skill_message(text) or ""
     picks = tuple(line for line in _picked_lines(current) if not protected_rule(line.partition(": ")[2]))
     targets = task_targets(home, picks)
     preferences = resolve_owner_preferences(query, picks)

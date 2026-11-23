@@ -11,6 +11,7 @@ from statistics import median
 from typing import Final, Literal, Protocol, TypedDict
 
 from agent.delegation_context import owned_kanban_task
+from agent.message_content import flatten_message_text
 from agent.skill_commands import skills_loaded_by_scaffold
 from agent.verification_evidence import _split_shell_segments
 
@@ -60,7 +61,7 @@ def report_turn(agent: _ActiveTools, user_row: _Message) -> bool:
     if owned_kanban_task() and _REPORT_TOOLS.intersection(agent.valid_tool_names):
         return True
     return user_row.get("role") == "user" and bool(
-        _REPORT_SKILLS.intersection(skills_loaded_by_scaffold(user_row.get("content")))
+        _REPORT_SKILLS.intersection(skills_loaded_by_scaffold(flatten_message_text(user_row.get("content"))))
     )
 
 

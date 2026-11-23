@@ -83,6 +83,35 @@ def _task_taste(sql):
            VALUES ('default', 'task_type', 'orchard sketches', 'dislike', 0.8, 'active', 'outcome')""")
 
 
+@pytest.mark.parametrize("source", ["text", "parts", "clean_override"])
+def test_multimodal_voice_uses_the_owner_instruction(home, memory_store_sql, source):
+    _task_taste(memory_store_sql)
+    ask = "I like orchard sketches. Please draw orchard sketches."
+    parts = [
+        {"type": "text", "text": ask},
+        {"type": "image_url", "image_url": {"url": "https://example.invalid/sketch.png"}},
+    ]
+    message = ask if source == "text" else parts
+    clean = None
+    if source == "clean_override":
+        message = "Describe the attached sketch."
+        clean = [
+            {"type": "text", "text": '[IMPORTANT: The user has invoked the "draw" skill. '
+             'The full skill content is loaded below.]\n\n<skill>Use a pencil.</skill>'},
+            parts[1],
+            {"type": "text", "text": "The user has provided the following instruction alongside "
+             f"the skill invocation: {ask}"},
+        ]
+    with _route_agent(home, "cli") as (agent, requests):
+        _, rows = _run(agent, requests, message, persist_user_message=clean, task_id="sketch")
+    recalls = [row["content"] for row in rows if row["role"] == "tool"]
+    assert "dislike: orchard sketches" in recalls[0]
+    assert "사용자의 선호와 달라요" in recalls[-1] and "평소와 같은 분량과 검증" in recalls[-1]
+    assert memory_store_sql("SELECT scope, spent FROM memory.taste_voice_claims ORDER BY scope") == [
+        ("task", True), ("week", True),
+    ]
+
+
 def test_disagreement_and_dislike_reach_recall_once_for_their_budgets(home, memory_store_sql):
     _task_taste(memory_store_sql)
     ask = "I like orchard sketches. Please draw orchard sketches."
@@ -112,6 +141,12 @@ def test_disagreement_and_dislike_reach_recall_once_for_their_budgets(home, memo
         ("cli", "background_review", None, "orchard sketches"),
         ("cli", None, None, '[IMPORTANT: The user has invoked the "report-pages" skill. '
          'The full skill content is loaded below.]\n\n<skill>orchard sketches</skill>'),
+        pytest.param("cli", None, None, [
+            {"type": "text", "text": '[IMPORTANT: The user has invoked the "report-pages" skill. '
+             'The full skill content is loaded below.]\n\nThe user has provided the following instruction '
+             'alongside the skill invocation: I like orchard sketches. Please draw orchard sketches.'},
+            {"type": "image_url", "image_url": {"url": "https://example.invalid/sketch.png"}},
+        ], id="multimodal_voice_report"),
     ],
 )
 def test_excluded_turn_leaves_both_budgets_and_measurements_empty(
