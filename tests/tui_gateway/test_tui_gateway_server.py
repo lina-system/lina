@@ -15737,7 +15737,6 @@ def test_session_create_continues_when_state_db_is_unavailable(monkeypatch):
     monkeypatch.setattr(server, "_make_agent", lambda sid, key, session_db=None, **_kwargs: _FakeAgent())
     monkeypatch.setattr(server, "_SlashWorker", _FakeWorker)
     monkeypatch.setattr(server, "_get_db", lambda: None)
-    monkeypatch.setattr(server, "_session_info", lambda _a, *a2: {"model": "x"})
     monkeypatch.setattr(server, "_probe_credentials", lambda _a: None)
     monkeypatch.setattr(server, "_wire_callbacks", lambda _sid: None)
     monkeypatch.setattr(server, "_emit", lambda *a, **kw: emits.append(a))
