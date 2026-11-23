@@ -640,14 +640,14 @@ def test_crash_preserves_parent_mirror_and_requires_fresh_agent_sync(turn, monke
             replacement.close()
 
 
-def test_unknown_tool_is_a_failed_boundary_without_retry_or_fabricated_call(turn):
+def test_host_error_without_transcript_persists_failure_without_fabricated_call(turn):
     session, frame, db = turn
     assert prepare_rust_turn("runtime", session, frame) is not None
 
     with rust_turn_lease(session, frame):
         receipt = persist_rust_turn(session, {
             "type": "turn.error", "request_id": frame["request_id"],
-            "reason": "unsupported_tool", "message": "unsupported tool",
+            "reason": "model_endpoint", "message": "invalid model endpoint",
         })
 
     stored = db.get_messages_as_conversation("stored")

@@ -281,7 +281,7 @@ fn same_process_completes_nonstream_and_stream_with_cached_prompt_fields() {
 }
 
 #[test]
-fn unsupported_tool_settles_once_and_interrupt_cancels_an_inflight_http_request() {
+fn interrupt_cancels_the_inflight_unknown_tool_continuation() {
     let (model, base_url) = model();
     let (sent, entered) = mpsc::channel();
     let (cancelled, released) = mpsc::channel();
@@ -293,17 +293,17 @@ fn unsupported_tool_settles_once_and_interrupt_cancels_an_inflight_http_request(
             r#"{"choices":[{"message":{"tool_calls":[{"id":"call","type":"function","function":{"name":"other","arguments":"{}"}}]}}]}"#,
         );
         let (socket, body) = request(&model);
-        assert_eq!(body["messages"].as_array().unwrap().len(), 3);
+        assert_eq!(
+            body["messages"][4],
+            json!({"role": "tool", "tool_call_id": "call",
+                   "content": "Tool 'other' does not exist. Available tools: read_file"})
+        );
         sent.send(()).unwrap();
         released.recv_timeout(TIMEOUT).unwrap();
         drop(socket);
     });
     let mut host = Host::spawn();
     host.begin("unsupported", &base_url, false);
-    let error = host.next();
-    assert_eq!(error["type"], "turn.error");
-    assert_eq!(error["reason"], "unsupported_tool");
-    host.begin("interrupt", &base_url, false);
     entered.recv_timeout(TIMEOUT).unwrap();
     host.send(&json!({"type": "interrupt", "sid": "session", "request_id": "stop"}));
     let ack = host.next();
@@ -311,10 +311,186 @@ fn unsupported_tool_settles_once_and_interrupt_cancels_an_inflight_http_request(
     assert_eq!(ack["request_id"], "stop");
     assert_eq!(ack["applied"], true);
     assert_eq!(event(&host.next())["payload"]["status"], "interrupted");
-    assert_eq!(host.next()["interrupted"], true);
+    let end = host.next();
+    assert_eq!(end["interrupted"], true);
+    assert_eq!(end["new_messages"][2]["tool_call_id"], "call");
+    assert_eq!(end["new_messages"][3]["role"], "assistant");
     host.close();
     cancelled.send(()).unwrap();
     server.join().unwrap();
+}
+
+#[test]
+fn streamed_unknown_tools_continue_without_entering_the_tool_lifecycle() {
+    let (model, base_url) = model();
+    let server = std::thread::spawn(move || {
+        let (socket, _) = request(&model);
+        reply(
+            socket,
+            "text/event-stream",
+            concat!(
+                "data: {\"choices\":[{\"delta\":{\"tool_calls\":[",
+                "{\"index\":0,\"id\":\"unknown\",\"type\":\"function\",\"function\":{\"name\":\"parity_unknown_tool\",\"arguments\":\"{}\"}},",
+                "{\"index\":1,\"id\":\"blank\",\"type\":\"function\",\"function\":{\"name\":\"\",\"arguments\":\"{}\"}}",
+                "]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+                "data: [DONE]\n\n",
+            ),
+        );
+        let (socket, body) = request(&model);
+        assert_eq!(
+            body["messages"][3]["tool_calls"][0]["function"]["name"],
+            "parity_unknown_tool"
+        );
+        assert_eq!(
+            body["messages"][3]["tool_calls"][1]["function"]["name"],
+            "invalid_tool_call"
+        );
+        assert_eq!(
+            body["messages"][4],
+            json!({"role": "tool", "tool_call_id": "unknown",
+                   "content": "Tool 'parity_unknown_tool' does not exist. Available tools: read_file"})
+        );
+        assert_eq!(body["messages"][5]["tool_call_id"], "blank");
+        let blank = body["messages"][5]["content"].as_str().unwrap();
+        assert!(blank.starts_with("Tool call rejected: the tool name was empty."));
+        assert!(!blank.contains("read_file"));
+        reply(
+            socket,
+            "text/event-stream",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"Recovered\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
+        );
+    });
+    let mut host = Host::spawn();
+    host.begin("unknown", &base_url, true);
+    let generating = loop {
+        let frame = host.next_raw();
+        if event(&frame)["type"] != "thinking.delta" {
+            break frame;
+        }
+    };
+    assert_eq!(event(&generating)["type"], "tool.generating");
+    assert_eq!(event(&generating)["payload"]["name"], "parity_unknown_tool");
+    let delta = host.next();
+    assert_eq!(event(&delta)["type"], "message.delta");
+    assert_eq!(event(&delta)["payload"]["text"], "Recovered");
+    let completion = host.next();
+    assert_eq!(event(&completion)["type"], "message.complete");
+    assert_eq!(event(&completion)["payload"]["status"], "complete");
+    assert_eq!(event(&completion)["payload"]["usage"]["calls"], 2);
+    let end = host.next();
+    assert_eq!(end["type"], "turn.end");
+    assert_eq!(
+        end["new_messages"][1]["tool_calls"][1]["function"]["name"],
+        ""
+    );
+    assert_eq!(end["new_messages"][2]["tool_name"], "parity_unknown_tool");
+    assert_eq!(end["new_messages"][3]["tool_call_id"], "blank");
+    assert_eq!(end["new_messages"][4]["content"], "Recovered");
+    host.close();
+    server.join().unwrap();
+}
+
+#[test]
+fn mixed_batch_rejects_unknown_calls_and_dispatches_only_the_read() {
+    let (model, base_url) = model();
+    let server = std::thread::spawn(move || {
+        let (socket, _) = request(&model);
+        reply(
+            socket,
+            "application/json",
+            concat!(
+                r#"{"choices":[{"finish_reason":"tool_calls","message":{"content":"Checking","tool_calls":["#,
+                r#"{"id":"read","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"example.txt\"}"}},"#,
+                r#"{"id":"unknown","type":"function","function":{"name":"other","arguments":"{}"}}"#,
+                r#"]}}]}"#,
+            ),
+        );
+        let (socket, body) = request(&model);
+        let messages = body["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 6);
+        assert_eq!(messages[3]["tool_calls"][0]["id"], "read");
+        assert_eq!(messages[3]["tool_calls"][1]["id"], "unknown");
+        assert_eq!(messages[4]["tool_call_id"], "unknown");
+        assert_eq!(
+            messages[4]["content"],
+            "Tool 'other' does not exist. Available tools: read_file"
+        );
+        assert_eq!(messages[5]["tool_call_id"], "read");
+        let result: Value = serde_json::from_str(messages[5]["content"].as_str().unwrap()).unwrap();
+        assert_eq!(result["error"], "fixture denied the read");
+        reply(
+            socket,
+            "application/json",
+            r#"{"choices":[{"finish_reason":"stop","message":{"content":"Done"}}]}"#,
+        );
+    });
+    let mut host = Host::spawn();
+    host.begin("mixed", &base_url, false);
+    assert_eq!(event(&host.next())["type"], "message.interim");
+    let start = host.next();
+    assert_eq!(event(&start)["type"], "tool.start");
+    assert_eq!(event(&start)["payload"]["tool_id"], "read");
+    let policy = host.next();
+    assert_eq!(policy["type"], "read_file.policy");
+    assert_eq!(policy["path"], "example.txt");
+    host.send(&json!({
+        "type": "read_file.policy.ack", "sid": "session", "request_id": policy["request_id"],
+        "turn_id": "mixed", "ok": false, "error": "fixture denied the read"
+    }));
+    let tool = host.next();
+    assert_eq!(event(&tool)["type"], "tool.complete");
+    assert_eq!(event(&tool)["payload"]["tool_id"], "read");
+    let completion = host.next();
+    assert_eq!(event(&completion)["type"], "message.complete");
+    assert_eq!(event(&completion)["payload"]["text"], "Done");
+    let end = host.next();
+    assert_eq!(end["new_messages"][2]["tool_name"], "other");
+    assert_eq!(end["new_messages"][3]["tool_name"], "read_file");
+    host.close();
+    server.join().unwrap();
+}
+
+#[test]
+fn third_unknown_only_round_stops_with_a_closed_transcript() {
+    let (model, base_url) = model();
+    let server = std::thread::spawn(move || {
+        for count in 0..3 {
+            let (socket, body) = request(&model);
+            assert_eq!(body["messages"].as_array().unwrap().len(), 3 + 2 * count);
+            reply(
+                socket,
+                "application/json",
+                r#"{"choices":[{"finish_reason":"tool_calls","message":{"tool_calls":[{"id":"reused","type":"function","function":{"name":"other","arguments":"{}"}}]}}]}"#,
+            );
+        }
+        model
+    });
+    let mut host = Host::spawn();
+    host.begin("exhausted", &base_url, false);
+    let completion = host.next();
+    assert_eq!(event(&completion)["type"], "message.complete");
+    let payload = &event(&completion)["payload"];
+    assert_eq!(payload["status"], "error");
+    assert_eq!(payload["usage"]["calls"], 3);
+    assert_eq!(payload["text"], "Model generated invalid tool call: other");
+    let end = host.next();
+    assert_eq!(end["type"], "turn.end");
+    let tail = end["new_messages"].as_array().unwrap();
+    assert_eq!(tail.len(), 6);
+    assert_eq!(tail[2]["tool_call_id"], "reused");
+    assert_eq!(tail[3]["tool_calls"][0]["id"], "reused_d2");
+    assert_eq!(tail[4]["tool_call_id"], "reused_d2");
+    assert_eq!(
+        tail[5],
+        json!({"role": "assistant", "content": "Model generated invalid tool call: other"})
+    );
+    host.close();
+    let model = server.join().unwrap();
+    model.set_nonblocking(true).unwrap();
+    assert_eq!(
+        model.accept().unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock
+    );
 }
 
 #[test]

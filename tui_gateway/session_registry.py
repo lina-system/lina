@@ -194,9 +194,12 @@ def _announce_built_agent(sid: str, key: str, current: dict, agent) -> None:
         initial.pop("_metadata_mirror", None)
         current["_rust_ready_info"] = _session_info(agent, initial)
         if not current.get("_parent_agent_announced"):
-            info = _session_info(agent, {**current, "_compute_host_active": True})
+            info = _session_info(agent, {**current, "_compute_host_active": True},
+                                 announce_agent_capabilities=True)
     else:
-        info = _session_info(agent, current)
+        # The build announces its own capabilities even if an isolated child
+        # claimed execution while the parent's deferred build was in flight.
+        info = _session_info(agent, current, announce_agent_capabilities=True)
     if info is not None:
         if cfg_warn := _probe_config_health(_load_cfg()):
             info["config_warning"] = cfg_warn

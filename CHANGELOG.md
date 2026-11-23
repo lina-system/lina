@@ -219,6 +219,7 @@ Hermes Agent upstream changes are not listed here; see the upstream history on t
 
 - Sessions freeze the owner's applicable standing rules ahead of the self note and carry changes once on the next user message.
 - Isolated dashboard turns can select a Rust compute host for local `read_file` sessions through `dashboard.compute_host_impl`. Python remains the default.
+- The Rust turn host now returns an unavailable-tool error to the model and lets it continue the turn, matching the Python host.
 
 ## [0.0.1-alpha.20261102.1] - 2026-11-02
 

@@ -263,6 +263,28 @@ fn request_body(
         }
         if let Some(calls) = wire.get_mut("tool_calls").and_then(Value::as_array_mut) {
             for call in calls {
+                if let Some(name) = call.pointer_mut("/function/name")
+                    && let Some(raw) = name.as_str()
+                    && (raw.is_empty()
+                        || raw.len() > 64
+                        || raw.chars().any(|ch| !valid_tool_name_char(ch)))
+                {
+                    // Keep rejected names verbatim in the transcript; strict providers validate replay.
+                    let coerced: String = raw
+                        .trim()
+                        .split(|ch| ch == '_' || !valid_tool_name_char(ch))
+                        .filter(|part| !part.is_empty())
+                        .collect::<Vec<_>>()
+                        .join("_")
+                        .chars()
+                        .take(64)
+                        .collect();
+                    *name = json!(if coerced.is_empty() {
+                        "invalid_tool_call"
+                    } else {
+                        &coerced
+                    });
+                }
                 if let Some(args) = call.pointer_mut("/function/arguments")
                     && let Some(raw) = args.as_str()
                     && let Ok(mut parsed) = serde_json::from_str::<Value>(raw)
@@ -297,6 +319,10 @@ fn request_body(
         body.insert("tools".into(), json!(plan.tools));
     }
     body
+}
+
+fn valid_tool_name_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-')
 }
 
 fn ascii_json(value: &Value) -> String {
@@ -493,7 +519,7 @@ pub(crate) struct ToolCall {
 
 impl ToolCall {
     pub(crate) fn valid_function(&self) -> bool {
-        self.kind == "function" && !self.id.is_empty() && !self.function.name.is_empty()
+        self.kind == "function" && !self.id.is_empty()
     }
 }
 

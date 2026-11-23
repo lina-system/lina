@@ -348,12 +348,6 @@ def _validate(case: str, impl: str, result: Observations) -> None:
         case "interrupt_during_read":
             assert [item["status"] for item in completions] == ["interrupted"]
             assert len(result.requests) == 1
-        case "unsupported_tool":
-            if impl == "rust":
-                assert result.host_frames[-1]["type"] == "turn.error"
-                assert result.host_frames[-1]["reason"] == "unsupported_tool"
-                assert len(result.requests) == 1
-                assert [item["status"] for item in completions] == ["error"]
         case "kill_and_restart":
             assert [item["status"] for item in completions] == ["error", "complete"]
             assert completions[-1]["text"] == ANSWER
@@ -361,10 +355,20 @@ def _validate(case: str, impl: str, result: Observations) -> None:
         case _:
             assert [item["status"] for item in completions] == ["complete"]
             assert completions[-1]["text"] == ANSWER
-    if case not in {"model_500", "interrupt_during_read", "unsupported_tool"}:
+    if case not in {"model_500", "interrupt_during_read"}:
         assert result.transcript, f"{impl} did not persist any transcript rows"
         assert result.transcript[-1]["role"] == "assistant"
         assert result.transcript[-1]["content"] == ANSWER
+    if case == "unsupported_tool":
+        assert len(result.requests) == 2
+        assert result.requests[1]["messages"][-1] == {
+            "role": "tool", "tool_call_id": "call_parity_1",
+            "content": "Tool 'parity_unknown_tool' does not exist. Available tools: read_file",
+        }
+        assert [event["type"] for event in result.events if event["type"].startswith("tool.")] == [
+            "tool.generating",
+        ]
+        assert result.host_frames[-1]["type"] == "turn.end"
     if case == "history":
         messages = [message for message in result.requests[0]["messages"] if message["role"] != "system"]
         assert [(item["role"], item["content"]) for item in messages[:-1]] == [
