@@ -128,12 +128,10 @@ def merge_pr(gh, repo: str, number: int, *, base: Path | None = None, out=print,
 
 
 def report_only(gh, repo: str, number: int, *, base: Path | None = None, out=print, **_merge_options) -> int:
-    """The gates of ``merge_pr`` read and printed, and nothing merged, queued or closed (``work.land_merge`` off):
-    the verdict's code, so 0 means the pull request is ready for its reviewer, not that it merged."""
+    """Report the gates for an open PR, or finish the issue updates for an already merged PR."""
     snapshot = collect_pr(gh, repo, number, base)
     if snapshot["state"] == "MERGED":
-        out(f"#{number} is already merged")
-        return rules.PASS
+        return _finish_merged(gh, repo, snapshot, out, base)
     verdict = rules.may_merge(snapshot)
     for line in verdict.text():
         out(line)

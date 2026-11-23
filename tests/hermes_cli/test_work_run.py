@@ -173,6 +173,39 @@ def test_hand_off_verbs_write_their_event_before_the_worker_call(work, monkeypat
     assert _rows(work, "SELECT status FROM v_run WHERE id = ?", (run_id,)) == [("dropped",)]
 
 
+@pytest.mark.parametrize("in_process", [True, False], ids=["in-process", "subprocess"])
+def test_submit_links_todo_without_holding_the_work_lock(work, monkeypatch, in_process):
+    import fcntl
+
+    from hermes_cli.worker.hub import Hub
+
+    lock = work.work / ".lock"
+    # The submitter already wrote the link. Record the arguments only after the worker's link command succeeds.
+    linked = work.tmp / "linked.json"
+    if in_process:
+        def link(_hub, _job, *args):
+            with lock.open() as handle:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            work.ok(*args)
+            linked.write_text(json.dumps(args))
+
+        monkeypatch.setattr(Hub, "_todo", link)
+    else:
+        command = [sys.executable, "-c",
+                   "import fcntl, json, sys; from pathlib import Path; from hermes_cli.work import main\n"
+                   "with open(sys.argv[1]) as f: fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)\n"
+                   "main(sys.argv[3:])\n"
+                   "Path(sys.argv[2]).write_text(json.dumps(sys.argv[3:]))", str(lock), str(linked)]
+        work.config(extra=f"worker:\n  todo_link: {{kind: hermes, command: {json.dumps(command)}}}\n")
+
+    code, out, err = work.run("run", "submit", "T1", "--brief", str(work.brief))
+    assert code == 0 and linked.exists(), (out, err)
+    (run_id,) = _jobs(work)
+    assert json.loads(linked.read_text()) == ["link", "T1", f"omo:{run_id}"]
+    assert _rows(work, "SELECT attempts, last_error FROM outbox WHERE op = 'submit' AND done_at IS NOT NULL") == [
+        (1, None)]
+
+
 @pytest.mark.parametrize("recovered", [False, True], ids=["in-process", "subprocess-resume"])
 def test_accept_links_todo_without_holding_the_work_lock(work, monkeypatch, recovered):
     import fcntl

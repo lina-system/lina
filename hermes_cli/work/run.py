@@ -26,6 +26,7 @@ from hermes_cli.work.people import agent, owner
 
 WORKER_ENDED = ("done", "done_empty", "review", "stalled", "failed", "cancelled")
 VERDICT_OPS = {"accept": True, "review": False}
+TODO_LINK_OPS = {"submit", "accept"}
 
 
 class HandOffError(RuntimeError):
@@ -206,7 +207,7 @@ def _retry_later(oid: int, error: str) -> None:
 
 @contextmanager
 def _dispatch_writer(*, wait: bool = True):
-    """Keep one outbox consumer even while accept lends the record lock to its to-do commands."""
+    """Keep one outbox consumer even while a worker lends the record lock to its to-do commands."""
     root = ledger.current().root
     root.mkdir(parents=True, exist_ok=True)
     with (root / ".dispatch.lock").open("a") as consumer:
@@ -225,7 +226,7 @@ def dispatch(writer: Lock) -> int:
     done = 0
     for oid, run_id, op, payload in pending():
         try:
-            with writer.released() if op == "accept" else nullcontext():
+            with writer.released() if op in TODO_LINK_OPS else nullcontext():
                 _call_worker(oid, op, run_id, json.loads(payload))
         except HandOffError as exc:
             _finish(oid, run_id, op, str(exc)[:500])
@@ -245,8 +246,8 @@ def resume() -> None:
     rows = pending()
     if not rows:
         return
-    # A to-do command called by accept must proceed to its own write while its parent drains the outbox.
-    with _dispatch_writer(wait=rows[0][2] != "accept") as writer:
+    # A nested to-do command must proceed to its own write while its parent drains the outbox.
+    with _dispatch_writer(wait=rows[0][2] not in TODO_LINK_OPS) as writer:
         if writer is None:
             return
         n = dispatch(writer)
