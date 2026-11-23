@@ -14,6 +14,23 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
+def _isolated_file_tool_environments(monkeypatch):
+    """Keep real file-tool environments and their caches owned by one test."""
+    from tools import file_tools, terminal_tool
+    from tools.terminal_tool_lifecycle import cleanup_vm
+
+    monkeypatch.setattr(terminal_tool, "_active_environments", {})
+    monkeypatch.setattr(terminal_tool, "_last_activity", {})
+    monkeypatch.setattr(terminal_tool, "_creation_locks", {})
+    monkeypatch.setattr(terminal_tool, "_session_cwd", {})
+    monkeypatch.setattr(file_tools, "_file_ops_cache", {})
+    yield
+    for task_id in list(terminal_tool._active_environments):
+        cleanup_vm(task_id)
+    file_tools.clear_file_ops_cache()
+
+
+@pytest.fixture(autouse=True)
 def _no_host_browser_use_cli():
     """Keep the host's browser-harness install out of tests.
 
