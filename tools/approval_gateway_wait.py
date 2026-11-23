@@ -145,7 +145,7 @@ def _await_gateway_decision(session_key: str, notify_cb, approval_data: dict, *,
     when the notify callback raised. Persisting the choice and building the
     tool-facing result stay with the caller.
 
-    Identical concurrent approvals (same command text + pattern-key set) are
+    Identical concurrent approvals (same content version, command text and pattern keys) are
     coalesced: parallel tool calls would otherwise fire N identical prompts
     the user must /approve N times while the agent sits wedged. Followers adopt
     the leader's ``session``/``always``/``deny``/timeout; a ``once`` covers only
@@ -170,6 +170,7 @@ def _await_gateway_decision(session_key: str, notify_cb, approval_data: dict, *,
     timeout_s = entry.data["timeout_s"] = _ctx._get_approval_timeout()
 
     def _enqueue() -> None:
+        entry.data["expires_at"] = time.time() + max(timeout_s, 0)
         register_prepared_approval(session_key, entry)
         _approval._gateway_queues.setdefault(session_key, []).append(entry)
 
@@ -183,6 +184,7 @@ def _await_gateway_decision(session_key: str, notify_cb, approval_data: dict, *,
             if not preparing_terminal_approval():
                 leader = next((e for e in _approval._gateway_queues.get(session_key, [])
                                if e.data.get("command") == approval_data.get("command")
+                               and e.data.get("content_version") == approval_data.get("content_version")
                                and list(e.data.get("pattern_keys") or []) == keys), None)
             if leader is None:
                 _enqueue()

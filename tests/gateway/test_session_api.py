@@ -465,6 +465,265 @@ async def test_session_chat_stream_disconnect_keeps_control_refs_until_executor_
     assert run_id not in adapter._active_run_agents
 
 
+def _serve_approval_dashboard(listener, dashboard_home, gateway_url: str, gateway_key: str) -> None:
+    """Serve the production dashboard in a fresh process with local fixture discovery."""
+    import os
+
+    import uvicorn
+
+    with patch.dict(os.environ, {"HOME": str(dashboard_home), "HERMES_HOME": str(dashboard_home)}):
+        from hermes_cli import lina_deps, lina_talk, web_server
+        from hermes_cli.dashboard_auth import clear_providers, register_provider
+        from tests.hermes_cli.conftest_dashboard_auth import StubAuthProvider
+
+        clear_providers()
+        register_provider(StubAuthProvider())
+        web_server.app.state.auth_required = True
+        web_server.app.state.bound_host, web_server.app.state.bound_port = listener.getsockname()
+        with (
+            patch.object(lina_deps, "lina_root", return_value=dashboard_home),
+            patch.object(lina_talk, "gateway", return_value=(gateway_url, gateway_key)),
+        ):
+            uvicorn.Server(uvicorn.Config(
+                web_server.app, lifespan="off", access_log=False, log_level="warning",
+            )).run(sockets=[listener])
+
+
+@pytest.mark.asyncio
+async def test_dashboard_approvals_survive_session_stream_disconnect(
+    auth_adapter, session_db, tmp_path, monkeypatch,
+) -> None:
+    """lina#878: a signed-in dashboard can settle exact pending work after SSE closes."""
+    from concurrent.futures import ThreadPoolExecutor
+    from contextvars import copy_context
+    from hashlib import sha256
+    from multiprocessing import get_context
+    from socket import socket
+
+    import httpx
+
+    from hermes_cli import plugins
+    from tools import approval_context
+    from tools.approval import check_all_command_guards
+    from tools.interrupt import acting_for_tid, set_interrupt
+
+    session_id = session_db.create_session("approval-session", "api_server")
+    command = "chmod" + " " * 24 + "777 ./synthetic-approval-fixture"
+    mail = {"to": "recipient@example.test", "body": "synthetic-body-marker"}
+    purchase = {"sku": "synthetic-pencil", "qty": 1}
+    hashes = {
+        "mail": sha256(b'{"args":{"body":"synthetic-body-marker","to":"recipient@example.test"},'
+                       b'"name":"send_mail"}').hexdigest(),
+        "purchase": sha256(b'{"args":{"qty":1,"sku":"synthetic-pencil"},'
+                           b'"name":"create_purchase"}').hexdigest(),
+        "shell": sha256(command.encode()).hexdigest(),
+    }
+    executions = []
+    shell_outcome = []
+    executor_finished = threading.Event()
+    stream_closed = asyncio.Event()
+    monkeypatch.setenv("HERMES_EXEC_ASK", "1")  # normally set by start_gateway()
+    monkeypatch.setattr(approval_context, "_get_approval_mode", lambda: "manual")
+    monkeypatch.setattr(approval_context, "_get_approval_timeout", lambda: 10)
+    monkeypatch.setattr("gateway.platforms.api_server.CHAT_COMPLETIONS_SSE_KEEPALIVE_SECONDS", 0.25)
+
+    manager = plugins.PluginManager()
+    plugin = plugins.PluginContext(plugins.PluginManifest(name="approval-fixture", source="user"), manager)
+    plugin.register_hook("pre_tool_call", lambda tool_name, **_: {
+        "action": "approve", "message": f"Review synthetic {tool_name}",
+    })
+    monkeypatch.setattr(plugins, "_delivery_manager", lambda: manager)
+
+    class ApprovalAgent:
+        session_prompt_tokens = session_completion_tokens = session_total_tokens = 0
+
+        def interrupt(self, _message=None) -> None:
+            set_interrupt(True, self.thread_id, reason="test_stream_disconnect")
+
+        def run_conversation(self, **_kwargs):
+            self.thread_id = threading.get_ident()
+
+            def run_plugin(tool_name, args) -> None:
+                if plugins.resolve_pre_tool_block(tool_name, args) is None:
+                    executions.append(tool_name)
+
+            def run_shell() -> None:
+                result = check_all_command_guards(command, "local")
+                if result["approved"]:
+                    executions.append("shell")
+                shell_outcome.append(result.get("outcome"))
+
+            token = acting_for_tid.set(self.thread_id)
+            try:
+                with ThreadPoolExecutor(max_workers=3) as pool:
+                    tasks = (
+                        pool.submit(copy_context().run, run_plugin, "send_mail", mail),
+                        pool.submit(copy_context().run, run_plugin, "create_purchase", purchase),
+                        pool.submit(copy_context().run, run_shell),
+                    )
+                    for task in tasks:
+                        task.result()
+                return {"final_response": "Synthetic turn complete", "messages": []}
+            finally:
+                acting_for_tid.reset(token)
+                set_interrupt(False)
+                executor_finished.set()
+
+    @web.middleware
+    async def observe_stream_close(request, handler):
+        try:
+            return await handler(request)
+        finally:
+            if request.path.endswith("/chat/stream"):
+                stream_closed.set()
+
+    monkeypatch.setattr(auth_adapter, "_create_agent", lambda **_: ApprovalAgent())
+    app = web.Application(middlewares=[observe_stream_close])
+    for method, path, handler in auth_adapter._http_route_table():
+        app.router.add_route(method, path, handler)
+
+    dashboard_home = tmp_path / "dashboard"
+    dashboard_home.mkdir()
+    (dashboard_home / "config.yaml").write_text(
+        "work:\n  agents: {alpha: Synthetic Agent}\n  store: {backend: sqlite}\n",
+        encoding="utf-8",
+    )
+    gateway_key = auth_adapter._api_key
+    auth = {"Authorization": f"Bearer {gateway_key}"}
+    route = "/api/lina/approvals"
+    async with TestClient(TestServer(app), headers=auth) as gateway:
+        with socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            base = f"http://127.0.0.1:{listener.getsockname()[1]}"
+            dashboard_process = get_context("spawn").Process(
+                target=_serve_approval_dashboard,
+                args=(listener, dashboard_home, str(gateway.make_url("/")).rstrip("/"), gateway_key),
+            )
+            dashboard_process.start()
+        try:
+            async with httpx.AsyncClient(base_url=base, trust_env=False) as dashboard:
+                await _exercise_dashboard_approvals(
+                    dashboard, gateway, route, session_id, stream_closed, hashes, executions, executor_finished,
+                )
+            assert shell_outcome == ["timeout"]
+        finally:
+            if dashboard_process.is_alive():
+                dashboard_process.terminate()
+            dashboard_process.join(timeout=5)
+            if dashboard_process.is_alive():
+                dashboard_process.kill()
+                dashboard_process.join()
+            dashboard_process.close()
+
+
+async def _exercise_dashboard_approvals(
+    dashboard, gateway, route, session_id, stream_closed, hashes, executions, executor_finished,
+) -> None:
+    """Compare the dashboard projection with the live queue and settle via signed-in HTTP."""
+    import httpx
+
+    from hermes_cli.dashboard_auth.cookies import SESSION_AT_COOKIE
+    from tests.hermes_cli.conftest_dashboard_auth import StubAuthProvider
+    from tests.waiting import wait_until
+
+    def wait_for_dashboard() -> httpx.Response:
+        with httpx.Client(base_url=dashboard.base_url, trust_env=False, timeout=2) as probe:
+            def get_approval_route():
+                try:
+                    return probe.get(route)
+                except httpx.ConnectError:
+                    return None
+
+            return wait_until(get_approval_route, timeout=20, interval=0.05, what="dashboard HTTP startup")
+
+    unsigned = await asyncio.to_thread(wait_for_dashboard)
+    assert unsigned.status_code == 401
+    provider = StubAuthProvider()
+    start = provider.start_login(redirect_uri="http://127.0.0.1/auth/callback")
+    state, verifier = start.cookie_payload["hermes_session_pkce"].split(";")
+    session = provider.complete_login(
+        code="stub_code", state=state.removeprefix("state="),
+        code_verifier=verifier.removeprefix("verifier="), redirect_uri="http://127.0.0.1/auth/callback",
+    )
+    dashboard.cookies.set(SESSION_AT_COOKIE, session.access_token)
+
+    async def read_requests(response):
+        requests = []
+        events = []
+        async for line in response.content:
+            if line.startswith(b"event: "):
+                events.append(line.removeprefix(b"event: ").decode().strip())
+            if line == b"event: approval.request\n":
+                data = await response.content.readline()
+                requests.append(json.loads(data.removeprefix(b"data: ")))
+                if len(requests) == 3:
+                    return requests
+        pytest.fail(f"session stream ended with {len(requests)} of 3 approval requests, events={events}")
+
+    async with gateway.post(
+        f"/api/sessions/{session_id}/chat/stream", json={"message": "Queue three synthetic actions"},
+    ) as stream:
+        assert stream.status == 200
+        events = await asyncio.wait_for(read_requests(stream), timeout=10)
+        stream.close()
+    await asyncio.wait_for(stream_closed.wait(), timeout=4)
+
+    async with gateway.get("/v1/approvals") as upstream:
+        assert upstream.status == 200
+        gateway_items = (await upstream.json())["approvals"]
+    listed = await dashboard.get(route)
+    assert listed.status_code == 200, listed.text
+    items = listed.json()["approvals"]
+    assert len(items) == len(gateway_items) == 3
+    assert {item["request_id"] for item in items} == {event["request_id"] for event in events}
+    assert {item["content_version"] for item in items} == set(hashes.values())
+    by_request = {item["request_id"]: item for item in gateway_items}
+    for item in items:
+        upstream_item = by_request[item["request_id"]]
+        assert item == {"agent": "alpha", **{k: v for k, v in upstream_item.items() if k != "run_id"}}
+        assert item["state"] == "pending"
+        assert item["target"] and item["action_summary"] and item["expires_at"] > 0
+    assert "synthetic-body-marker" not in listed.text
+    assert executions == []
+
+    by_version = {item["content_version"]: item for item in items}
+    mail_id = by_version[hashes["mail"]]["request_id"]
+    purchase_id = by_version[hashes["purchase"]]["request_id"]
+    mail_route = f"{route}/{mail_id}"
+    approve_mail = {"decision": "approve", "content_version": hashes["mail"]}
+    unsigned_request = dashboard.build_request("POST", mail_route, json=approve_mail)
+    del unsigned_request.headers["cookie"]
+    unsigned_decision = await dashboard.send(unsigned_request)
+    assert unsigned_decision.status_code == 401
+
+    stale = await dashboard.post(mail_route, json={
+        "decision": "approve", "content_version": hashes["purchase"],
+    })
+    assert stale.status_code == 409
+    assert executions == []
+
+    first, second = await asyncio.gather(
+        dashboard.post(mail_route, json=approve_mail),
+        dashboard.post(mail_route, json=approve_mail),
+    )
+    approved, duplicate = sorted((first, second), key=lambda response: response.status_code)
+    assert approved.status_code == 200 and duplicate.status_code in {404, 409}, (
+        approved.status_code, duplicate.status_code,
+    )
+    assert approved.json()["choice"] == "once"
+    rejected = await dashboard.post(f"{route}/{purchase_id}", json={
+        "decision": "reject", "content_version": hashes["purchase"],
+    })
+    assert rejected.status_code == 200, rejected.text
+    assert rejected.json()["choice"] == "deny"
+
+    assert await asyncio.to_thread(executor_finished.wait, 12), "approval waiters did not settle"
+    assert executions == ["send_mail"]
+    final = await dashboard.get(route)
+    assert final.status_code == 200
+    assert final.json() == {"approvals": []}
+
+
 @pytest.mark.asyncio
 async def test_session_chat_stream_classifies_failed_tool_completions(adapter, session_db):
     session_id = session_db.create_session("tool-status-stream", "api_server")

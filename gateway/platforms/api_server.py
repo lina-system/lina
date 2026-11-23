@@ -3202,12 +3202,10 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
                 await response.write(_sse_frame(payload, event=name, ensure_ascii=False))
         except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError, OSError):
             await self._drain_session_stream_task_on_disconnect(
-                run_id, task, interrupt_message="SSE client disconnected", shield_wait=False)
-            logger.info("Session SSE client disconnected; interrupted live run %s", run_id)
+                run_id, task, queue, interrupt_message="SSE client disconnected", shield_wait=False)
         except asyncio.CancelledError:
             await self._drain_session_stream_task_on_disconnect(
-                run_id, task, interrupt_message="SSE task cancelled", shield_wait=True)
-            logger.info("Session SSE task cancelled; drained live run %s", run_id)
+                run_id, task, queue, interrupt_message="SSE task cancelled", shield_wait=True)
             raise
         except Exception as exc:
             logger.debug("[api_server] session SSE stream error: %s", exc)
@@ -3224,23 +3222,6 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
             self._set_run_status(run_id, "waiting_for_approval", last_event="approval.request", approval=event)
             events.enqueue("approval.request", event)  # executor thread -> loop hop inside
         return _approval_notify
-
-    async def _drain_session_stream_task_on_disconnect(
-        self, run_id: str, task: asyncio.Task, *, interrupt_message: str, shield_wait: bool
-    ) -> None:
-        """Preserve live run control refs until the executor-backed turn actually exits."""
-        agent = self._active_run_agents.get(run_id)
-        if agent is None:
-            if not task.done():
-                task.cancel()
-                with suppress(Exception):
-                    await task
-            return
-        with suppress(Exception):
-            agent.interrupt(interrupt_message)
-        if not task.done():
-            with suppress(Exception):
-                await (asyncio.shield(task) if shield_wait else task)
 
     @_require_auth
     async def _handle_session_model_lock(self, request: web.Request) -> web.Response:
@@ -3880,6 +3861,8 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
 
     _handle_get_run = _run_route_delegate("_handle_get_run")
     _handle_run_events = _run_route_delegate("_handle_run_events")
+    _handle_list_approvals = _run_route_delegate("_handle_list_approvals")
+    _drain_session_stream_task_on_disconnect = _api_runs._drain_session_stream_task_on_disconnect
     _handle_run_approval = _run_route_delegate("_handle_run_approval")
     _handle_run_clarify = _run_route_delegate("_handle_run_clarify")
     _handle_steer_run = _run_route_delegate("_handle_steer_run")

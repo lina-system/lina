@@ -6,6 +6,11 @@ Tier-2 dangerous-command match: session/permanent allowlist, the CLI prompt,
 the gateway submit_pending path, cron_mode, and fail-closed timeouts.
 """
 
+import hashlib
+import json
+from concurrent.futures import ThreadPoolExecutor
+from queue import Queue
+
 import pytest
 
 from tools import approval
@@ -36,6 +41,23 @@ def _isolate_approval_state(monkeypatch):
         "tools.terminal_tool._get_approval_callback", lambda: None, raising=False
     )
     yield
+
+
+@pytest.fixture
+def sample_tool_dispatch(monkeypatch):
+    import model_tools
+    from tools.registry import ToolRegistry
+
+    executed = []
+
+    def handler(args):
+        executed.append(args)
+        return json.dumps({"delivered": args["body"]})
+
+    registry = ToolRegistry()
+    registry.register(name="send_sample", toolset="test", schema={}, handler=handler)
+    monkeypatch.setattr(model_tools, "registry", registry)
+    return model_tools.handle_function_call, executed
 
 
 class TestRequestToolApproval:
@@ -215,6 +237,119 @@ class TestRequestToolApproval:
 
         assert res["approved"] is False
         assert "unattended platform" in res["message"].lower()
+
+    def test_plugin_queue_binds_modified_tool_args_without_disclosing_them(self, monkeypatch):
+        from hermes_cli import lifecycle, plugins
+
+        monkeypatch.setattr(approval, "_presence", lambda callback: (callback, False, True, False))
+        monkeypatch.setattr(approval_context, "_get_approval_mode", lambda: "manual")
+        monkeypatch.setattr(approval_context, "_fire_approval_hook", lambda *args, **kwargs: None)
+        monkeypatch.setattr(lifecycle, "invoke_hook", lambda *args, **kwargs: [
+            {"action": "modify", "args": {"body": "synthetic-private-body"}},
+            {"action": "approve", "message": "Confirm delivery"},
+        ])
+        encoded = b'{"args":{"body":"synthetic-private-body","z":2},"name":"send_sample"}'
+        version = hashlib.sha256(encoded).hexdigest()
+        observed = {}
+
+        def notify(data):
+            snapshot = approval.list_all_gateway_approvals()["test-session"][0]
+            snapshot["pattern_keys"].clear()
+            snapshot["content_version"] = "modified snapshot"
+            observed["row"] = approval.list_all_gateway_approvals()["test-session"][0]
+            observed["count"] = approval.resolve_gateway_approval(
+                "test-session", "once", request_id=data["request_id"], content_version=version,
+            )
+            if not observed["count"]:
+                approval.resolve_gateway_approval("test-session", "deny", request_id=data["request_id"])
+
+        approval.register_gateway_notify("test-session", notify)
+        try:
+            block, modified = plugins._dispatch_pre_tool_call_hooks("send_sample", {"z": 2, "body": "old body"})
+        finally:
+            approval.unregister_gateway_notify("test-session")
+
+        assert block is None
+        assert modified == {"z": 2, "body": "synthetic-private-body"}
+        assert observed["count"] == 1
+        row = observed["row"]
+        assert row["content_version"] == version
+        assert row["pattern_keys"] == ["plugin_rule:send_sample"]
+        assert "synthetic-private-body" not in repr(row)
+
+    def test_distinct_args_of_same_plugin_tool_can_wait_for_separate_decisions(
+        self, monkeypatch, sample_tool_dispatch,
+    ):
+        from hermes_cli import lifecycle
+
+        dispatch, executed = sample_tool_dispatch
+        monkeypatch.setattr(approval, "_presence", lambda callback: (callback, False, True, False))
+        monkeypatch.setattr(approval_context, "_get_approval_config", lambda: {"mode": "manual", "timeout": 30})
+        monkeypatch.setattr(lifecycle, "invoke_hook", lambda hook_name, **kwargs: (
+            [{"action": "approve", "message": "Confirm delivery"}] if hook_name == "pre_tool_call" else []
+        ))
+        notices = Queue()
+        versions = {
+            body: hashlib.sha256(f'{{"args":{{"body":"{body}"}},"name":"send_sample"}}'.encode()).hexdigest()
+            for body in ("first sample", "second sample")
+        }
+
+        with ThreadPoolExecutor(max_workers=2) as workers:
+            approval.register_gateway_notify("test-session", notices.put)
+            try:
+                first = workers.submit(dispatch, "send_sample", {"body": "first sample"})
+                first_notice = notices.get(timeout=5)
+                second = workers.submit(dispatch, "send_sample", {"body": "second sample"})
+                second_notice = notices.get(timeout=5)
+                pending = approval.list_all_gateway_approvals()["test-session"]
+                assert {row["request_id"]: row["content_version"] for row in pending} == {
+                    first_notice["request_id"]: versions["first sample"],
+                    second_notice["request_id"]: versions["second sample"],
+                }
+                assert len(pending) == 2
+                assert executed == []
+
+                assert approval.resolve_gateway_approval(
+                    "test-session", "once", request_id=first_notice["request_id"],
+                    content_version=versions["first sample"],
+                ) == 1
+                assert json.loads(first.result(timeout=5)) == {"delivered": "first sample"}
+                assert not second.done()
+                assert approval.resolve_gateway_approval(
+                    "test-session", "deny", request_id=second_notice["request_id"],
+                    content_version=versions["second sample"],
+                ) == 1
+                assert "error" in json.loads(second.result(timeout=5))
+            finally:
+                approval.unregister_gateway_notify("test-session")
+
+        assert executed == [{"body": "first sample"}]
+
+    def test_unguarded_plugin_dispatch_keeps_handler_result_without_calling_gate(
+        self, monkeypatch, sample_tool_dispatch,
+    ):
+        from hermes_cli import lifecycle
+
+        dispatch, executed = sample_tool_dispatch
+        hook_calls = []
+
+        def no_approval(hook_name, **kwargs):
+            if hook_name == "pre_tool_call":
+                hook_calls.append(kwargs["tool_name"])
+            return []
+
+        def unexpected_gate(*args, **kwargs):
+            pytest.fail("an unguarded tool must not call the approval gate")
+
+        monkeypatch.setattr(lifecycle, "invoke_hook", no_approval)
+        monkeypatch.setattr(approval, "request_tool_approval", unexpected_gate)
+        args = {"body": "ordinary sample"}
+        baseline = dispatch("send_sample", args, skip_pre_tool_call_hook=True)
+
+        assert dispatch("send_sample", args) == baseline
+        assert json.loads(baseline) == {"delivered": "ordinary sample"}
+        assert hook_calls == ["send_sample"]
+        assert executed == [args, args]
 
     def test_yolo_session_bypasses_gate(self, monkeypatch):
         """A --yolo session skips the plugin approval gate (parity with the
