@@ -130,6 +130,9 @@ async def collect_events(ws: ClientConnection, turn: ModelTurn) -> tuple[list[di
             if frame.get("id") == turn.call_id:
                 if "error" in frame:
                     raise MeasurementError(f"prompt.submit refused: {frame['error']}")
+                status = frame.get("result", {}).get("status")
+                if status != "streaming":
+                    raise MeasurementError(f"prompt.submit did not admit a new turn: {status}")
                 reply = True
             if frame.get("method") != "event":
                 continue
@@ -148,6 +151,27 @@ async def collect_events(ws: ClientConnection, turn: ModelTurn) -> tuple[list[di
                     and event["payload"].get("running") is False):
                 idle_ns = observed_ns
     return events, idle_ns
+
+
+async def wait_for_parent_idle(ws: ClientConnection, sid: str, request_id: str) -> None:
+    """A child can publish its idle event before the parent releases the submit slot."""
+    with anyio.fail_after(TIMEOUT):
+        while True:
+            await send(ws, "session.active_list", request_id, current_session_id=sid)
+            while True:
+                frame = json.loads(await ws.recv())
+                if frame.get("id") == request_id:
+                    break
+                event = frame.get("params", {})
+                if event.get("session_id") == sid and event.get("type") in TRACKED_EVENTS:
+                    raise MeasurementError(f"extra event between turns: {event['type']}")
+            rows = frame.get("result", {}).get("sessions", [])
+            current = next((row for row in rows if row["id"] == sid), None)
+            if current is None:
+                raise MeasurementError("parent lost the measured session")
+            if current["status"] == "idle":
+                return
+            await anyio.sleep(0.01)
 
 
 async def measure_turn(
@@ -225,6 +249,8 @@ async def run_session(
             turn = ModelTurn(f"Read the fixture for turn {session}/{number}.", marker, path,
                              home, sid, impl, pid, call_id, sample_cold_pss=number == 1)
             rows.append(await measure_turn(ws, fixture, turn, session, number))
+            if number < turns:
+                await wait_for_parent_idle(ws, sid, f"idle_{session}_{number}")
         # Catch trailing tracked events while there is still an open socket.
         with anyio.move_on_after(0.1):
             while True:

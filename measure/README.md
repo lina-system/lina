@@ -39,4 +39,7 @@ counts, median, and nearest-rank p95. Latency and CPU use turns 3–10.
 PSS windows are `before_turn_1`, `first_model_request`, `idle_after_turn_1`,
 and `idle_after_turn_10`. Idle PSS uses the live process counters after the
 post-completion `session.info` reports `running: false`, before the next prompt.
+Between samples the driver also waits for `session.active_list` to report the
+parent session idle. An isolated child may announce its own idle state before
+the parent releases admission. This check runs outside latency and CPU samples.
 Host PSS is `n/a` before child creation and throughout an in-process run.
