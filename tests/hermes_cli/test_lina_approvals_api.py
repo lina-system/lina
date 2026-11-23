@@ -114,6 +114,7 @@ def test_lists_configured_agents_without_exposing_run_ids(client, gateways):
     response = client.get(_PATH)
     assert response.status_code == 200
     assert response.json() == {
+        "biometric": False,
         "approvals": [{"agent": agent, **{k: v for k, v in rows[0].items() if k != "run_id"}}
                       for agent, rows in gateways.queues.items()],
     }
@@ -127,10 +128,24 @@ def test_lists_configured_agents_without_exposing_run_ids(client, gateways):
     assert not gateways.posts
 
 
+def test_biometric_preference_defaults_off_and_persists(client, gateways):
+    raw = client.get("/api/config?include_defaults=false")
+    assert raw.status_code == 200
+    assert "biometric" not in raw.json().get("approvals", {})
+    assert client.get("/api/config").json()["approvals"]["biometric"] is False
+    schema = client.get("/api/config/schema").json()["fields"]
+    assert schema["approvals.biometric"]["type"] == "boolean"
+
+    saved = client.put("/api/config", json={"config": {"approvals": {"biometric": True}}})
+    assert saved.status_code == 200
+    assert client.get("/api/config?include_defaults=false").json()["approvals"]["biometric"] is True
+    assert client.get(_PATH).json()["biometric"] is True
+
+
 @pytest.mark.parametrize(("biometric", "decision", "choice"), [
     (None, "approve", "once"),
-    ("off", "approve", "once"),
-    ("off", "reject", "deny"),
+    ("false", "approve", "once"),
+    ("false", "reject", "deny"),
     ("true", "approve", "once"),
 ])
 def test_resolves_once_as_verified_session_using_button(client, work, gateways, biometric, decision, choice):
@@ -138,6 +153,9 @@ def test_resolves_once_as_verified_session_using_button(client, work, gateways, 
         work.config(locale="en", extra=f"approvals: {{biometric: {biometric}}}\n")
     path = f"{_PATH}/req_beta"
     body = {**_DECISION, "decision": decision}
+    unsigned = client.build_request("POST", path, json=body)
+    del unsigned.headers["cookie"]
+    assert client.send(unsigned).status_code == 401
     response = client.post(path, json=body)
     assert response.status_code == 200
     assert response.json()["resolved"] == 1

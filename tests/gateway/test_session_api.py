@@ -722,7 +722,7 @@ async def _exercise_dashboard_approvals(
     assert Counter(executions) == Counter(send_mail=1, create_purchase=0)
     final = await dashboard.get(route)
     assert final.status_code == 200
-    assert final.json() == {"approvals": []}
+    assert final.json() == {"approvals": [], "biometric": False}
 
 
 @pytest.mark.asyncio

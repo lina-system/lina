@@ -4,8 +4,8 @@ info:
   version: 0.1.0
   description: >
     Both operations require a signed-in dashboard session. Pending approvals live in the agent's
-    gateway memory and can be listed after the chat stream closes. The biometric setting is
-    reserved. The gateway records each successful app decision with check_method button.
+    gateway memory and can be listed after the chat stream closes. The approvals.biometric preference
+    defaults to false. The app button still approves and the gateway records check_method button. WebAuthn is tracked in #880.
 servers:
   - url: /api/lina
 paths:
@@ -20,8 +20,9 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [approvals]
+                required: [approvals, biometric]
                 properties:
+                  biometric: {type: boolean, description: Stored preference for optional biometric confirmation.}
                   approvals:
                     type: array
                     items:

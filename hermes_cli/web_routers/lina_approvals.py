@@ -48,6 +48,11 @@ class DashboardApproval(Approval):
     agent: str
 
 
+class DashboardApprovals(BaseModel):
+    approvals: list[DashboardApproval]
+    biometric: bool
+
+
 @dataclass(frozen=True, slots=True)
 class _LocatedApproval:
     row: GatewayApproval
@@ -110,12 +115,15 @@ async def _list_approvals(client: httpx.AsyncClient, config: env.Env) -> list[_L
 
 
 @router.get("/api/lina/approvals", dependencies=[Depends(_require_session)])
-async def list_approvals() -> dict[str, list[DashboardApproval]]:
+async def list_approvals() -> DashboardApprovals:
     config = await run_in_threadpool(_load_config)
     async with lina_talk.http_client() as client:
         approvals = await _list_approvals(client, config)
-    return {"approvals": [DashboardApproval(agent=entry.agent, **entry.row.model_dump(exclude={"run_id"}))
-                          for entry in approvals]}
+    return DashboardApprovals(
+        approvals=[DashboardApproval(agent=entry.agent, **entry.row.model_dump(exclude={"run_id"}))
+                   for entry in approvals],
+        biometric=config.section("approvals").get("biometric", False) is True,
+    )
 
 
 @router.post("/api/lina/approvals/{request_id}")
@@ -123,8 +131,6 @@ async def resolve_approval(
     request_id: str, body: Decision, session: Annotated[Session, Depends(_require_session)],
 ) -> Resolution:
     config = await run_in_threadpool(_load_config)
-    # Reserved for a future verifier. Today every accepted decision records a button check.
-    config.section("approvals").get("biometric")
     subject = principal_subject({"user_id": session.user_id, "provider": session.provider, "issuer": session.issuer})
     choice = "once" if body.decision == "approve" else "deny"
     async with lina_talk.http_client() as client:
