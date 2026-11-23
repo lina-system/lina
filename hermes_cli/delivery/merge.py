@@ -127,6 +127,20 @@ def merge_pr(gh, repo: str, number: int, *, base: Path | None = None, out=print,
     return rules.PASS
 
 
+def report_only(gh, repo: str, number: int, *, base: Path | None = None, out=print, **_merge_options) -> int:
+    """The gates of ``merge_pr`` read and printed, and nothing merged, queued or closed (``work.land_merge`` off):
+    the verdict's code, so 0 means the pull request is ready for its reviewer, not that it merged."""
+    snapshot = collect_pr(gh, repo, number, base)
+    if snapshot["state"] == "MERGED":
+        out(f"#{number} is already merged")
+        return rules.PASS
+    verdict = rules.may_merge(snapshot)
+    for line in verdict.text():
+        out(line)
+    out(f"#{number} not merged: PR only (work.land_merge is off); 시온 reviews, 케른 checks, 시온 merges")
+    return verdict.code
+
+
 def _finish_merged(gh, repo: str, snapshot: dict, out, base: Path | None) -> int:
     """A pull request that is already merged (a post-merge request failed, or the queue merged it after this
     command stopped waiting): the open-PR gates no longer apply, only the post-merge steps are left."""
