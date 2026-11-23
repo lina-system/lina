@@ -106,12 +106,25 @@ class RustHostSupervisor(HostSupervisor):
                 "turn_id": turn_id,
             })
 
+    def _receive_activity(self, params):
+        turn_id = params.get("turn_id")
+        with self.session["history_lock"]:
+            if (turn_id and self.session.get("running") and not self.session.get("_closing")
+                    and self.session.get("_compute_host_turn_host") is self
+                    and self.session.get("_compute_host_turn_id") == turn_id
+                    and self._event_source == (threading.current_thread(), turn_id)):
+                # Keep the child's monotonic sample so a repeated observation still ages.
+                self.session["_compute_host_activity_ns"] = params.get("activity_ns")
+
     def _receive_event(self, message):
         from tui_gateway import server
         from tui_gateway.contracts.registry import EVENTS
 
         params = message.get("params")
         if not isinstance(params, dict) or params.get("session_id") != self.sid:
+            return
+        if message.get("method") == "compute_host.activity":
+            self._receive_activity(params)
             return
         name = params.get("type")
         payload = params.get("payload")
