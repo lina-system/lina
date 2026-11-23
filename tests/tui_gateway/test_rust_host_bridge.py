@@ -92,6 +92,18 @@ def test_cold_rust_build_announces_idle_without_releasing_admission(rust_session
     assert parent["system_prompt"] == initial["system_prompt"] == ""
     assert started["system_prompt"] == "assembled prompt"
 
+    events.clear()
+    replacement = SimpleNamespace(_cached_system_prompt=None)
+    session.update(agent=replacement, _compute_host_turn_id="replacement")
+    with server._session_profile_runtime_scope(session, hydrate_secrets=False):
+        server._announce_built_agent("sid", "stored", session, replacement)
+    host._handle_host_frame({"type": "turn.started", "sid": "sid", "request_id": "replacement"})
+    host._receive_event({"method": "event", "params": {
+        "type": "message.start", "session_id": "sid", "payload": {"turn_id": "replacement"}}})
+
+    assert [name for name, _ in events] == ["session.info", "message.start"]
+    assert events[0][1]["running"] is False
+
 
 def test_stop_finishes_only_the_original_authorized_read(rust_session, monkeypatch):
     from tui_gateway import rust_file_policy
@@ -207,26 +219,40 @@ def test_rust_dispatch_releases_turn_lease_on_every_terminal_path(rust_session, 
     assert not server._session_uses_compute_host(session)
 
 
-def test_crash_snapshot_hides_unowned_inventory_without_retiring_the_planner(rust_session, monkeypatch):
+@pytest.mark.parametrize("retire_planner", [False, True], ids=["warm-planner", "retired-planner"])
+def test_crash_snapshot_preserves_route_without_advertising_a_child(rust_session, monkeypatch, retire_planner):
     from tui_gateway import rust_host_supervisor
 
     session, host, events = rust_session
     # Use the real shared session.info projection for both snapshots.
     monkeypatch.setattr(server, "_compute_host_session_info", lambda state: server._session_info(state["agent"], state))
-    monkeypatch.setattr(rust_host_supervisor, "select_host", lambda *_: host)
+    def select(_sid, _session, _cfg, _frame, leases):
+        if retire_planner:
+            # The planner's lease exit may retire the parent agent before the
+            # bridge can publish settlement.
+            leases.callback(session.update, agent=None)
+        return host
+
+    monkeypatch.setattr(rust_host_supervisor, "select_host", select)
     monkeypatch.setattr(host, "_send_frame", lambda _: None)
-    planner = SimpleNamespace(model="example-model", tools=[{"function": {"name": "read_file"}}])
+    planner = SimpleNamespace(
+        model="example-model", provider="custom:loopback", _cached_system_prompt="assembled prompt",
+        tools=[{"function": {"name": "read_file"}}])
     session.update(agent=planner, _rust_host=host)
     with server._session_profile_runtime_scope(session, hydrate_secrets=False):
         assert server._session_info(planner, session)["tools"] == {"file": ["read_file"]}
         assert server._submit_prompt_to_compute_host("rpc", "sid", session, "hello")["result"]["turn_isolation"]
         host._fail_pending_turns(reason="crash", message="synthetic exit")
-        normal = server._session_info(planner, session)
+        normal = server._session_info(session["agent"], session)
 
     crash = next(payload for name, payload in events if name == "session.info")
     assert crash["tools"] == crash["skills"] == {}
-    assert crash["model"] == "example-model" and crash["running"] is False
-    assert session["agent"] is planner and normal["tools"] == {"file": ["read_file"]}
+    assert (crash["model"], crash["provider"], crash["system_prompt"]) == (
+        "example-model", "custom:loopback", "")
+    assert crash["usage"]["model"] == "example-model"
+    assert crash["running"] is False and crash["turn_started_at"] is None
+    assert session["agent"] is (None if retire_planner else planner)
+    assert normal["tools"] == ({} if retire_planner else {"file": ["read_file"]})
     assert not server._session_uses_compute_host(session)
 
 

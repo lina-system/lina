@@ -13,6 +13,7 @@ import contextlib
 import copy
 import ipaddress
 import json
+import threading
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -330,12 +331,16 @@ def rust_turn_lease(session: dict, frame: dict) -> Iterator[None]:
         lease.join_threads()
         lease.release()
         if stage and stage.get("retire_agent"):
-            with server._session_profile_runtime_scope(session, hydrate_secrets=False):
-                agent.close()
             with session["history_lock"]:
                 if session.get("agent") is agent:
                     session["agent"] = None
+                    session["agent_ready"] = threading.Event()
+                    session.pop("agent_build_started", None)
+                    session.pop("agent_error", None)
                     session.pop("config_model_seen", None)
+            agent._end_session_on_close = False
+            with server._session_profile_runtime_scope(session, hydrate_secrets=False):
+                agent.close()
 
 
 def _accepted_rust_user(session: dict, stage: dict) -> dict:

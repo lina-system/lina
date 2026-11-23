@@ -252,9 +252,11 @@ def _drive_turns(
             if frame.get("params") is killed
         )
         _event(client, "session.info", after=after_killed)
-        assert _host_pid(home, impl, binary, previous=pid) != pid
+        replacement = _host_pid(home, impl, binary, previous=pid)
         after = len(client.sink.frames())
         _submit(client, SECOND_PROMPT)
+        model.wait_for_requests(2)
+        assert _host_pid(home, impl, binary) == replacement
         assert model.replies[0].gate is not None
         model.replies[0].gate.set()
     if gate is None:

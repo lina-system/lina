@@ -364,6 +364,7 @@ _NO_FORWARDED_SWITCH = object()
 
 def _on_compute_host_turn_done(
     rid: str, sid: str, session: dict, frame: dict, *, forwarded_switch=_NO_FORWARDED_SWITCH,
+    crash_info: dict | None = None,
 ) -> None:
     _apply_compute_host_metadata_mirror(session, frame)
     with session["history_lock"]:
@@ -395,7 +396,7 @@ def _on_compute_host_turn_done(
         message = str(frame.get("message") or "compute host turn failed")
         _emit("message.complete", sid, {"text": f"Error: {message}", "status": "error"})
     if not frame.get("session_info_emitted"):
-        _emit("session.info", sid, _compute_host_session_info(info_session))
+        _emit("session.info", sid, crash_info if crash_info is not None else _compute_host_session_info(info_session))
     _drain_queued_prompt(rid, sid, session)
 
 
@@ -432,12 +433,27 @@ def _submit_prompt_to_compute_host(
         if not owns_turn:
             leases.close()
             return
+        crash_info = None
         try:
             if rust_host is not None:
                 terminal = {"type": done["type"], "message": done.get("message"), "reason": done.get("reason")}
                 with rust_host.settlement_lock:
                     persisted = False
                     receipt = None
+                    if done.get("type") == "turn.error" and done.get("reason") == "crash":
+                        # Settlement may retire the planner on lease exit. Capture
+                        # its route now using the projection for an absent child.
+                        try:
+                            with session["history_lock"]:
+                                crash_view = {**session, "_compute_host_active": True,
+                                              "running": False, "inflight_turn": None}
+                                # Keep the route from the planner, while the
+                                # absent child has no active prompt to report.
+                                crash_view["_metadata_mirror"] = {**_metadata_mirror(session), "system_prompt": ""}
+                            with _session_profile_runtime_scope(session, hydrate_secrets=False):
+                                crash_info = _compute_host_session_info(crash_view)
+                        except Exception:
+                            logger.debug("Could not capture Rust crash metadata for sid=%s", sid, exc_info=True)
                     try:
                         with session["history_lock"]:
                             attached = session.get("_rust_host") is rust_host
@@ -467,7 +483,8 @@ def _submit_prompt_to_compute_host(
         finally:
             with _session_profile_runtime_scope(session, hydrate_secrets=False):
                 _on_compute_host_turn_done(
-                    rid, sid, session, done, forwarded_switch=frame.get("pending_model_switch"))
+                    rid, sid, session, done, forwarded_switch=frame.get("pending_model_switch"),
+                    crash_info=crash_info)
 
     rust_host = None
     claimed_images = []

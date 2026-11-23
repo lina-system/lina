@@ -549,8 +549,26 @@ def test_crash_keeps_real_accepted_user_open_for_cold_rehydration(turn):
     assert session["agent"] is None
 
 
-def test_crash_preserves_parent_mirror_and_requires_fresh_agent_sync(turn):
+def test_crash_preserves_parent_mirror_and_requires_fresh_agent_sync(turn, monkeypatch):
+    import time
+    from contextlib import ExitStack
+
+    from tui_gateway import server
+    from tui_gateway.rust_host_supervisor import RustHostSupervisor, select_host
+
     session, frame, db = turn
+    agent = session["agent"]
+    ready = threading.Event()
+    ready.set()
+    session.update(agent_ready=ready, agent_build_started=True, agent_error="stale build error")
+    cfg = {"compute_host_impl": "rust", "compute_host_heartbeat_secs": 15, "compute_host_respawn_max": 1}
+    host = RustHostSupervisor(
+        "runtime", session, home=session["profile_home"],
+        credentials={"OPENAI_API_KEY": "scoped-test-key"}, endpoint=agent.base_url, cfg=cfg)
+    restart_times = [time.monotonic()]
+    host._restart_times = restart_times
+    host._replacement_ready = True
+    session["_rust_host"] = host
     db.append_messages_batch("stored", [
         {"role": "user", "content": "Earlier request"},
         {"role": "assistant", "content": "Earlier reply"},
@@ -573,6 +591,53 @@ def test_crash_preserves_parent_mirror_and_requires_fresh_agent_sync(turn):
     assert session["agent"] is None
     assert "config_model_seen" not in session
     assert "_rust_parent_history" not in session
+
+    built = []
+
+    def make_agent(*args, **kwargs):
+        replacement = type(agent)(
+            model="test-model", provider="custom", api_mode="chat_completions",
+            api_key="scoped-test-key", base_url=agent.base_url,
+            session_id="stored", session_db=db, quiet_mode=True,
+            skip_context_files=True, skip_memory=True, checkpoints_enabled=False,
+            reasoning_config={"enabled": False},
+        )
+        replacement._cached_system_prompt = "Stored system prompt"
+        replacement._use_prompt_caching = False
+        built.append(replacement)
+        return replacement
+
+    monkeypatch.setitem(server._sessions, "runtime", session)
+    monkeypatch.setattr(server, "_make_agent", make_agent)
+    monkeypatch.setattr(server, "_bind_build_profile_scopes", lambda _: None)
+    monkeypatch.setattr(server, "_open_profile_session_db", lambda _: None)
+    monkeypatch.setattr(server, "_wire_session_agent", lambda *_: False)
+    monkeypatch.setattr(server, "_announce_built_agent", lambda *_: None)
+    monkeypatch.setattr("tui_gateway.entry.ensure_mcp_discovery_started", lambda: None)
+    monkeypatch.setattr(
+        server, "_get_compute_host_supervisor",
+        lambda _: pytest.fail("cold builder failure selected the Python supervisor"))
+    next_frame = {
+        **frame, "request_id": "next-request", "turn_id": "next-turn",
+        "text": "A new explicit request", "history": copy.deepcopy(session["history"]),
+        "history_version": session["history_version"],
+    }
+    try:
+        with ExitStack() as leases:
+            selected = select_host("runtime", session, cfg, next_frame, leases)
+            assert selected is host
+            assert session["_rust_host"] is host
+            assert host._restart_times is restart_times
+            assert host._replacement_ready is True
+            assert len(built) == 1
+            assert session["agent"] is built[0]
+            assert session["agent_ready"] is not ready
+            assert session["agent_ready"].is_set()
+            assert "agent_error" not in session
+            assert db.get_session("stored")["ended_at"] is None
+    finally:
+        for replacement in built:
+            replacement.close()
 
 
 def test_unknown_tool_is_a_failed_boundary_without_retry_or_fabricated_call(turn):

@@ -162,6 +162,7 @@ def test_crash_loop_exhaustion_falls_back_only_on_next_submission(
                     pid = _host_pid(home, "rust", rust_binary)
                 model.wait_for_requests(index + 1)
                 _assert_model_requests(model, *crashed_prompts[:index + 1])
+                assert _host_pid(home, "rust", rust_binary) == pid
                 os.kill(pid, signal.SIGKILL)
                 complete = _event(client, "message.complete", after=after)["payload"]
                 assert complete["status"] == "error", complete
