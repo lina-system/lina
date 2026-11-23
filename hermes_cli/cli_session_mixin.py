@@ -963,11 +963,13 @@ class CLISessionMixin:
         from agent.conversation_compression import finalize_context_engine_compression_notification
         from agent.conversation_compression_manual import (
             AGGRESSIVE_UNSUPPORTED, MIN_MESSAGES, compress_now, parse_compress_args, render_compress_result)
+        from agent.turn_context_taste import owner_taste_prompt_scope, resolve_owner_taste_home
 
         if len(self.conversation_history or ()) < MIN_MESSAGES:
             print(t("cli.session.compress_too_short", min=MIN_MESSAGES))
             return
-        if not self.agent:
+        agent = self.agent
+        if not agent:
             print(t("cli.session.compress_no_agent"))
             return
         _parts = (cmd_original or "").strip().split(None, 1)
@@ -990,8 +992,12 @@ class CLISessionMixin:
                     print(t("cli.session.compress_focus", count=original_count, focus=request.focus_topic))
                 else:
                     print(t("cli.session.compress_plain", count=original_count))
-                result = compress_now(self.agent, self.conversation_history, request,
-                                      task_id=self.session_id or "default")
+                # The local command runs outside a turn and needs its own owner admission.
+                command_row = {"role": "user", "content": cmd_original or "/compress"}
+                taste_home = resolve_owner_taste_home(agent, command_row, author=None)
+                with owner_taste_prompt_scope(agent, taste_home):
+                    result = compress_now(agent, self.conversation_history, request,
+                                          task_id=self.session_id or "default")
                 if result.status != "compressed":
                     for line in render_compress_result(result):
                         print(f"  {line}")
