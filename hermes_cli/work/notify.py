@@ -15,7 +15,9 @@ from hermes_cli.work.locale import t
 from hermes_cli.work.people import agents, owner
 
 BOT_GAP, ITEM_GAP = 30 * 60, 6 * 3600
-DUE_MORNING = (7, 12)  # local hours when a due-today reminder goes out, once (ITEM_GAP is longer than the window)
+DUE_GAP = 24 * 3600
+DUE_MORNING = (7, 12)  # local hours when due-over and due-today go out, once a day
+DUE_STATUSES = {"due_over", "due_today"}
 
 
 def _notice_argv(agent: str):
@@ -85,30 +87,53 @@ def _pending_alerts(items_alert, nst: dict, at: int) -> dict[str, list]:
         # a due reminder has its own key (id:due), so it and the item's other reminder never reset each other's gap
         last = nst["items"].get(c.get("key", r["id"]), {})
         sig = c["status"] + "|" + (c["reasons"][0] if c["reasons"] else "")
-        if at - last.get("at", 0) < ITEM_GAP and last.get("sig", "").split("|")[0] == c["status"]:
-            continue
+        # due items are gated once a day per agent in notify(); do not filter them by ITEM_GAP
+        if c["status"] not in DUE_STATUSES:
+            if at - last.get("at", 0) < ITEM_GAP and last.get("sig", "").split("|")[0] == c["status"]:
+                continue
         if answering_agent(r) in agents():
             by_agent.setdefault(answering_agent(r), []).append((r, c, sig))
     return by_agent
 
 
 def notify(items_alert, recs, dry: bool = False) -> list[str]:
-    """items_alert: [(rec, computed)] already filtered. Throttle: agent 30 min, item 6 h."""
+    """items_alert: [(rec, computed)] already filtered.
+
+    Due-over/due-today: one digest per agent per day, all items, not blocked by the 30 min agent gap.
+    Other reminders: agent 30 min, item 6 h, at most 6 lines in the message.
+    """
     nst = load_json(paths()["notify"], {"bots": {}, "items": {}})
     at, sent = now(), []
-    for agent, lst in _pending_alerts(items_alert, nst, at).items():
-        if at - nst["bots"].get(agent, 0) < BOT_GAP:
+    pending = _pending_alerts(items_alert, nst, at)
+    due_bots = nst.setdefault("due_bots", {})
+    for agent, lst in pending.items():
+        due = [(r, c, sig) for r, c, sig in lst if c["status"] in DUE_STATUSES]
+        if not due or at - due_bots.get(agent, 0) < DUE_GAP:
             continue
-        msg = t("[대시보드] 맡은 항목 {n}건 — 다음 할 일", n=len(lst)) + "\n" + \
-            "\n".join("- " + alert_line(r, c, agent) for r, c, _ in lst[:6])
+        msg = t("[대시보드] 맡은 항목 {n}건 — 다음 할 일", n=len(due)) + "\n" + \
+            "\n".join("- " + alert_line(r, c, agent) for r, c, _ in due)
+        if dry:
+            print(f"[dry] due -> {agent}: {msg[:200]}")
+        else:
+            tell(agent, msg)
+        for r, c, sig in due:
+            nst["items"][c.get("key", r["id"])] = {"at": at, "sig": sig}
+        due_bots[agent] = at
+        sent.append(f"{agent}:due:{len(due)}")
+    for agent, lst in pending.items():
+        other = [(r, c, sig) for r, c, sig in lst if c["status"] not in DUE_STATUSES]
+        if not other or at - nst["bots"].get(agent, 0) < BOT_GAP:
+            continue
+        msg = t("[대시보드] 맡은 항목 {n}건 — 다음 할 일", n=len(other)) + "\n" + \
+            "\n".join("- " + alert_line(r, c, agent) for r, c, _ in other[:6])
         if dry:
             print(f"[dry] notice -> {agent}: {msg[:200]}")
         else:
             tell(agent, msg)
-        for r, c, sig in lst:
+        for r, c, sig in other:
             nst["items"][c.get("key", r["id"])] = {"at": at, "sig": sig}
         nst["bots"][agent] = at
-        sent.append(f"{agent}:{len(lst)}")
+        sent.append(f"{agent}:{len(other)}")
     if not dry:
         save_json(paths()["notify"], nst)
     return sent
@@ -151,8 +176,8 @@ def owner_today() -> datetime.date:
 
 
 def due_alerts(items) -> list[tuple[dict, dict]]:
-    """[(rec, computed)] for open goals and to-dos past their due date, and due today in the morning. A due date is a
-    day on the owner's calendar (``work.timezone``, default the host's)."""
+    """[(rec, computed)] for open goals and to-dos past their due date or due today, only in the morning window.
+    A due date is a day on the owner's calendar (``work.timezone``, default the host's)."""
     kt = _today()
     today, morning = kt.strftime("%Y-%m-%d"), DUE_MORNING[0] <= kt.hour < DUE_MORNING[1]
     out = []
@@ -160,9 +185,12 @@ def due_alerts(items) -> list[tuple[dict, dict]]:
         d = r.get("due") or ""
         if not d or r.get("state") != "open" or kind_now(r["kind"]) not in ("목표", TODO):
             continue
+        # overdue shares the morning window with due-today, so the 15-min checker does not drip them all day
+        if not morning:
+            continue
         if d < today:
             code, line = "due_over", t("마감일 지남: {name}({id}) {due}", name=item_name(r), id=r["id"], due=d)
-        elif d == today and morning:
+        elif d == today:
             code, line = "due_today", t("오늘 마감: {name}({id}) {due}", name=item_name(r), id=r["id"], due=d)
         else:
             continue
