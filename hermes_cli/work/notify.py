@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import datetime
 import subprocess
+from zoneinfo import ZoneInfo
 
 from hermes_cli.work.common import iso, load_json, now, paths, save_json, warn
 from hermes_cli.work.env import current
@@ -15,7 +16,6 @@ from hermes_cli.work.locale import t
 from hermes_cli.work.people import agents, owner
 
 BOT_GAP, ITEM_GAP = 30 * 60, 6 * 3600
-DUE_GAP = 24 * 3600
 DUE_MORNING = (7, 12)  # local hours when due-over and due-today go out, once a day
 DUE_STATUSES = {"due_over", "due_today"}
 
@@ -96,10 +96,14 @@ def _pending_alerts(items_alert, nst: dict, at: int) -> dict[str, list]:
     return by_agent
 
 
-def notify(items_alert, recs, dry: bool = False) -> list[str]:
+def _seoul_date(at: int) -> datetime.date:
+    return datetime.datetime.fromtimestamp(at, ZoneInfo("Asia/Seoul")).date()
+
+
+def notify(items_alert, *, full_check: bool, dry: bool = False) -> list[str]:
     """items_alert: [(rec, computed)] already filtered.
 
-    Due-over/due-today: one digest per agent per day, all items, not blocked by the 30 min agent gap.
+    Only a full check consumes the agent's due digest for the Seoul date.
     Other reminders: agent 30 min, item 6 h, at most 6 lines in the message.
     """
     nst = load_json(paths()["notify"], {"bots": {}, "items": {}})
@@ -108,7 +112,7 @@ def notify(items_alert, recs, dry: bool = False) -> list[str]:
     due_bots = nst.setdefault("due_bots", {})
     for agent, lst in pending.items():
         due = [(r, c, sig) for r, c, sig in lst if c["status"] in DUE_STATUSES]
-        if not due or at - due_bots.get(agent, 0) < DUE_GAP:
+        if not due or (agent in due_bots and _seoul_date(due_bots[agent]) == _seoul_date(at)):
             continue
         msg = t("[대시보드] 맡은 항목 {n}건 — 다음 할 일", n=len(due)) + "\n" + \
             "\n".join("- " + alert_line(r, c, agent) for r, c, _ in due)
@@ -118,7 +122,8 @@ def notify(items_alert, recs, dry: bool = False) -> list[str]:
             tell(agent, msg)
         for r, c, sig in due:
             nst["items"][c.get("key", r["id"])] = {"at": at, "sig": sig}
-        due_bots[agent] = at
+        if full_check:
+            due_bots[agent] = at
         sent.append(f"{agent}:due:{len(due)}")
     for agent, lst in pending.items():
         other = [(r, c, sig) for r, c, sig in lst if c["status"] not in DUE_STATUSES]
@@ -165,7 +170,6 @@ def notify_tidy(goals, dry: bool = False) -> list[str]:
 def _today():
     tz = current().section("work").get("timezone")
     if tz:
-        from zoneinfo import ZoneInfo
         return datetime.datetime.fromtimestamp(now(), ZoneInfo(str(tz)))
     return datetime.datetime.fromtimestamp(now()).astimezone()
 

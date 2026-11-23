@@ -5,6 +5,7 @@ Each test imports a record mixing both words into a SQLite work.db and reads it 
 
 import datetime
 import json
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -88,6 +89,8 @@ def test_run_hands_off_todos_of_both_words(work):
 
 def test_notify_warns_about_past_due_todos_of_both_words(work):
     from hermes_cli.work.notify import due_alerts
+    work.config(extra="  timezone: Asia/Seoul\n")
+    work.clock[0] = datetime.datetime(2027, 1, 15, 8, tzinfo=ZoneInfo("Asia/Seoul")).timestamp()
     _import(work, _todo("T1", "할 일", due="2020-01-01"), _todo("T2", "작업", due="2020-01-01"))
     work.ok("list")
     recs, _ = _read_all()

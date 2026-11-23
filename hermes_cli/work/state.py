@@ -245,7 +245,7 @@ def check(ids: list[str] | None = None, *, dry: bool = False, notify: bool = Fal
         _stage_moves(ids, out, st)
     st["gh_cache"] = {k: v for k, v in ctx["gh"].items() if now() - v["at"] < 86400}
     st["at"] = now()
-    sent = send(alerts, recs, dry=dry) if (notify or dry) else []
+    sent = send(alerts, full_check=asked is None, dry=dry) if (notify or dry) else []
     if notify or dry:
         sent += notify_tidy([r for r in recs.values() if r["kind"] == "목표" and r.get("state") == "open"
                              and row_view(r, out.get(r["id"], {}), recs)["health"] == "tidy"], dry=dry)
