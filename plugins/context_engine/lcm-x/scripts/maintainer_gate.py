@@ -66,6 +66,8 @@ TURN_PATH_FILES = {
     "session_patterns.py",  # Session matches choose LCM management versus host fallback.
     "sqlite_util.py",  # Owns the transaction/retry that commits a leaf and its frontier.
     "store.py",  # Ingest protection and row normalization decide what a turn stores.
+    "taste_forget.py",  # Owner taste policy shapes summary requests.
+    "taste_recondense.py",  # Compaction replaces summaries that name a forgotten taste.
     "tool_registry.py",  # Selects model-facing schemas exposed on the default turn.
     "reset_state.py",  # resets the ingest cursor and compaction progress on rotation
     "frontier_state.py",  # Holds the ingest cursor and compaction frontier each turn reads and writes.
