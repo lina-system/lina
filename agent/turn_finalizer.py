@@ -549,6 +549,13 @@ def _run_held_transforms(callbacks, payload: dict, logger) -> Optional[str]:
 
 
 def settle_held_final(agent, result: Any) -> None:
+    from agent.taste_voice_turn import after_output
+
+    with after_output(agent, result):
+        _settle_held_output(agent, result)
+
+
+def _settle_held_output(agent, result: Any) -> None:
     """A held turn's reply leaves only through its transform snapshot. ``finish_text_response``,
     ``finalize_turn``, the Codex runtime and the truncation ceiling run it before persisting; every
     other exit (provider errors, retry exhaustion, interrupts, compression failures, ...) returns its

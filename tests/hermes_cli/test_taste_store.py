@@ -48,6 +48,32 @@ def event(conn, taste_id, reason):
     )
 
 
+def test_voicing_migration_follows_consumed_journals_and_enforces_agent_rls(agent, memory_store_sql):
+    assert memory_store_sql(
+        "SELECT version, name FROM memory.schema_migrations WHERE version >= '0032' AND version <= '0033'"
+        " ORDER BY applied_at, version"
+    ) == [("0032", "0032_taste_consumed.sql"), ("0033", "0033_taste_voicing.sql")]
+    assert memory_store_sql(
+        "SELECT c.relname, c.relrowsecurity, c.relforcerowsecurity FROM pg_class c"
+        " JOIN pg_namespace n ON n.oid = c.relnamespace"
+        " JOIN pg_policy p ON p.polrelid = c.oid AND p.polname = 'lina_agent_rows'"
+        " WHERE n.nspname = 'memory' AND c.relname IN ('taste_voice_claims', 'taste_voice_measurements')"
+        " ORDER BY c.relname"
+    ) == [("taste_voice_claims", True, True), ("taste_voice_measurements", True, True)]
+
+    agent.execute(
+        "INSERT INTO memory.taste_voice_measurements (agent_id, turn_id, task_kind, length, steps)"
+        " VALUES ('alpha', 'turn', 'editing', 120, ARRAY['tests'])"
+    )
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        agent.execute(
+            "INSERT INTO memory.taste_voice_measurements (agent_id, turn_id, task_kind, length, steps)"
+            " VALUES ('beta', 'turn', 'editing', 120, ARRAY['tests'])"
+        )
+    agent.execute("SET lina.agent_id = 'beta'")
+    assert agent.execute("SELECT turn_id FROM memory.taste_voice_measurements").fetchall() == []
+
+
 def test_round_trip_and_agent_visibility(agent):
     tid = taste(agent)
     for suffix in ("1", "2"):
