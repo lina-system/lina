@@ -547,6 +547,7 @@ class TurnContext:
     ext_prefetch_cache: str = ""  # external-memory prefetch, reused across iterations
     preflight_compression_blocked: bool = False  # immediate retry proved ineffective
     owner_taste_home: Path | None = None
+    local_reply: str = ""
 
 
 def _persist_under_lock(agent: Any, fn, failure_msg: str, pending_cli_message: Any) -> None:
@@ -847,6 +848,7 @@ def _ensure_session_row(agent: Any, pending_cli_message: Any) -> None:
 # ``turn_exit_reason`` of a turn a ``pre_llm_call`` hook vetoed before any inference request, and
 # the stored ``content`` of the vetoed user row (what the user typed is display-only metadata).
 PRE_LLM_BLOCK_EXIT_REASON = "blocked_by_plugin_pre_llm_call"
+OWNER_TASTE_FORGET_EXIT_REASON = "owner_taste_forget_local_reply"
 
 
 def _withhold_blocked_prompt(agent: Any, turn_user_msg: dict[str, Any], typed: Any) -> None:
@@ -1137,6 +1139,37 @@ def _persist_turn_start(
     )
 
 
+def _owner_forget_reply(home, original_user_message, conversation_history) -> str:
+    from hermes_cli.heart.forget import forget_from_conversation
+
+    # A deictic command refers only to the preceding user utterance, never
+    # the current command, an assistant response or a model-facing sidecar.
+    previous = next(
+        (_memory_query_text(row.get("content")) for row in reversed(conversation_history or [])
+         if row.get("role") == "user"), None,
+    )
+    result = forget_from_conversation(
+        request=_memory_query_text(original_user_message), owner_verified=True,
+        history=[] if previous is None else [previous], target_home=home,
+    )
+    return result.response if result is not None else ""
+
+
+def _log_turn_start(agent, preview_text: str, history_length: int) -> None:
+    preview = preview_text[:80] + ("..." if len(preview_text) > 80 else "")
+    fmt = "conversation turn: session=%s model=%s provider=%s platform=%s history=%d msg=%r"
+    args = [agent.session_id or "none", agent.model, agent.provider or "unknown",
+            agent.platform or "unknown", history_length, preview.replace("\n", " ")]
+    if origin := getattr(agent, "_turn_origin", None):
+        fmt += " origin=%s"
+        args.append(origin)
+    logger.info(fmt, *args)
+    if not agent.quiet_mode:
+        agent._safe_print(
+            f"💬 Starting conversation: '{preview_text[:60]}{'...' if len(preview_text) > 60 else ''}'"
+        )
+
+
 def build_turn_context(
     agent, user_message: Any, system_message: Optional[str],
     conversation_history: Optional[list[dict[str, Any]]], task_id: Optional[str], stream_callback,
@@ -1197,23 +1230,6 @@ def build_turn_context(
     )
     _reset_per_turn_agent_state(agent)
 
-    _preview_text = summarize_user_message_for_log(user_message)
-    _msg_preview = _preview_text[:80] + ("..." if len(_preview_text) > 80 else "")
-    _turn_fmt = (
-        "conversation turn: session=%s model=%s provider=%s platform=%s history=%d msg=%r"
-    )
-    _turn_args = [
-        agent.session_id or "none", agent.model, agent.provider or "unknown",
-        agent.platform or "unknown", len(conversation_history or []),
-        _msg_preview.replace("\n", " "),
-    ]
-    # Fork turns (background review, side questions) reuse the parent's session_id and
-    # model; tag their turn-start line so logs can tell them apart (#118693).
-    if (_turn_origin := getattr(agent, "_turn_origin", None)):
-        _turn_fmt += " origin=%s"
-        _turn_args.append(_turn_origin)
-    logger.info(_turn_fmt, *_turn_args)
-
     # Copy so the caller's list is never mutated.
     messages = list(conversation_history) if conversation_history else []
     user_msg, pending_cli_message = _stage_turn_user_message(
@@ -1241,12 +1257,6 @@ def build_turn_context(
     original_user_message = persist_user_message if persist_user_message is not None else user_message
     should_review_memory = _tick_memory_nudge(agent)
     _emit_reaction(agent, original_user_message, persist_user_display_kind)
-
-    if not agent.quiet_mode:
-        agent._safe_print(
-            f"💬 Starting conversation: '{_preview_text[:60]}"
-            f"{'...' if len(_preview_text) > 60 else ''}'"
-        )
 
     # System prompt is cached per session for prefix caching. A warm agent (kept across turns)
     # first adopts any `hermes sessions refresh-prompts` request recorded since it set its prompt.
@@ -1290,7 +1300,14 @@ def build_turn_context(
         conversation_history=conversation_history, blocks=_blocks,
     )
     plugin_block_message = _blocks[0] if _blocks else ""  # first veto wins
-    if plugin_block_message:
+    local_reply = ""
+    if not plugin_block_message and taste_home is not None:
+        local_reply = _owner_forget_reply(taste_home, original_user_message, conversation_history)
+    # A failed retirement propagates before the command can enter the preview log.
+    preview = "[owner taste forget]" if local_reply else summarize_user_message_for_log(user_message)
+    _log_turn_start(agent, preview, len(conversation_history or []))
+    skip_inference = bool(plugin_block_message or local_reply)
+    if skip_inference:
         compaction = CompactionOutcome(
             messages=messages, active_system_prompt=active_system_prompt,
             conversation_history=conversation_history, current_turn_user_idx=current_turn_user_idx,
@@ -1317,15 +1334,15 @@ def build_turn_context(
 
     _bind_interrupt_scope(agent, ra)
     # A vetoed prompt never leaves the host: no external-memory prefetch, no titling call.
-    ext_prefetch_cache = "" if plugin_block_message else _memory_turn_start_and_prefetch(
+    ext_prefetch_cache = "" if skip_inference else _memory_turn_start_and_prefetch(
         agent, original_user_message, turn_author)
     source_row = admitted_source_row(messages, current_turn_user_idx, user_msg)
-    agent._owner_taste_allowed = taste_home is not None and not plugin_block_message
+    agent._owner_taste_allowed = taste_home is not None and not skip_inference
 
     recall_rows: list[dict[str, Any]] = []
     if _can_send_recall_tool_result(agent, moa_active) and current_turn_user_idx == len(messages) - 1:
         taste_suffix = ""
-        if taste_home is not None and source_row is not None and not plugin_block_message:
+        if taste_home is not None and source_row is not None and not skip_inference:
             taste_suffix = owner_turn_taste_suffix(taste_home, _memory_query_text(original_user_message))
         tool_recall = ""
         if not getattr(getattr(agent, "_memory_manager", None), "auto_recall_append", False):
@@ -1336,7 +1353,7 @@ def build_turn_context(
     # Title the session now: titling depends only on the user's ask (before any injected
     # context lands on list content), so it runs concurrently with the turn. Daemon thread,
     # no-op once titled; it ensures the session row itself.
-    if not plugin_block_message:
+    if not skip_inference:
         _maybe_title_session_at_turn_start(agent, messages, title_user_message)
 
     # Sidecar skipped for codex_app_server/MoA; list content carries its context as a part in every mode.
@@ -1367,7 +1384,7 @@ def build_turn_context(
         current_turn_user_idx=current_turn_user_idx, should_review_memory=should_review_memory,
         plugin_user_context=plugin_user_context, plugin_block_message=plugin_block_message,
         ext_prefetch_cache=ext_prefetch_cache, preflight_compression_blocked=compaction.blocked,
-        owner_taste_home=taste_home if agent._owner_taste_allowed else None,
+        owner_taste_home=taste_home if agent._owner_taste_allowed else None, local_reply=local_reply,
     )
 
 
