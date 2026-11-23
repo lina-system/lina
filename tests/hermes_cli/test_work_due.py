@@ -3,6 +3,7 @@
 import pytest
 
 import datetime
+from zoneinfo import ZoneInfo
 
 from tests.hermes_cli._work_env import WorkEnv
 
@@ -97,3 +98,63 @@ def test_due_today_follows_configured_timezone_not_host_timezone(work):
     notice = work.notices("alpha")
     assert "오늘 마감" in notice
     assert "2027-01-15" in notice
+
+
+@pytest.mark.parametrize("ids", [(), ("T1",)], ids=["full", "partial"])
+def test_due_reminder_is_sent_once_per_seoul_date(work, ids):
+    work.config(extra="  timezone: Asia/Seoul\n")
+    seoul = ZoneInfo("Asia/Seoul")
+    work.clock[0] = datetime.datetime(2027, 1, 15, 8, tzinfo=seoul).timestamp()
+    work.ok("edit", "T1", "--due", "2027-01-15")
+    work.ok("check", *ids, "--notify", "--quiet")
+    assert work.notices("alpha").count("(T1) 2027-01-15") == 1
+
+    # UTC midnight fell between these two checks on the same Seoul morning.
+    work.clock[0] = datetime.datetime(2027, 1, 15, 10, tzinfo=seoul).timestamp()
+    work.ok("check", *ids, "--notify", "--quiet")
+    assert work.notices("alpha").count("(T1) 2027-01-15") == 1
+
+    # Just 23 hours after the first digest, the same item is now overdue.
+    work.clock[0] = datetime.datetime(2027, 1, 16, 7, tzinfo=seoul).timestamp()
+    work.ok("check", *ids, "--notify", "--quiet")
+    assert work.notices("alpha").count("(T1) 2027-01-15") == 2
+
+
+def test_partial_due_check_leaves_full_digest_available(work):
+    work.config(extra="  timezone: Asia/Seoul\n")
+    work.clock[0] = datetime.datetime(2027, 1, 15, 8, tzinfo=ZoneInfo("Asia/Seoul")).timestamp()
+    work.ok("edit", "T1", "--due", "2027-01-14")
+    work.ok("edit", "G1", "--due", "2027-01-15")
+    work.ok("check", "T1", "--notify", "--quiet")
+    partial = work.notices("alpha")
+    assert "(T1) 2027-01-14" in partial
+
+    work.ok("check", "T1", "G1", "--notify", "--quiet")
+    second = work.notices("alpha")[len(partial):]
+    assert "(T1) 2027-01-14" not in second
+    assert "(G1) 2027-01-15" in second
+
+    work.ok("check", "--notify", "--quiet")
+    digest = work.notices("alpha")[len(partial) + len(second):]
+    assert "(T1) 2027-01-14" in digest
+    assert "(G1) 2027-01-15" in digest
+
+
+def test_due_digest_lists_every_item_despite_recent_ordinary_notice(tmp_path, monkeypatch):
+    work = WorkEnv(tmp_path, monkeypatch, extra="  timezone: Asia/Seoul\n")
+    work.clock[0] = datetime.datetime(2027, 1, 15, 8, tzinfo=ZoneInfo("Asia/Seoul")).timestamp()
+    ids = work.goal_and_todos(todos=7, check="evidence:결과 보고서")
+    work.ok("evidence", "T1", "omo:OT-RESULT")
+    before = work.notices("alpha")
+    work.ok("check", "T1", "--notify", "--quiet")
+    assert "work confirm T1" in work.notices("alpha")[len(before):]
+
+    work.clock[0] += 60
+    for item in ids:
+        work.ok("edit", item, "--due", "2027-01-15")
+    before = work.notices("alpha")
+    work.ok("check", "--notify", "--quiet")
+    digest = work.notices("alpha")[len(before):]
+    assert digest.count("[대시보드]") == 1
+    for item in ids:
+        assert digest.count(f"({item}) 2027-01-15") == 1
