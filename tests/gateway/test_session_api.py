@@ -3,6 +3,7 @@
 import asyncio
 import json
 import threading
+from collections import Counter
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -718,7 +719,7 @@ async def _exercise_dashboard_approvals(
     assert rejected.json()["choice"] == "deny"
 
     assert await asyncio.to_thread(executor_finished.wait, 12), "approval waiters did not settle"
-    assert executions == ["send_mail"]
+    assert Counter(executions) == Counter(send_mail=1, create_purchase=0)
     final = await dashboard.get(route)
     assert final.status_code == 200
     assert final.json() == {"approvals": []}
