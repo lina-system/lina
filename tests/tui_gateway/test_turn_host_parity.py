@@ -18,6 +18,7 @@ from typing import Final
 import pytest
 from pydantic import JsonValue
 
+from agent.context_compressor import MAX_ITERATIONS_SUMMARY_REQUEST
 from hermes_state_store import StoreUnavailableError
 from tests._fixtures.memory_store import APP_PASSWORD, PROCESS_STORE
 from tests.tui_gateway._turn_host_parity_support import (
@@ -43,8 +44,9 @@ pytestmark = pytest.mark.platforms("linux")
 CASES: Final = (
     "text", "one_read", "missing_file", "offset_limit", "char_budget", "utf8_crlf",
     "two_sequential_calls", "history", "model_500", "interrupt_during_read",
-    "unsupported_tool", "kill_and_restart",
+    "unsupported_tool", "kill_and_restart", "turn_cap",
 )
+TURN_CAP: Final = 3
 ANSWER: Final = "Parity model final answer."
 PROMPT: Final = "Execute the parity script."
 SECOND_PROMPT: Final = "Continue after the host was killed."
@@ -157,10 +159,15 @@ def _script(case: str, workspace: Path) -> tuple[Reply, ...]:
         return (Reply(status=500),) * 8
     if case == "kill_and_restart":
         return Reply(text="Killed response must not be delivered.", gate=Event()), answer
+    if case == "turn_cap":
+        return (
+            *(Reply(calls=(_tool_call(i, "normal.txt"),)) for i in range(1, TURN_CAP + 1)),
+            answer,
+        )
     return (answer,)
 
 
-def _config(home: Path, workspace: Path, url: str, impl: str) -> None:
+def _config(home: Path, workspace: Path, url: str, impl: str, *, max_turns: int | None = None) -> None:
     settings = {
         "dashboard": {"turn_isolation": True, "compute_host_impl": impl},
         "model": {"provider": "custom:parity", "default": MODEL, "context_length": 131072},
@@ -171,6 +178,8 @@ def _config(home: Path, workspace: Path, url: str, impl: str) -> None:
         "auxiliary": {"title_generation": {"enabled": False}},
         "display": {"tool_progress": "all"},
     }
+    if max_turns is not None:
+        settings["agent"]["max_turns"] = max_turns
     (home / "config.yaml").write_text(json.dumps(settings), encoding="utf-8")
     # Both hosts choose spinner copy from the active skin. Use one choice so
     # the test can compare the delivered text without normalizing its payload.
@@ -271,7 +280,7 @@ def _observe(
     workspace = root / "workspace"
     home.mkdir()
     try:
-        _config(home, workspace, model.url, impl)
+        _config(home, workspace, model.url, impl, max_turns=TURN_CAP if case == "turn_cap" else None)
         env = {**gate.env, "PARITY_RUST": "1" if impl == "rust" else "0"} if gate else {}
         with gateway(home, binary, env, store_dsn, (MODEL_KEY, APP_PASSWORD)) as client:
             if gate is None:
@@ -352,6 +361,19 @@ def _validate(case: str, impl: str, result: Observations) -> None:
             assert [item["status"] for item in completions] == ["error", "complete"]
             assert completions[-1]["text"] == ANSWER
             assert len(result.requests) == 2
+        case "turn_cap":
+            assert len(result.requests) == TURN_CAP + 1
+            summary_messages = result.requests[-1]["messages"]
+            # The same scripted answer also lets an uncapped host complete its
+            # fourth ordinary request. Only the capped path sends the nudge.
+            assert summary_messages[-1] == {
+                "role": "user", "content": MAX_ITERATIONS_SUMMARY_REQUEST,
+            }, "Expected an iteration-cap summary request after three reads"
+            assert [item["tool_call_id"] for item in summary_messages if item["role"] == "tool"] == [
+                f"call_parity_{i}" for i in range(1, TURN_CAP + 1)
+            ]
+            assert [item["status"] for item in completions] == ["complete"]
+            assert completions[-1]["text"] == ANSWER
         case _:
             assert [item["status"] for item in completions] == ["complete"]
             assert completions[-1]["text"] == ANSWER

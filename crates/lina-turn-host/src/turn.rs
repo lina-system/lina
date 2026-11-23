@@ -9,10 +9,9 @@ use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 
 use crate::model::{self, Message, ModelClient, ModelError, RequestMode, ToolCall, TurnUsage};
-use crate::protocol::{Events, Route, Start, Update, now_ns};
+use crate::protocol::{Events, ParentRequestKind, Route, Start, Update, now_ns};
 use crate::read_file::ReadState;
 
-const MAX_MODEL_CALLS: usize = 90;
 const MAX_UNKNOWN_TOOL_ROUNDS: usize = 3;
 const READ_FILE: &str = "read_file";
 
@@ -28,10 +27,14 @@ enum TurnError {
     Model(#[from] ModelError),
     #[error("Model generated invalid tool call: {0}")]
     UnknownToolLimit(String),
-    #[error("the turn reached its model call limit")]
-    CallLimit,
     #[error("the turn was interrupted")]
     Interrupted,
+}
+
+enum TurnReply {
+    Model(Message),
+    Summary(Option<String>),
+    SummaryError,
 }
 
 #[derive(Default)]
@@ -163,24 +166,30 @@ impl Worker {
             _ => None,
         };
         let usage = transcript.usage.payload(&start.turn_plan.model);
-        let (status, mut completion) = match result {
-            Some(Ok(answer)) => {
+        let (status, mut completion, summary_outcome) = match result {
+            Some(Ok(TurnReply::Model(answer))) => {
                 let mut payload = json!({"text": answer.content.unwrap_or_default()});
                 if let Some(reasoning) = answer.reasoning_content {
                     payload["reasoning"] = json!(reasoning);
                 }
-                ("complete", payload)
+                ("complete", payload, None)
             }
+            Some(Ok(TurnReply::Summary(Some(text)))) => {
+                ("complete", json!({"text": text}), Some("success"))
+            }
+            Some(Ok(TurnReply::Summary(None))) => ("complete", json!({"text": ""}), Some("empty")),
+            Some(Ok(TurnReply::SummaryError)) => ("complete", json!({"text": ""}), Some("error")),
             Some(Err(err)) => (
                 "error",
                 json!({"text": err.to_string(), "error": err.to_string(),
                        "recoverable": matches!(err, TurnError::UnknownToolLimit(_))}),
+                None,
             ),
             None => {
                 if !transcript.close_interrupted(&events).await {
                     return;
                 }
-                ("interrupted", json!({"text": transcript.partial}))
+                ("interrupted", json!({"text": transcript.partial}), None)
             }
         };
         completion["usage"] = usage;
@@ -206,6 +215,10 @@ impl Worker {
         ]);
         if let Some(provider_error) = provider_error {
             end.insert("provider_error".into(), provider_error);
+        }
+        if let Some(outcome) = summary_outcome {
+            end.insert("max_iterations_reached".into(), json!(true));
+            end.insert("summary_outcome".into(), json!(outcome));
         }
         let frames = vec![
             events.frame("message.complete", completion),
@@ -321,7 +334,7 @@ impl TurnContext<'_> {
         events: &mut Events<'_>,
         state: &mut ReadState,
         cancel: &mut oneshot::Receiver<()>,
-    ) -> Result<Message, TurnError> {
+    ) -> Result<TurnReply, TurnError> {
         let plan = &self.start.turn_plan;
         let mut unknown_rounds = 0;
         let mut tool_ids: HashSet<String> = transcript
@@ -331,7 +344,7 @@ impl TurnContext<'_> {
             .flatten()
             .filter_map(|call| call["id"].as_str().map(str::to_owned))
             .collect();
-        for _ in 0..MAX_MODEL_CALLS {
+        for _ in 0..plan.max_iterations.unwrap_or(usize::MAX) {
             let mut answer = tokio::select! {
                 biased;
                 _ = &mut *cancel => return Err(TurnError::Interrupted),
@@ -353,7 +366,7 @@ impl TurnContext<'_> {
             }
             if answer.tool_calls.is_empty() {
                 transcript.messages.push(assistant);
-                return Ok(answer);
+                return Ok(TurnReply::Model(answer));
             }
 
             let has_reads = answer
@@ -443,7 +456,43 @@ impl TurnContext<'_> {
             }
             events.after_tools();
         }
-        Err(TurnError::CallLimit)
+        tokio::select! {
+            biased;
+            _ = cancel => Err(TurnError::Interrupted),
+            reply = self.summarize(&transcript.messages, events.turn_id) => Ok(reply),
+        }
+    }
+
+    async fn summarize(&self, messages: &[Map<String, Value>], turn_id: &str) -> TurnReply {
+        let ack = self
+            .request_parent(
+                ParentRequestKind::IterationSummary,
+                turn_id,
+                json!({"messages": messages}),
+            )
+            .await;
+        let Some(Value::Object(body)) = ack
+            .filter(|ack| ack["ok"] == true)
+            .and_then(|mut ack| ack.as_object_mut()?.shift_remove("body"))
+        else {
+            return TurnReply::SummaryError;
+        };
+        // Keep the regular model-call counters and client spinner unchanged, as Python does
+        // for the final summary request.
+        match self
+            .worker
+            .model
+            .request_summary(
+                self.endpoint,
+                &self.start.turn_plan,
+                body,
+                self.worker.secret.as_deref(),
+            )
+            .await
+        {
+            Ok(text) => TurnReply::Summary(text),
+            Err(_) => TurnReply::SummaryError,
+        }
     }
 
     async fn read_tool(
@@ -481,37 +530,56 @@ impl TurnContext<'_> {
     async fn read_policy(
         &self,
         turn_id: &str,
-        mut payload: Value,
+        payload: Value,
         authorized: &AtomicBool,
     ) -> Option<Value> {
         let is_authorize = payload["op"] == "authorize";
+        let ack = self
+            .request_parent(ParentRequestKind::ReadPolicy, turn_id, payload)
+            .await?;
+        if is_authorize && ack["ok"] == true {
+            authorized.store(true, Ordering::Relaxed);
+        }
+        Some(ack)
+    }
+
+    async fn request_parent(
+        &self,
+        kind: ParentRequestKind,
+        turn_id: &str,
+        mut payload: Value,
+    ) -> Option<Value> {
         let route = Route {
             sid: self.start.route.sid.clone(),
             request_id: json!(Uuid::new_v4().simple().to_string()),
         };
         let fields = payload.as_object_mut()?;
-        fields.insert("type".into(), json!("read_file.policy"));
+        let name = match kind {
+            ParentRequestKind::ReadPolicy => "read_file.policy",
+            ParentRequestKind::IterationSummary => "iteration.summary",
+        };
+        fields.insert("type".into(), json!(name));
         fields.insert("sid".into(), json!(route.sid));
         fields.insert("request_id".into(), route.request_id.clone());
         fields.insert("turn_id".into(), json!(turn_id));
         let (sender, receiver) = oneshot::channel();
         self.worker
             .updates
-            .send(Update::ReadPolicy {
+            .send(Update::ParentRequest {
+                kind,
                 route,
                 frame: payload,
                 reply: sender,
             })
             .await
             .ok()?;
-        let ack = tokio::time::timeout(Duration::from_secs(5), receiver)
-            .await
-            .ok()?
-            .ok()?;
-        if is_authorize && ack["ok"] == true {
-            authorized.store(true, Ordering::Relaxed);
+        match kind {
+            ParentRequestKind::ReadPolicy => tokio::time::timeout(Duration::from_secs(5), receiver)
+                .await
+                .ok()?
+                .ok(),
+            ParentRequestKind::IterationSummary => receiver.await.ok(),
         }
-        Some(ack)
     }
 }
 

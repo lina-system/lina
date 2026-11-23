@@ -121,8 +121,51 @@ impl ModelClient {
         secret: Option<&str>,
     ) -> Result<Response, ModelError> {
         let body = request_body(plan, messages, mode);
-        let mut request = self.http.post(endpoint.clone()).json(&body);
-        if let Some(timeout) = plan.params.get("timeout") {
+        self.send(
+            endpoint,
+            &body,
+            plan.params.get("timeout"),
+            plan.params.get("session_affinity"),
+            secret,
+        )
+        .await
+    }
+
+    pub(crate) async fn request_summary(
+        &self,
+        endpoint: &Url,
+        plan: &TurnPlan,
+        mut body: Map<String, Value>,
+        secret: Option<&str>,
+    ) -> Result<Option<String>, ModelError> {
+        let timeout = body.shift_remove("timeout");
+        for _ in 0..2 {
+            let response = self
+                .send(
+                    endpoint,
+                    &body,
+                    timeout.as_ref(),
+                    plan.params.get("session_affinity"),
+                    secret,
+                )
+                .await?;
+            if let Some(text) = summary_text(response).await? {
+                return Ok(Some(text));
+            }
+        }
+        Ok(None)
+    }
+
+    async fn send(
+        &self,
+        endpoint: &Url,
+        body: &Map<String, Value>,
+        timeout: Option<&Value>,
+        affinity: Option<&Value>,
+        secret: Option<&str>,
+    ) -> Result<Response, ModelError> {
+        let mut request = self.http.post(endpoint.clone()).json(body);
+        if let Some(timeout) = timeout {
             let seconds = timeout.as_f64().ok_or(ModelError::InvalidTimeout)?;
             let timeout = Duration::try_from_secs_f64(seconds)
                 .ok()
@@ -130,7 +173,7 @@ impl ModelClient {
                 .ok_or(ModelError::InvalidTimeout)?;
             request = request.timeout(timeout);
         }
-        if let Some(affinity) = plan.params.get("session_affinity") {
+        if let Some(affinity) = affinity {
             request = request.headers(affinity_headers(affinity)?);
         }
         if let Some(key) = &self.key {
@@ -152,6 +195,47 @@ impl ModelClient {
         }
         Ok(response)
     }
+}
+
+async fn summary_text(response: Response) -> Result<Option<String>, ModelError> {
+    let completion: Value = response
+        .json()
+        .await
+        .map_err(|_| ModelError::InvalidResponse)?;
+    if !completion["error"].is_null() {
+        return Err(ModelError::InvalidResponse);
+    }
+    let choices = completion["choices"]
+        .as_array()
+        .filter(|choices| !choices.is_empty())
+        .ok_or(ModelError::InvalidResponse)?;
+    let message = &choices[0]["message"];
+    let has_calls = message["tool_calls"]
+        .as_array()
+        .is_some_and(|calls| !calls.is_empty());
+    let text = match &message["content"] {
+        Value::Null => "",
+        Value::String(text) => text.trim(),
+        _ => return Err(ModelError::InvalidResponse),
+    };
+    let generated_tokens = ["completion_tokens", "output_tokens"].iter().any(|field| {
+        completion["usage"][*field]
+            .as_f64()
+            .is_some_and(|value| value > 0.0)
+    });
+    if text == "Connect timeout, please try again later."
+        && choices.len() == 1
+        && !has_calls
+        && !generated_tokens
+    {
+        return Ok(None);
+    }
+    let text = if text.is_empty() && !has_calls {
+        message["refusal"].as_str().unwrap_or_default().trim()
+    } else {
+        text
+    };
+    Ok((!text.is_empty()).then(|| text.to_owned()))
 }
 
 async fn error_summary(response: &mut Response, secret: Option<&str>) -> Option<String> {

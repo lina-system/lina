@@ -1,13 +1,13 @@
 use std::path::PathBuf;
 
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use serde_json::{Map, Value, json};
 use tokio::sync::{mpsc, oneshot};
 
 #[derive(Deserialize)]
 #[serde(tag = "type")]
 pub(crate) enum Command {
-    #[serde(rename = "turn.start")]
+    #[serde(skip_deserializing)]
     Start(Box<Start>),
     #[serde(rename = "interrupt", alias = "turn.cancel", alias = "cancel")]
     Interrupt {
@@ -30,11 +30,25 @@ pub(crate) enum Command {
     },
     #[serde(rename = "read_file.policy.ack")]
     ReadPolicyAck(Route),
+    #[serde(rename = "iteration.summary.ack")]
+    IterationSummaryAck(Route),
     #[serde(rename = "shutdown")]
     Shutdown {
         #[serde(default)]
         request_id: Value,
     },
+}
+
+impl Command {
+    pub(crate) fn from_frame(frame: Value) -> serde_json::Result<Self> {
+        // An internally tagged enum buffers its fields in Serde's generic
+        // Content, which cannot carry all of serde_json's integer types.
+        if frame["type"] == "turn.start" {
+            serde_json::from_value(frame).map(Self::Start)
+        } else {
+            serde_json::from_value(frame)
+        }
+    }
 }
 
 #[derive(Clone, Deserialize)]
@@ -92,11 +106,84 @@ pub(crate) struct TurnPlan {
     pub(crate) base_url: String,
     pub(crate) params: Map<String, Value>,
     pub(crate) stream: bool,
+    #[serde(
+        default = "default_max_iterations",
+        deserialize_with = "deserialize_max_iterations"
+    )]
+    pub(crate) max_iterations: Option<usize>,
+}
+
+fn default_max_iterations() -> Option<usize> {
+    Some(500)
+}
+
+fn deserialize_max_iterations<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<usize>, D::Error> {
+    let Value::Number(number) = Value::deserialize(deserializer)? else {
+        return Ok(default_max_iterations());
+    };
+    if let Some(value) = number.as_u64() {
+        return Ok(usize::try_from(value).ok().filter(|limit| *limit > 0));
+    }
+    if number.as_i64().is_some()
+        || number
+            .as_str()
+            .trim_start_matches('-')
+            .bytes()
+            .all(|byte| byte.is_ascii_digit())
+    {
+        return Ok(None);
+    }
+    Ok(default_max_iterations())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Command, Value};
+
+    #[test]
+    fn turn_plan_resolves_wire_iteration_limits() {
+        let huge_integer = format!(r#", "max_iterations": 1{}"#, "0".repeat(400));
+        let signed_max = format!(r#", "max_iterations": {}"#, i64::MAX);
+        let unsigned_max = format!(r#", "max_iterations": {}"#, u64::MAX);
+        for (field, expected) in [
+            ("", Some(500)),
+            (r#", "max_iterations": null"#, Some(500)),
+            (r#", "max_iterations": "3""#, Some(500)),
+            (r#", "max_iterations": 3.5"#, Some(500)),
+            (r#", "max_iterations": 9223372036854775808.5"#, Some(500)),
+            (r#", "max_iterations": 1e400"#, Some(500)),
+            (r#", "max_iterations": 3"#, Some(3)),
+            (r#", "max_iterations": 0"#, None),
+            (r#", "max_iterations": -1"#, None),
+            (signed_max.as_str(), usize::try_from(i64::MAX).ok()),
+            (unsigned_max.as_str(), usize::try_from(u64::MAX).ok()),
+            (r#", "max_iterations": 18446744073709551616000000000"#, None),
+            (huge_integer.as_str(), None),
+        ] {
+            let wire = format!(
+                r#"{{"type":"turn.start","sid":"test","cwd":"/","turn_plan":{{"system":"","tools":[],"model":"local","base_url":"","params":{{}},"stream":false{field}}}}}"#
+            );
+            let frame: Value = serde_json::from_str(&wire).unwrap();
+            let Command::Start(start) = Command::from_frame(frame).unwrap() else {
+                panic!("expected turn.start");
+            };
+            assert_eq!(start.turn_plan.max_iterations, expected, "{field}");
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ParentRequestKind {
+    ReadPolicy,
+    IterationSummary,
 }
 
 pub(crate) enum Update {
     Frame(Value),
-    ReadPolicy {
+    ParentRequest {
+        kind: ParentRequestKind,
         route: Route,
         frame: Value,
         reply: oneshot::Sender<Value>,

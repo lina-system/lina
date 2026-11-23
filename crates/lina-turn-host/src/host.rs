@@ -13,18 +13,19 @@ use tokio::time::{Instant, MissedTickBehavior};
 use uuid::Uuid;
 
 use crate::model::ModelClient;
-use crate::protocol::{Command, Route, Start, Update, now_ns};
+use crate::protocol::{Command, ParentRequestKind, Route, Start, Update, now_ns};
 use crate::read_file::ReadState;
 use crate::turn::Worker;
 
 struct Active {
     turn_id: Option<String>,
     cancel: Option<oneshot::Sender<()>>,
-    policy: Option<Policy>,
+    pending: Option<ParentRequest>,
     activity_ns: Option<u64>,
 }
 
-struct Policy {
+struct ParentRequest {
+    kind: ParentRequestKind,
     request_id: Value,
     reply: oneshot::Sender<Value>,
 }
@@ -120,7 +121,10 @@ pub(crate) async fn run() -> io::Result<()> {
 
 impl Host {
     async fn write(&mut self, mut frame: Value) -> io::Result<()> {
-        if frame["type"] != "read_file.policy" {
+        if !matches!(
+            frame["type"].as_str(),
+            Some("read_file.policy" | "iteration.summary")
+        ) {
             frame["host_ns"] = json!(now_ns());
         }
         if let Some(secret) = self.worker.secret.as_deref() {
@@ -160,7 +164,7 @@ impl Host {
                 .await?;
             return Ok(false);
         };
-        let command = match serde_json::from_value(frame.clone()) {
+        let command = match Command::from_frame(frame.clone()) {
             Ok(command) => command,
             Err(_) => {
                 let invalid = if frame["type"] == "turn.start" {
@@ -211,16 +215,10 @@ impl Host {
                 .await?;
             }
             Command::ReadPolicyAck(route) => {
-                if let Some(turn) = self.active.get_mut(&route.sid)
-                    && frame["turn_id"].as_str() == turn.turn_id.as_deref()
-                    && turn
-                        .policy
-                        .as_ref()
-                        .is_some_and(|request| request.request_id == route.request_id)
-                    && let Some(policy) = turn.policy.take()
-                {
-                    drop(policy.reply.send(frame));
-                }
+                self.acknowledge(ParentRequestKind::ReadPolicy, route, frame);
+            }
+            Command::IterationSummaryAck(route) => {
+                self.acknowledge(ParentRequestKind::IterationSummary, route, frame);
             }
             Command::Shutdown { request_id } => {
                 self.write(json!({"type": "shutdown.ack", "request_id": request_id}))
@@ -229,6 +227,18 @@ impl Host {
             }
         }
         Ok(false)
+    }
+
+    fn acknowledge(&mut self, kind: ParentRequestKind, route: Route, frame: Value) {
+        if let Some(turn) = self.active.get_mut(&route.sid)
+            && frame["turn_id"].as_str() == turn.turn_id.as_deref()
+            && turn.pending.as_ref().is_some_and(|request| {
+                request.kind == kind && request.request_id == route.request_id
+            })
+            && let Some(request) = turn.pending.take()
+        {
+            drop(request.reply.send(frame));
+        }
     }
 
     async fn start(&mut self, mut start: Start) -> io::Result<()> {
@@ -286,7 +296,7 @@ impl Host {
             Active {
                 turn_id: start.turn_id.clone(),
                 cancel: Some(cancel),
-                policy: None,
+                pending: None,
                 activity_ns: None,
             },
         );
@@ -332,15 +342,18 @@ impl Host {
                 }
                 self.write(frame).await
             }
-            Update::ReadPolicy {
+            Update::ParentRequest {
+                kind,
                 route,
                 frame,
                 reply,
             } => {
                 if let Some(turn) = self.active.get_mut(&route.sid)
-                    && (turn.cancel.is_some() || frame["op"] == "redact")
+                    && (turn.cancel.is_some()
+                        || (kind == ParentRequestKind::ReadPolicy && frame["op"] == "redact"))
                 {
-                    turn.policy = Some(Policy {
+                    turn.pending = Some(ParentRequest {
+                        kind,
                         request_id: route.request_id,
                         reply,
                     });

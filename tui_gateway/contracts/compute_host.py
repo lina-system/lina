@@ -43,6 +43,7 @@ class TurnPlan(_WireModel):
     base_url: str = Field(description="Provider base URL without embedded credentials.")
     params: JsonObject = Field(description="JSON request options without credentials or transport headers.")
     stream: bool
+    max_iterations: int = Field(default=500, description="Effective iteration budget of the planning agent.")
 
     @field_validator("base_url")
     @classmethod
@@ -163,6 +164,17 @@ class ReadFileRedact(_PolicyRequest):
 ReadFilePolicy = Annotated[ReadFileAuthorize | ReadFileRedact, Field(discriminator="op")]
 
 
+class IterationSummary(_PolicyFrame):
+    type: Literal["iteration.summary"]
+    messages: list[JsonObject] = Field(repr=False)
+
+
+class IterationSummaryAck(_PolicyFrame):
+    type: Literal["iteration.summary.ack"]
+    ok: bool
+    body: JsonObject | None = Field(default=None, repr=False)
+
+
 class ReadFileAuthorizeAck(_PolicyFrame):
     type: Literal["read_file.policy.ack"]
     ok: Literal[True]
@@ -211,7 +223,7 @@ ReadFilePolicyAck = Annotated[
 
 
 ComputeHostRequest = Annotated[
-    TurnStart | Interrupt | Respond | ReloadMcp | Control | Shutdown | ReadFilePolicyAck,
+    TurnStart | Interrupt | Respond | ReloadMcp | Control | Shutdown | ReadFilePolicyAck | IterationSummaryAck,
     Field(discriminator="type"),
 ]
 
@@ -284,6 +296,8 @@ class TurnEnd(_SessionReply, _HistoryMetadata):
     messages: list[JsonObject] | None = None
     new_messages: list[JsonObject] | None = None
     provider_error: ProviderError | None = None
+    max_iterations_reached: Literal[True] | None = None
+    summary_outcome: Literal["success", "empty", "error"] | None = None
 
 
 class TurnError(_SessionReply):
@@ -346,7 +360,7 @@ class Error(_ChildFrame):
 ComputeHostResponse = Annotated[
     Hello | Heartbeat | Orphan | Rpc | TurnStarted | TurnEnd | TurnError | InterruptAck
     | RespondAck | RespondError | ReloadMcpAck | ControlAck | ControlError | ShutdownAck | Error
-    | ReadFilePolicy,
+    | ReadFilePolicy | IterationSummary,
     Field(discriminator="type"),
 ]
 

@@ -13,6 +13,7 @@ import contextlib
 import copy
 import ipaddress
 import json
+import re
 import threading
 import time
 from collections.abc import Iterator
@@ -246,6 +247,7 @@ def prepare_rust_turn(sid: str, session: dict, frame: dict) -> tuple[dict, dict[
         plan = {
             "system": wire[0]["content"], "tools": tools, "model": model,
             "base_url": str(agent.base_url), "params": kwargs, "stream": bool(stream),
+            "max_iterations": agent.max_iterations,
         }
         # Reject non-JSON provider extensions before anything crosses the pipe.
         try:
@@ -267,6 +269,7 @@ def prepare_rust_turn(sid: str, session: dict, frame: dict) -> tuple[dict, dict[
                 "display_kind": frame.get("display_kind"),
                 "display_metadata": copy.deepcopy(frame.get("display_metadata")),
                 "wire_history": copy.deepcopy(wire[1:-1]),
+                "session_affinity": session_affinity,
             }
             frame["history"] = wire[1:-1]
             frame["history_version"] = version
@@ -460,6 +463,75 @@ def _rust_terminal_status(frame: dict, rows: list[dict]) -> str:
     return status
 
 
+def prepare_iteration_summary(session: dict, frame: dict) -> dict:
+    """Build the summary from the original stored history, using the Python send projection."""
+    from agent.agent_runtime_helpers import repair_message_sequence
+    from agent.chat_completion_helpers import _iteration_summary_api_messages
+    from agent.context_compressor import MAX_ITERATIONS_SUMMARY_REQUEST
+    from agent.message_sanitization import sanitize_outbound_kwargs
+    from tui_gateway import server
+
+    with session["history_lock"]:
+        stage = session["_rust_turn_stage"]
+        agent = session["agent"]
+        rows = _rust_suffix(stage, frame)
+        rounds = sum(row["role"] == "assistant" and bool(row.get("tool_calls")) for row in rows)
+        if (stage["turn_id"] != frame["turn_id"] or "summary_rows" in stage
+                or rounds != agent.max_iterations or rows[-1]["role"] != "tool"):
+            raise RustTurnConflict("summary does not follow the admitted iteration budget")
+        stage["summary_rows"] = rows
+        messages = copy.deepcopy([*stage["history"], *rows])
+    with server._session_profile_runtime_scope(session):
+        # Python repairs the live transcript before each ordinary request. In
+        # particular, folding a model-switch marker into the user turn retires
+        # its API sidecar. Preserve the separate durable rows for settlement.
+        repair_message_sequence(agent, messages)
+        messages.append({"role": "user", "content": MAX_ITERATIONS_SUMMARY_REQUEST})
+        agent._emit_diagnostic_status(
+            f"⚠️ Iteration budget exhausted ({rounds}/{agent.max_iterations}) — asking model to summarise")
+        body = agent._build_api_kwargs(_iteration_summary_api_messages(agent, messages))
+        sanitize_outbound_kwargs(agent, body)
+        if (body.pop("extra_headers", {}) != stage["session_affinity"] or body.get("model") != agent.model
+                or set(body) - _BODY_PARAMS - {"model", "tools", "messages"}
+                or agent.api_key in json.dumps(body, allow_nan=False)):
+            raise RustTurnConflict("unsupported iteration summary options")
+        return body
+
+
+def _finish_iteration_summary(session: dict, stage: dict, frame: dict, rows: list[dict]) -> None:
+    """Only the parent appends the runtime nudge. Child frames cannot introduce user rows."""
+    from agent.chat_completion_helpers import _EMPTY_SUMMARY_RESPONSE
+    from agent.context_compressor import MAX_ITERATIONS_SUMMARY_REQUEST
+    from agent.message_metadata import append_message
+    from agent.turn_failure_copy import site_copy
+    from agent.turn_finalizer import _explain_abnormal_exit, apply_llm_output_transform
+    from tui_gateway import server
+
+    if (frame.get("max_iterations_reached") is not True or rows != stage.get("summary_rows")
+            or frame.get("status") != "complete" or frame.get("interrupted")):
+        raise RustTurnConflict("invalid iteration summary completion")
+    agent = session["agent"]
+    with server._session_profile_runtime_scope(session, hydrate_secrets=False):
+        match frame.get("summary_outcome"):
+            case "success" if isinstance(frame.get("text"), str) and frame["text"].strip():
+                text = frame["text"]
+                if "<think>" in text:
+                    text = re.sub(r"<think>.*?</think>\s*", "", text, flags=re.DOTALL).strip() or _EMPTY_SUMMARY_RESPONSE
+            case "empty":
+                text = _EMPTY_SUMMARY_RESPONSE
+            case "error":
+                text = site_copy("max_iterations_no_summary", limit=agent.max_iterations)
+            case _:
+                raise RustTurnConflict("unexpected iteration summary outcome")
+        text, _, _ = apply_llm_output_transform(agent, text, turn_id=stage["turn_id"], logger=server.logger)
+        append_message(rows, {"role": "user", "content": MAX_ITERATIONS_SUMMARY_REQUEST})
+        append_message(rows, {"role": "assistant", "content": text})
+        limit = agent.max_iterations
+        reason = f"max_iterations_reached({limit}/{limit})"
+        frame["text"] = _explain_abnormal_exit(agent, text, reason, False, server.logger)
+        frame["turn_exit_reason"] = reason
+
+
 def _close_rust_outcome(session: dict, frame: dict, rows: list[dict], status: str) -> None:
     """Close only after actual rows received their normal per-row identities."""
     from agent.conversation_loop import _failed_turn_display_metadata
@@ -525,6 +597,8 @@ def persist_rust_turn(session: dict, frame: dict) -> dict | None:
         if "rows" not in stage:
             raise RustTurnConflict("Rust turn was not durably admitted")
         rows = _rust_suffix(stage, frame)
+        if frame.get("max_iterations_reached") or frame.get("summary_outcome") is not None:
+            _finish_iteration_summary(session, stage, frame, rows)
         status = _rust_terminal_status(frame, rows)
         # An interrupted assistant tail needs its hidden/API or partial
         # presentation before its first insert; settled rows are immutable.

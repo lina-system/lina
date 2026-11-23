@@ -514,6 +514,111 @@
       "title": "InterruptAck",
       "type": "object"
     },
+    "IterationSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "messages": {
+          "items": {
+            "additionalProperties": {
+              "$ref": "#/$defs/JsonValue"
+            },
+            "type": "object"
+          },
+          "title": "Messages",
+          "type": "array"
+        },
+        "request_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "title": "Request Id"
+        },
+        "sid": {
+          "title": "Sid",
+          "type": "string"
+        },
+        "turn_id": {
+          "title": "Turn Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "iteration.summary",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sid",
+        "turn_id",
+        "request_id",
+        "type",
+        "messages"
+      ],
+      "title": "IterationSummary",
+      "type": "object"
+    },
+    "IterationSummaryAck": {
+      "additionalProperties": false,
+      "properties": {
+        "body": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Body"
+        },
+        "ok": {
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "request_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "title": "Request Id"
+        },
+        "sid": {
+          "title": "Sid",
+          "type": "string"
+        },
+        "turn_id": {
+          "title": "Turn Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "iteration.summary.ack",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sid",
+        "turn_id",
+        "request_id",
+        "type",
+        "ok"
+      ],
+      "title": "IterationSummaryAck",
+      "type": "object"
+    },
     "JsonValue": {},
     "Orphan": {
       "additionalProperties": false,
@@ -1463,6 +1568,19 @@
           "title": "Interrupted",
           "type": "boolean"
         },
+        "max_iterations_reached": {
+          "anyOf": [
+            {
+              "const": true,
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Iterations Reached"
+        },
         "message_count": {
           "anyOf": [
             {
@@ -1569,6 +1687,23 @@
           "title": "Sid",
           "type": "string"
         },
+        "summary_outcome": {
+          "anyOf": [
+            {
+              "enum": [
+                "success",
+                "empty",
+                "error"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Summary Outcome"
+        },
         "turn_id": {
           "anyOf": [
             {
@@ -1653,6 +1788,12 @@
           "description": "Provider base URL without embedded credentials.",
           "title": "Base Url",
           "type": "string"
+        },
+        "max_iterations": {
+          "default": 500,
+          "description": "Effective iteration budget of the planning agent.",
+          "title": "Max Iterations",
+          "type": "integer"
         },
         "model": {
           "title": "Model",
@@ -2088,6 +2229,8 @@
       "hello": "#/$defs/Hello",
       "interrupt": "#/$defs/Interrupt",
       "interrupt.ack": "#/$defs/InterruptAck",
+      "iteration.summary": "#/$defs/IterationSummary",
+      "iteration.summary.ack": "#/$defs/IterationSummaryAck",
       "orphan": "#/$defs/Orphan",
       "read_file.policy": {
         "discriminator": {
@@ -2167,6 +2310,9 @@
       ]
     },
     {
+      "$ref": "#/$defs/IterationSummaryAck"
+    },
+    {
       "$ref": "#/$defs/Hello"
     },
     {
@@ -2227,6 +2373,9 @@
           "$ref": "#/$defs/ReadFileRedact"
         }
       ]
+    },
+    {
+      "$ref": "#/$defs/IterationSummary"
     }
   ],
   "title": "Hermes compute-host frames"

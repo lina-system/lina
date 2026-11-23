@@ -222,7 +222,7 @@ class RustHostSupervisor(HostSupervisor):
         self._failure_status = status
         return {**details, **result, "text": text, "error_surface": surface}
 
-    def finish_events(self, *, persisted, receipt=None):
+    def finish_events(self, *, persisted, receipt=None, handoff=None):
         from tui_gateway import server
 
         with self.session["history_lock"]:
@@ -235,6 +235,8 @@ class RustHostSupervisor(HostSupervisor):
 
             if payload.get("status") == "interrupted" and payload.get("text") == "":
                 payload["text"] = None
+            if handoff is not None:
+                payload["text"] = handoff["final_response"]
             if (agent := self.session.get("agent")) is not None and isinstance(usage := payload.get("usage"), dict):
                 server._apply_rust_turn_usage(self.session, agent, usage)
                 payload["usage"] = server._compute_host_usage(self.session, agent)
@@ -282,6 +284,9 @@ class RustHostSupervisor(HostSupervisor):
             if isinstance(message := frame.get("message"), dict):
                 self._receive_event(message)
             return
+        if kind == "iteration.summary":
+            self._prepare_iteration_summary(frame)
+            return
         if kind != "read_file.policy":
             return super()._handle_host_frame(frame)
         from tui_gateway import server
@@ -326,6 +331,27 @@ class RustHostSupervisor(HostSupervisor):
             except Exception:
                 # The request can contain file content. Never put it or an exception
                 # derived from it into logs or a public failure event.
+                reply["ok"] = False
+        self._send_frame(reply)
+
+    def _prepare_iteration_summary(self, frame):
+        from tui_gateway.rust_turn_plan import prepare_iteration_summary
+
+        turn_id = frame.get("turn_id")
+        reply = {"type": "iteration.summary.ack", "sid": self.sid, "request_id": frame.get("request_id"),
+                 "turn_id": turn_id, "ok": False}
+        with self.session["history_lock"]:
+            owns_turn = (turn_id and frame.get("sid") == self.sid and self.session.get("running")
+                         and not self.session.get("_closing") and not self.session.get("_turn_cancel_requested")
+                         and self.session.get("_compute_host_turn_host") is self
+                         and self.session.get("_compute_host_turn_id") == turn_id
+                         and self._event_source == (threading.current_thread(), turn_id)
+                         and self._final_event is None)
+        if owns_turn:
+            try:
+                reply.update(body=prepare_iteration_summary(self.session, frame), ok=True)
+            except Exception:
+                # Request options and transcript text are private to this turn.
                 reply["ok"] = False
         self._send_frame(reply)
 

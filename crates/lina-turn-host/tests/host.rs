@@ -93,6 +93,16 @@ impl Host {
     }
 
     fn begin(&mut self, request_id: &str, base_url: &str, stream: bool) {
+        self.begin_with_limit(request_id, base_url, stream, None);
+    }
+
+    fn begin_with_limit(
+        &mut self,
+        request_id: &str,
+        base_url: &str,
+        stream: bool,
+        max_iterations: Option<i32>,
+    ) {
         let affinity = AFFINITY.map(|name| (name, json!("session-17")));
         self.begin_with(
             request_id,
@@ -104,11 +114,19 @@ impl Host {
                     .map(|(key, value)| (key.into(), value))
                     .collect(),
             ),
+            max_iterations,
         );
     }
 
-    fn begin_with(&mut self, request_id: &str, base_url: &str, stream: bool, affinity: Value) {
-        self.send(&json!({
+    fn begin_with(
+        &mut self,
+        request_id: &str,
+        base_url: &str,
+        stream: bool,
+        affinity: Value,
+        max_iterations: Option<i32>,
+    ) {
+        let mut start = json!({
             "type": "turn.start", "sid": "session", "request_id": request_id,
             "turn_id": request_id, "text": "ping", "cwd": std::env::current_dir().unwrap(),
             "terminal_backend": "local", "history": [{"role": "user", "content": "before"}],
@@ -117,7 +135,11 @@ impl Host {
                           "base_url": base_url, "params": {"prompt_cache_key": "cache", "timeout": 5,
                                                            "session_affinity": affinity},
                           "stream": stream}
-        }));
+        });
+        if let Some(limit) = max_iterations {
+            start["turn_plan"]["max_iterations"] = json!(limit);
+        }
+        self.send(&start);
         assert_eq!(self.next()["type"], "turn.started");
         assert_eq!(event(&self.next())["type"], "message.start");
     }
@@ -320,6 +342,105 @@ fn interrupt_cancels_the_inflight_unknown_tool_continuation() {
     server.join().unwrap();
 }
 
+const TOOL_COMPLETION: &str = r#"{"choices":[{"message":{"tool_calls":[{"id":"call","type":"function","function":{"name":"other","arguments":"{}"}}]}}]}"#;
+
+#[test]
+fn exhausted_turn_retries_empty_summary_with_the_parent_body() {
+    let (listener, base_url) = model();
+    let prepared = json!({
+        "model": "local", "messages": [{"role": "user", "content": "prepared summary"}],
+        "tools": [{"type": "function", "function": {"name": "read_file"}}],
+        "temperature": 0.7,
+    });
+    let expected = prepared.clone();
+    let server = std::thread::spawn(move || {
+        let (socket, _) = request(&listener);
+        reply(socket, "application/json", TOOL_COMPLETION);
+        for response in [
+            r#"{"choices":[{"message":{"content":null,"tool_calls":[]}}]}"#,
+            r#"{"choices":[{"message":{"content":"  Summary.  ","tool_calls":null}}]}"#,
+        ] {
+            let (socket, body) = request(&listener);
+            assert_eq!(body, expected);
+            reply(socket, "application/json", response);
+        }
+    });
+    let mut host = Host::spawn();
+    host.begin_with_limit("capped", &base_url, false, Some(1));
+    let summary = host.next();
+    assert_eq!(summary["type"], "iteration.summary");
+    assert_eq!(summary["turn_id"], "capped");
+    let messages = summary["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 4);
+    assert_eq!(messages[0]["content"], "before");
+    assert_eq!(messages[1]["content"], "ping");
+    assert_eq!(messages[2]["tool_calls"][0]["id"], "call");
+    assert_eq!(messages[3]["tool_call_id"], "call");
+
+    let mut body = prepared;
+    body["timeout"] = json!(5);
+    let mut ack = json!({
+        "type": "iteration.summary.ack", "sid": "session", "request_id": summary["request_id"],
+        "turn_id": "stale", "ok": false,
+    });
+    host.send(&ack);
+    ack["turn_id"] = json!("capped");
+    ack["ok"] = json!(true);
+    ack["body"] = body;
+    host.send(&ack);
+
+    let completion = host.next();
+    assert_eq!(event(&completion)["payload"]["status"], "complete");
+    assert_eq!(event(&completion)["payload"]["text"], "Summary.");
+    assert_eq!(event(&completion)["payload"]["usage"]["calls"], 1);
+    let end = host.next();
+    assert_eq!(end["max_iterations_reached"], true);
+    assert_eq!(end["summary_outcome"], "success");
+    assert_eq!(end["messages"], summary["messages"]);
+    host.close();
+    server.join().unwrap();
+}
+
+#[test]
+fn interrupt_cancels_an_inflight_iteration_summary() {
+    let (listener, base_url) = model();
+    let (sent, entered) = mpsc::channel();
+    let (cancelled, released) = mpsc::channel();
+    let server = std::thread::spawn(move || {
+        let (socket, _) = request(&listener);
+        reply(socket, "application/json", TOOL_COMPLETION);
+        let (socket, _) = request(&listener);
+        sent.send(()).unwrap();
+        released.recv_timeout(TIMEOUT).unwrap();
+        drop(socket);
+    });
+    let mut host = Host::spawn();
+    host.begin_with_limit("capped", &base_url, false, Some(1));
+    let summary = host.next();
+    assert_eq!(summary["type"], "iteration.summary");
+    host.send(&json!({
+        "type": "iteration.summary.ack", "sid": "session", "request_id": summary["request_id"],
+        "turn_id": "capped", "ok": true,
+        "body": {"model": "local", "messages": [{"role": "user", "content": "summary"}]},
+    }));
+    entered.recv_timeout(TIMEOUT).unwrap();
+    host.send(&json!({"type": "interrupt", "sid": "session", "request_id": "stop"}));
+    assert_eq!(host.next()["applied"], true);
+    assert_eq!(event(&host.next())["payload"]["status"], "interrupted");
+    let end = host.next();
+    assert_eq!(end["interrupted"], true);
+    assert!(end.get("summary_outcome").is_none());
+    assert!(end.get("max_iterations_reached").is_none());
+    assert_eq!(end["new_messages"][2]["tool_call_id"], "call");
+    assert_eq!(
+        end["new_messages"][3],
+        json!({"role": "assistant", "content": ""})
+    );
+    host.close();
+    cancelled.send(()).unwrap();
+    server.join().unwrap();
+}
+
 #[test]
 fn streamed_unknown_tools_continue_without_entering_the_tool_lifecycle() {
     let (model, base_url) = model();
@@ -507,7 +628,13 @@ fn invalid_session_affinity_is_rejected_before_http_egress() {
     .into_iter()
     .enumerate()
     {
-        host.begin_with(&format!("reject-{attempt}"), &base_url, false, affinity);
+        host.begin_with(
+            &format!("reject-{attempt}"),
+            &base_url,
+            false,
+            affinity,
+            None,
+        );
         let completed = host.next();
         assert_eq!(event(&completed)["payload"]["status"], "error");
         assert_eq!(

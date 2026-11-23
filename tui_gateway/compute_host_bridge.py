@@ -364,7 +364,7 @@ _NO_FORWARDED_SWITCH = object()
 
 def _on_compute_host_turn_done(
     rid: str, sid: str, session: dict, frame: dict, *, forwarded_switch=_NO_FORWARDED_SWITCH,
-    crash_info: dict | None = None,
+    crash_info: dict | None = None, goal_followup: str | None = None,
 ) -> None:
     _apply_compute_host_metadata_mirror(session, frame)
     with session["history_lock"]:
@@ -397,7 +397,10 @@ def _on_compute_host_turn_done(
         _emit("message.complete", sid, {"text": f"Error: {message}", "status": "error"})
     if not frame.get("session_info_emitted"):
         _emit("session.info", sid, crash_info if crash_info is not None else _compute_host_session_info(info_session))
-    _drain_queued_prompt(rid, sid, session)
+    if goal_followup:
+        _run_post_turn_followups(rid, sid, session, None, goal_followup)
+    else:
+        _drain_queued_prompt(rid, sid, session)
 
 
 def _submit_prompt_to_compute_host(
@@ -434,12 +437,14 @@ def _submit_prompt_to_compute_host(
             leases.close()
             return
         crash_info = None
+        goal_followup = None
         try:
             if rust_host is not None:
                 terminal = {"type": done["type"], "message": done.get("message"), "reason": done.get("reason")}
                 with rust_host.settlement_lock:
                     persisted = False
                     receipt = None
+                    handoff = None
                     if done.get("type") == "turn.error" and done.get("reason") == "crash":
                         # Settlement may retire the planner on lease exit. Capture
                         # its route now using the projection for an absent child.
@@ -459,9 +464,13 @@ def _submit_prompt_to_compute_host(
                             attached = session.get("_rust_host") is rust_host
                         if attached and session.get("_rust_turn_stage"):
                             details = rust_host.terminal_details(done)
-                            receipt = persist_rust_turn(
-                                session, {**{key: value for key, value in done.items() if key != "provider_error"},
-                                          **details})
+                            settlement = {**{key: value for key, value in done.items() if key != "provider_error"},
+                                          **details}
+                            receipt = persist_rust_turn(session, settlement)
+                            if settlement.get("max_iterations_reached"):
+                                handoff = {"completed": False, "failed": False, "interrupted": False,
+                                           "turn_exit_reason": settlement["turn_exit_reason"],
+                                           "final_response": settlement["text"]}
                             if details.get("status") == "error":
                                 terminal.update(details)
                             persisted = True
@@ -477,14 +486,18 @@ def _submit_prompt_to_compute_host(
                             with _session_profile_runtime_scope(session, hydrate_secrets=False):
                                 rust_host.finish_events(
                                     persisted=persisted and done.get("type") == "turn.end"
-                                    and not session.get("_closing"), receipt=receipt)
+                                    and not session.get("_closing"), receipt=receipt, handoff=handoff)
+                                if persisted and handoff is not None and not session.get("_closing"):
+                                    goal_followup = _goal_followup_after_turn(
+                                        sid, session, handoff, "complete", handoff["final_response"])
+                                    _publish_session_control_snapshot(sid, session, only_if_present=True)
                         finally:
                             leases.close()
         finally:
             with _session_profile_runtime_scope(session, hydrate_secrets=False):
                 _on_compute_host_turn_done(
                     rid, sid, session, done, forwarded_switch=frame.get("pending_model_switch"),
-                    crash_info=crash_info)
+                    crash_info=crash_info, goal_followup=goal_followup)
 
     rust_host = None
     claimed_images = []
