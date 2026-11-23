@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from bisect import bisect_right
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -20,31 +21,37 @@ if TYPE_CHECKING:
     from .engine import LCMEngine
 
 
-def _omit_naming_clauses(text: str, targets: dict[int, set[str]]) -> str:
-    """Keep clauses that do not name the retired label verbatim."""
+def _mask_targets(text: str, targets: dict[int, set[str]]) -> str:
+    """Replace matched labels and copy everything between them from the original."""
     from hermes_cli.heart.taste_context import normalized
 
-    clauses = re.split(r"(?<=[.!?;。！？；])(?=\s|$)|(?=\n)", text)
-    spans = iter(target_spans(normalized(text), targets))
-    match = next(spans, None)
-    consumed = covered_until = 0
-    kept = []
-    for clause in clauses:
-        end = consumed + len(normalized(clause))
-        while match is not None and match[0] < end:
-            covered_until = max(covered_until, match[1])
-            match = next(spans, None)
-        if covered_until <= consumed:
-            kept.append(clause)
-        consumed = end
-    return "".join(kept).strip()
+    def prefix_length(index: int) -> int:
+        return len(normalized(text[:index]))
+
+    parts = []
+    copied = 0
+    ascii_offsets = text.isascii()
+    for start, end in target_spans(normalized(text), targets):
+        if not ascii_offsets:
+            # NFKC and case folding can expand one source character or compose several.
+            boundaries = range(len(text) + 1)
+            start = bisect_right(boundaries, start, key=prefix_length) - 1
+            last = bisect_right(boundaries, end, key=prefix_length) - 1
+            end = last + (prefix_length(last) < end)
+        if end <= copied:
+            continue
+        if start >= copied:
+            parts.extend((text[copied:start], "[…]"))
+        copied = end
+    parts.append(text[copied:])
+    return "".join(parts)
 
 
 def _fallback(node: SummaryNode, targets: dict[int, set[str]]) -> SummaryNode:
-    summary = _omit_naming_clauses(node.summary, targets) or "Taste detail omitted. See the source history."
+    summary = _mask_targets(node.summary, targets)
     return replace(
         node, summary=summary, token_count=count_tokens(summary),
-        expand_hint=_omit_naming_clauses(node.expand_hint, targets),
+        expand_hint=_mask_targets(node.expand_hint, targets),
     )
 
 
@@ -85,7 +92,7 @@ def _recondense_node(
         return _fallback(node, targets), 3, "deterministic"
     if level == 3 or not summary.strip() or names_target(summary, targets):
         return _fallback(node, targets), 3, "deterministic"
-    hint = _omit_naming_clauses(node.expand_hint, targets) or engine._extract_expand_hint(summary)
+    hint = _mask_targets(node.expand_hint, targets) or engine._extract_expand_hint(summary)
     return replace(
         node, summary=summary, token_count=count_tokens(summary), expand_hint=hint,
     ), level, provenance.get("model", "")

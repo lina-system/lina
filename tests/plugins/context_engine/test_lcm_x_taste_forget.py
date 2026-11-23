@@ -206,7 +206,7 @@ def test_ordinary_condensation_uses_taste_instruction_for_owner_only(
     assert all("Keep dates." in prompt for prompts in by_home.values() for prompt in prompts)
 
 
-@pytest.mark.parametrize("failure", ["repeat", "budget"])
+@pytest.mark.parametrize("failure", ["repeat", "budget", "level3"])
 def test_failed_resummary_never_returns_the_retired_taste(
     failure: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, memory_store_sql,
 ) -> None:
@@ -218,7 +218,7 @@ def test_failed_resummary_never_returns_the_retired_taste(
     [(taste_id,)] = memory_store_sql(
         "INSERT INTO memory.tastes (agent_id, target_kind, label, status, valence, strength, origin) "
         "VALUES (%s, 'topic', %s, 'active', 'like', 0.6, 'outcome') RETURNING id",
-        ("synthetic-fallback", TARGET),
+        ("synthetic-fallback", "watercolor"),
     )
     config = import_module(f"{LCM}.config").LCMConfig
     engine_type = import_module(f"{LCM}.engine").LCMEngine
@@ -231,7 +231,9 @@ def test_failed_resummary_never_returns_the_retired_taste(
         requests.append(request["text"])
         if failure == "budget":
             raise escalation.SweepBudgetExhausted("test budget stop")
-        return "The assistant prefers blue triangles.", 1
+        if failure == "level3":
+            return "Truncated source.", 3
+        return "The assistant prefers watercolor.", 1
 
     monkeypatch.setattr(repair, "summarize_with_escalation", unavailable)
     engine = engine_type(
@@ -240,18 +242,24 @@ def test_failed_resummary_never_returns_the_retired_taste(
     try:
         engine.on_session_start(SESSION)
         [raw_id] = engine._store.append_batch(
-            SESSION, [{"role": "assistant", "content": "I picked blue triangles for this example."}], source="cli",
+            SESSION, [{"role": "assistant", "content": "I picked watercolor for this example."}], source="cli",
         )
         node_id = engine._dag.add_node(node_type(
-            session_id=SESSION, summary=f"The assistant prefers blue triangles. {FACT}",
-            expand_hint=f"Blue triangles. {FACT}", source_ids=[raw_id], token_count=30,
+            session_id=SESSION, summary=f"The assistant prefers watercolor. {FACT}",
+            expand_hint=f"Watercolor. {FACT}", source_ids=[raw_id], token_count=30,
+        ))
+        deadline = "the production deployment deadline is Friday."
+        mixed = f"The assistant likes watercolor, and {deadline}"
+        hint = f"Straße №42: ＷＡＴＥＲＣＯＬＯＲ, and {deadline}"
+        mixed_id = engine._dag.add_node(node_type(
+            session_id=SESSION, summary=mixed, expand_hint=hint, source_ids=[raw_id], token_count=30,
         ))
         before = engine._assemble_context(
             {"role": "system", "content": "Frozen prefix."}, [],
             include_lcm_note=False, persist=False,
         )
         import_module(f"{LCM}.taste_forget").queue_taste_forget(
-            hermes_home=home, target=TARGET, taste_id=taste_id,
+            hermes_home=home, target="watercolor", taste_id=taste_id,
         )
         memory_store_sql(
             "UPDATE memory.tastes SET status='forgotten', forgotten_by='owner' WHERE agent_id=%s AND id=%s",
@@ -261,12 +269,20 @@ def test_failed_resummary_never_returns_the_retired_taste(
         after = engine.compress(before, force=True)
 
         assert requests
-        assert all("blue triangles" not in row["content"].casefold() for row in after)
+        assert all("watercolor" not in row["content"].casefold() for row in after)
         assert any(FACT in row["content"] for row in after)
         node = engine._dag.get_node(node_id)
-        assert node.summary == node.expand_hint == FACT
+        repaired = engine._dag.get_node(mixed_id)
+        for text in (repaired.summary, repaired.expand_hint):
+            assert deadline in text
+            assert "watercolor" not in text.casefold()
+        assert any(deadline in row["content"] for row in after)
+        assert repaired.summary == mixed.replace("watercolor", "[…]")
+        assert repaired.expand_hint == hint.replace("ＷＡＴＥＲＣＯＬＯＲ", "[…]")
+        assert node.summary == f"The assistant prefers […]. {FACT}"
+        assert node.expand_hint == f"[…]. {FACT}"
         assert engine._dag.source_message_ids(node_id, limit=10) == [raw_id]
-        assert engine._store.get(raw_id)["content"] == "I picked blue triangles for this example."
+        assert engine._store.get(raw_id)["content"] == "I picked watercolor for this example."
         assert database.is_file() and not (home / "lcm.db").exists()
     finally:
         engine.shutdown()
