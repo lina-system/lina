@@ -37,4 +37,8 @@ How a change reaches `dev`. GitHub enforces the required checks; the rest is the
 | Audit closed issues | | `lina work audit` |
 | P2/P3 follow-ups | `review-followups` | `lina work merge` (step 8) |
 
+`lina work merge --branch` opens or updates the PR. With `work.land_merge` off (the default), exit `0` on an open PR means its gates passed and it awaits review. With `work.land_merge: true`, or when calling `lina work merge <repo> <pr>` directly, exit `0` means the PR merged and its post-merge steps completed. Exit `1` means refusal or failure, `2` means invalid usage, and `75` means waiting.
+
+After the queue merges the PR, rerun the same `--branch` command. It checks the linked issues' `Done when` boxes, closes those issues, and files outstanding review follow-ups. A repeat run skips completed updates, even if the remote branch has been deleted.
+
 **P2/P3 rule decided by the owner (#539, not built yet).** P2/P3 findings still never block a merge, so a pull request stays short. Right after the merge, the same worker run that wrote the pull request (it still holds the context) gets one follow-up round: fix the small P2/P3 findings, or answer each with `won't fix: <reason>`. The result is one small follow-up pull request through the usual path, blocked only by P0/P1; its own P2/P3 findings are fixed in it or declined, and never start a second round. A finding neither fixed nor declined in that round becomes one ordinary issue with a milestone, a size and a runner label. There are no bundle issues: when #539 lands, step 8 and this row change to that path.

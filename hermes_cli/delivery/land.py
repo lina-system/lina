@@ -11,7 +11,7 @@ on that branch instead of ``dev``.
 A branch whose pull request is open takes the worker's new commits as a follow-up on that pull request: the pull
 request's head merged into the worker branch when the branch lacks it (a conflict stops the landing), the same
 checks, the pull request's base merged in only when the result lacks it, and a fast-forward push (never forced).
-A closed or merged pull request for the branch refuses the landing.
+A merged pull request resumes the post-merge issue updates. A pull request closed without merging refuses the landing.
 
 Either way the landed change is then compared with the issue's size (``size.py``): a bigger one adds one comment to
 the issue per pull request and one line here, and never stops the landing.
@@ -163,11 +163,14 @@ def _contains(clone: Path, commit: str, head: str) -> bool:
                           timeout=120).returncode == 0
 
 
-def _open_pull(pulls: list, branch: str) -> dict:
-    """The open pull request whose head is *branch*; any other pull request for the branch refuses the landing."""
-    for pull in pulls:
-        if pull.get("state") == "open" and (pull.get("head") or {}).get("ref") == branch:
+def _existing_pull(pulls: list, branch: str) -> dict:
+    """Prefer an open PR for the branch. Otherwise only resume its latest PR if it merged."""
+    matches = [pull for pull in pulls if (pull.get("head") or {}).get("ref") == branch]
+    for pull in matches:
+        if pull.get("state") == "open":
             return pull
+    if matches and matches[0].get("merged_at"):
+        return matches[0]
     raise LandError(f"a pull request for {branch} already exists")
 
 
@@ -232,7 +235,10 @@ def land(gh, branch: str, task: str, title: str, issue: int, *, base: Path | Non
         raise LandError(f"{task} has no owner/name repository")
     pulls = gh.json(f"repos/{repo}/pulls?state=all&head={repo.split('/')[0]}:{branch}")
     if pulls:
-        return follow_up(gh, hub, job, _open_pull(pulls, branch), branch, issue, base=base, source=source, out=out,
+        pull = _existing_pull(pulls, branch)
+        if pull.get("merged_at"):
+            return report_only(gh, repo, int(pull["number"]), base=base, out=out)
+        return follow_up(gh, hub, job, pull, branch, issue, base=base, source=source, out=out,
                          **merge_options)
     onto_branch = job.get("base_branch") or settings.base_branch(base)
     url = str(worker_settings.setting("repo_url", worker=hub.worker)).format(repo=repo)
