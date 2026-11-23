@@ -248,20 +248,27 @@ def test_accept_links_todo_without_holding_the_work_lock(work, monkeypatch, reco
         (1, None)]
 
 
-@pytest.mark.parametrize("failed_verb", ["evidence", "note"])
-def test_accept_todo_write_failure_can_be_retried(work, failed_verb):
+@pytest.mark.parametrize(("failed_verb", "reviewed"), [
+    ("evidence", False), ("note", False), pytest.param("note", True, id="note-after-review"),
+])
+def test_accept_todo_write_failure_can_be_retried(work, failed_verb, reviewed):
     work.ok("run", "submit", "T1", "--brief", str(work.brief))
     (run_id,) = _jobs(work)
     accept = ("run", "accept", run_id, "--note", "checked")
     command = [sys.executable, "-c",
                "import sys; from hermes_cli.work import main\n"
                "if sys.argv[1] == sys.argv[2]: sys.exit(23)\n"
-               "main(sys.argv[2:])", failed_verb]
+               "main(sys.argv[2:])", "none"]
+    if reviewed:
+        work.config(extra=f"worker:\n  todo_link: {{kind: hermes, command: {json.dumps(command)}}}\n")
+        work.ok("run", "accept", run_id, "--note", "first")
+        work.ok("run", "review", run_id, "--why", "send back")
+    command[-1] = failed_verb
     work.config(extra=f"worker:\n  todo_link: {{kind: hermes, command: {json.dumps(command)}}}\n")
 
     code, out, err = work.run(*accept)
     assert code != 0, (out, err)
-    assert not _jobs(work)[run_id].get("work_accept_key")
+    failed_key = _jobs(work)[run_id].get("work_accept_key")
 
     command[-1] = "none"  # Restore both verbs against the same to-do.
     work.config(extra=f"worker:\n  todo_link: {{kind: hermes, command: {json.dumps(command)}}}\n")
@@ -270,7 +277,9 @@ def test_accept_todo_write_failure_can_be_retried(work, failed_verb):
     work.ok(*accept)
     todo = next(r for r in work.json("--all")["items"] if r["id"] == "T1")
     assert [e["ref"] for e in todo["evidence"]] == [f"omo:{run_id}"]
-    assert [n["text"] for n in todo["notes"]] == [f"{run_id} checked: checked"]
+    expected_notes = ["first", "checked"] if reviewed else ["checked"]
+    assert [n["text"] for n in todo["notes"]] == [f"{run_id} checked: {note}" for note in expected_notes]
+    assert not failed_key
 
 
 def _freeze_after_hand_off(work, monkeypatch):
@@ -292,7 +301,10 @@ def _freeze_after_hand_off(work, monkeypatch):
 def test_accept_retry_after_frozen_reentry_records_evidence_and_note_once(work, monkeypatch, legacy_worker):
     from hermes_cli.worker.hub import Hub
 
-    monkeypatch.setattr(Hub, "_todo", lambda _hub, _job, *args: work.ok(*args))
+    def link(_hub, _job, *args):
+        work.ok(*args)
+
+    monkeypatch.setattr(Hub, "_todo", link)
     work.ok("run", "submit", "T1", "--brief", str(work.brief))
     (run_id,) = _jobs(work)
     accept = ("run", "accept", run_id, "--note", "checked")

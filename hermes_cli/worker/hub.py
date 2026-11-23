@@ -451,12 +451,12 @@ class Hub:
             raise HubError("Hermes card session: pass --card <id> --board <slug>")
         opts["bot"], opts["bot_source"] = owner(opts.get("bot"))
 
-    def _todo(self, job: dict, *args: str) -> None:
-        """Run the configured to-do command. Submission links are best effort; verdict writes are required."""
+    def _todo(self, job: dict, *args: str) -> str | None:
+        """Report a failed to-do command and return its diagnostic to callers that require the write."""
         try:
             command = settings.todo_link(self.worker)
             if not command:
-                return
+                return None
             done = subprocess.run([*command, *args], text=True, encoding="utf-8", errors="replace",
                                   capture_output=True, env=kanban_link.hub_env(),
                                   timeout=kanban_link.COMMAND_TIMEOUT_S, check=False)
@@ -465,11 +465,10 @@ class Hub:
         except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
             self.store.receipt(job["id"], "todo_link_failed", verb=args[0], error=str(exc)[:300])
             message = f"lina worker: to-do {job.get('todo')}: {args[0]} for {job['id']} failed: {exc}"[:400]
-            if args[0] in ("evidence", "note"):
-                raise HubError(message) from exc
             self.out(message)
-            return
+            return message
         self.store.receipt(job["id"], "todo_linked", verb=args[0], todo=job.get("todo"))
+        return None
 
     def _submit_one(self, brief: Path, opts: dict, group: str | None, tid: str | None = None) -> dict:
         job = self.make_job(brief, opts, group, tid)
@@ -944,18 +943,24 @@ class Hub:
         return 0
 
     def verdict(self, task_id: str, accepted: bool, note: str = "", *,
-                todo_writes: tuple[str, ...] = ("evidence", "note")) -> int:
+                todo_writes: tuple[str, ...] | None = None) -> int:
+        """Record the verdict. Explicitly requested to-do writes must succeed."""
         job = self.need(task_id)
         verdict = "accepted" if accepted else "rejected"
-        job = self.store.update(task_id, verdict=verdict, verdict_note=note) or job
+        # A completion key belongs to the previous verdict until the new writes finish.
+        job = self.store.update(task_id, verdict=verdict, verdict_note=note, work_accept_key=None) or job
         self.store.receipt(task_id, "verdict", verdict=verdict, note=note[:500], by=owner()[0],
                            delivery=job.get("delivery"))
         self.out(f"{task_id} {verdict}")
         if accepted and job.get("todo"):
-            if "evidence" in todo_writes:
-                self._todo(job, "evidence", job["todo"], f"omo:{task_id}")
-            if note and "note" in todo_writes:
-                self._todo(job, "note", job["todo"], f"{task_id} checked: {note}")
+            entries = [("evidence", f"omo:{task_id}")]
+            if note:
+                entries.append(("note", f"{task_id} checked: {note}"))
+            for verb, text in entries:
+                if todo_writes is None or verb in todo_writes:
+                    error = self._todo(job, verb, job["todo"], text)
+                    if error and todo_writes is not None:
+                        raise HubError(error)
         return 0
 
     def card(self, task_id: str, card: str | None = None, drop: str | None = None, *,
