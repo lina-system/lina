@@ -7,6 +7,7 @@ import json
 import re
 import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from hermes_cli.work.env import current
@@ -107,6 +108,15 @@ class Lock:
     def __exit__(self, *a):
         fcntl.flock(self.f, fcntl.LOCK_UN)
         self.f.close()
+
+    @contextmanager
+    def released(self):
+        """Let another writer run, then observe the usual freeze gate on re-entry."""
+        self.__exit__()
+        try:
+            yield
+        finally:
+            self.__enter__()
 
 
 def writer_profile() -> str:

@@ -5,6 +5,7 @@ The worker is the real hub with no work device configured, so a handed-out task 
 ``$LINA_HOME/worker/hub/jobs`` is the observable "the worker has it"."""
 
 import json
+import sys
 
 import pytest
 
@@ -170,6 +171,48 @@ def test_hand_off_verbs_write_their_event_before_the_worker_call(work, monkeypat
     work.ok("list")
     assert _jobs(work)[run_id].get("cancel_why") == "the plan changed"
     assert _rows(work, "SELECT status FROM v_run WHERE id = ?", (run_id,)) == [("dropped",)]
+
+
+@pytest.mark.parametrize("recovered", [False, True], ids=["in-process", "subprocess-resume"])
+def test_accept_links_todo_without_holding_the_work_lock(work, monkeypatch, recovered):
+    import fcntl
+
+    from hermes_cli.worker.hub import Hub
+
+    work.ok("run", "submit", "T1", "--brief", str(work.brief))
+    (run_id,) = list(_jobs(work))
+    accept = ("run", "accept", run_id, "--note", "checked")
+    lock = work.work / ".lock"
+    if recovered:
+        with monkeypatch.context() as interrupted:
+            interrupted.setattr(runs, "_call_worker", _crash)
+            with pytest.raises(RuntimeError):
+                work.run(*accept)
+        # Fail immediately on contention, then run the real command against the same record.
+        command = [sys.executable, "-c",
+                   "import fcntl, sys; from hermes_cli.work import main\n"
+                   "with open(sys.argv[1]) as f: fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)\n"
+                   "main(sys.argv[2:])", str(lock)]
+        work.config(extra=f"worker:\n  todo_link: {{kind: hermes, command: {json.dumps(command)}}}\n")
+        work.ok("list")
+    else:
+        def link(_hub, _job, *args):
+            with lock.open() as handle:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            work.ok(*args)
+
+        monkeypatch.setattr(Hub, "_todo", link)
+        work.ok(*accept)
+
+    try:
+        todo = ledger.read_all()[0]["T1"]
+    finally:
+        ledger.close()
+    assert [e["ref"] for e in todo.get("evidence", [])] == [f"omo:{run_id}"]
+    assert [n["text"] for n in todo.get("notes", [])] == [f"{run_id} checked: checked"]
+    assert _jobs(work)[run_id]["verdict"] == "accepted"
+    assert _rows(work, "SELECT attempts, last_error FROM outbox WHERE op = 'accept' AND done_at IS NOT NULL") == [
+        (1, None)]
 
 
 def test_a_cancel_the_device_did_not_acknowledge_stays_pending_and_the_run_is_not_cancelled(work, monkeypatch):

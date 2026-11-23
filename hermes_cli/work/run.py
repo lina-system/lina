@@ -11,7 +11,9 @@ only on its own done-condition check (``state.recompute``/``work check``), never
 
 from __future__ import annotations
 
+import fcntl  # windows-footgun: ok — same POSIX hub as the work record lock
 import json
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 
 from hermes_cli.work import ledger, store
@@ -202,13 +204,29 @@ def _retry_later(oid: int, error: str) -> None:
         db.execute("UPDATE outbox SET attempts = attempts + 1, last_error = ? WHERE id = ?", (error[:500], oid))
 
 
-def dispatch() -> int:
+@contextmanager
+def _dispatch_writer(*, wait: bool = True):
+    """Keep one outbox consumer even while accept lends the record lock to its to-do commands."""
+    root = ledger.current().root
+    root.mkdir(parents=True, exist_ok=True)
+    with (root / ".dispatch.lock").open("a") as consumer:
+        try:
+            fcntl.flock(consumer, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
+        except BlockingIOError:
+            yield None
+            return
+        with Lock() as writer:
+            yield writer
+
+
+def dispatch(writer: Lock) -> int:
     """Hand every pending outbox row to the worker, oldest first. -> rows done."""
     from hermes_cli.worker.transport import TransportError
     done = 0
     for oid, run_id, op, payload in pending():
         try:
-            _call_worker(oid, op, run_id, json.loads(payload))
+            with writer.released() if op == "accept" else nullcontext():
+                _call_worker(oid, op, run_id, json.loads(payload))
         except HandOffError as exc:
             _finish(oid, run_id, op, str(exc)[:500])
             warn(t("{run}: 작업이 받지 않았다 — {why}", run=run_id, why=exc))
@@ -224,10 +242,14 @@ def dispatch() -> int:
 
 def resume() -> None:
     """Called at the start of every ``lina work`` command: finish hand-offs a crash left in the outbox."""
-    if not pending():
+    rows = pending()
+    if not rows:
         return
-    with Lock():
-        n = dispatch()
+    # A to-do command called by accept must proceed to its own write while its parent drains the outbox.
+    with _dispatch_writer(wait=rows[0][2] != "accept") as writer:
+        if writer is None:
+            return
+        n = dispatch(writer)
     if n:
         warn(t("끊겼던 작업 넘기기 {n}건을 마저 했다", n=n))
 
@@ -296,7 +318,7 @@ def _opts(a, todos: list[dict], who: str) -> dict:
 def cmd_submit(a) -> None:
     if not Path(a.brief).expanduser().is_file():
         die(t("브리프 파일이 없다: {path}", path=a.brief))
-    with Lock():
+    with _dispatch_writer() as writer:
         recs, _ = ledger.read_all()
         todos = _covered(a, recs)
         who = agent(a.as_) if a.as_ else (todos[0]["by"] if todos[0]["by"] != owner() else todos[0].get("from"))
@@ -316,7 +338,7 @@ def cmd_submit(a) -> None:
                             None, store.utc(now()))
             _outbox(db, run_id, "submit", {"opts": opts}, who)
         print(t("{run}: 할 일 {ids}을 넘긴다", run=run_id, ids=", ".join(r["id"] for r in todos)))
-        dispatch()
+        dispatch(writer)
 
 
 def _need_run(run_id: str) -> tuple:
@@ -327,7 +349,7 @@ def _need_run(run_id: str) -> tuple:
 
 
 def _hand_off(run_id: str, op: str, kind: str, payload: dict, who: str | None) -> None:
-    with Lock():
+    with _dispatch_writer() as writer:
         _, owner_agent = _need_run(run_id)
         who = who or owner_agent
         db = ledger.db()
@@ -335,7 +357,7 @@ def _hand_off(run_id: str, op: str, kind: str, payload: dict, who: str | None) -
             store.run_event(db, run_id, kind, who, dict(payload, op=op), payload.get("message") or
                             payload.get("note") or payload.get("why"), store.utc(now()))
             _outbox(db, run_id, op, payload, who)
-        dispatch()
+        dispatch(writer)
 
 
 def cmd_steer(a) -> None:
