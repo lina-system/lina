@@ -780,12 +780,12 @@ class CompactionMixin:
             ):
                 result = messages
             reason = self._survival_fit_reason or str(self._last_compression_status or "unknown")
-            result = self._survival_fit(messages, result, current_tokens,
-                                        summary_failure=budget.summary_failure if not self._survival_fit_reason else "",
-                                        fit_cause=self._last_compression_noop_reason if not self._survival_fit_reason else "",
-                                        **self._survival_fit_args(messages, current_tokens, reason, bypass_cooldown,
-                                                                  automatic=not force and not self._compress_forced_overflow
-                                                                  and self._last_compression_status != "error"))
+            fit_args = self._survival_fit_args(messages, current_tokens, reason, bypass_cooldown,
+                                               automatic=not force and not self._compress_forced_overflow
+                                               and self._last_compression_status != "error")
+            fit_args.update(summary_failure=budget.summary_failure if not self._survival_fit_reason else "",
+                            fit_cause=self._last_compression_noop_reason if not self._survival_fit_reason else "")
+            result = self._survival_fit(messages, result, current_tokens, **fit_args)
             if (budget.leaves >= 1 and self._compress_host_rows_consumed == 0
                     and len(result) >= len(messages)
                     and count_messages_tokens(result) >= count_messages_tokens(messages)):
@@ -813,7 +813,8 @@ class CompactionMixin:
             if result and self._last_compression_status != "error":
                 refreshed = recondense_forgotten_tastes(self, result)
                 if refreshed is not result:
-                    result = refreshed
+                    # A repaired summary or expand hint can grow after the original fit.
+                    result = self._survival_fit(messages, refreshed, current_tokens, **fit_args)
                     self._last_compression_status = "compacted"
                     self._last_compression_noop_reason = ""
                     pending_no_progress = False
