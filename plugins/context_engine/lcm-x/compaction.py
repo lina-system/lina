@@ -55,6 +55,7 @@ from .sanitize import _contains_sensitive_redaction
 from .sqlite_util import PhaseSqlTrace, _is_sqlite_locked_error
 from .store import _normalize_observed_at
 from .survival_fit import _RECOVERY_THRESHOLD_SHARE
+from .taste_recondense import recondense_forgotten_tastes
 from .tokens import count_message_tokens, count_messages_tokens, count_tokens
 
 _UNPROVEN_FILTER_EXCLUSION = object()
@@ -809,6 +810,13 @@ class CompactionMixin:
             pending_no_progress = (self._no_progress_candidate and not bypass_cooldown
                     and self._last_compression_status != "error" and len(result) >= len(messages)) and (
                     count_messages_tokens(result) >= count_messages_tokens(messages))
+            if result and self._last_compression_status != "error":
+                refreshed = recondense_forgotten_tastes(self, result)
+                if refreshed is not result:
+                    result = refreshed
+                    self._last_compression_status = "compacted"
+                    self._last_compression_noop_reason = ""
+                    pending_no_progress = False
             self._record_compress_commit_proof(messages, result)
             if self._compress_commit_proof is None:  # #1000: no proof recorded the fit's carrier
                 self._bind_survival_fit_emission(messages, result)

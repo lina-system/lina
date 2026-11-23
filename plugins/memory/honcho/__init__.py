@@ -285,6 +285,8 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
             from hermes_constants import get_hermes_home
             from hermes_state_store import StoreUnavailableError
 
+            from .taste_history import has_taste_tombstones
+
             self._config = cfg
             self._recall_mode = cfg.recall_mode
             self._recall_sync = getattr(cfg, "recall_sync", False)
@@ -292,13 +294,14 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
             self._injection_log_path = self._resolve_injection_log_path(look)
             allowed = self._resolve_session_start(look)
             # Honcho can supply context even when the local taste store is unavailable.
-            profile_has_tastes = False
+            profile_has_taste_records = False
             with contextlib.suppress(ImportError):
                 from psycopg import Error as PostgresError
 
                 with contextlib.suppress(StoreUnavailableError, PostgresError):
-                    profile_has_tastes = has_tastes(Path(kwargs.get("hermes_home") or get_hermes_home()))
-            if profile_has_tastes:
+                    home = Path(kwargs.get("hermes_home") or get_hermes_home())
+                    profile_has_taste_records = has_tastes(home) or has_taste_tombstones(home)
+            if profile_has_taste_records:
                 if allowed is None:
                     allowed = frozenset(name for name, _, _ in _CONTEXT_SECTIONS)
                 allowed = allowed - {"aiRepresentation", "aiCard"}
