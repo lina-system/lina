@@ -56,7 +56,11 @@ def _delivery(sp) -> None:
                         "when HERMES_KANBAN_TASK is set)")
     p.add_argument("--json", action="store_true")
     p.set_defaults(fn=_delivery_fn("cmd_next"), no_resume=True)
-    p = sp.add_parser("merge", help="merge a pull request through the gates (exit 0 merged, 1 refused, 75 wait)")
+    merge_help = ("Check the PR gates. With --branch and work.land_merge off (default), exit 0 on an open PR "
+                  "means ready for review. With work.land_merge on, a PR number, or an already merged PR, "
+                  "0 means merged and post-merge steps complete. Exit 1 means refused or failed, "
+                  "2 means invalid usage, and 75 means waiting.")
+    p = sp.add_parser("merge", help=merge_help, description=merge_help)
     p.add_argument("target", nargs="*", metavar="ARG", help="<owner/repo> <pr>, or with --branch: <title> <issue>")
     p.add_argument("--branch", help="land this lina worker branch: fetch it, merge dev into it, open the PR")
     p.add_argument("--task", help="the lina worker run id the branch comes from")
