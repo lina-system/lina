@@ -13,6 +13,15 @@ from hermes_cli.heart import rows
 _TARGET_END = r"(?:에서|에게|으로|까지|부터|처럼|은|는|이|가|을|를|의|에|로|와|과|도|만)?(?!\w)"
 
 
+def normalized(value: str) -> str:
+    return unicodedata.normalize("NFKC", value).casefold()
+
+
+def target_pattern(label: str) -> re.Pattern[str]:
+    """Match a taste label as a term, allowing a following Korean particle."""
+    return re.compile(r"(?<!\w)" + re.escape(normalized(label)) + _TARGET_END)
+
+
 def has_tastes(home: Path) -> bool:
     with rows.open_store(home) as store, store._cursor() as cur:
         cur.execute("SELECT EXISTS (SELECT 1 FROM memory.tastes WHERE agent_id=%s AND live)", (store.agent_id,))
@@ -48,7 +57,7 @@ def core_lines(home: Path) -> tuple[str, ...]:
 
 
 def pick_lines(home: Path, query: str) -> tuple[str, ...]:
-    query = unicodedata.normalize("NFKC", query).casefold()
+    query = normalized(query)
     if not query.strip():
         return ()
     with rows.open_store(home) as store, store._cursor() as cur:
@@ -61,8 +70,7 @@ def pick_lines(home: Path, query: str) -> tuple[str, ...]:
         for label, direction in cur:
             if not _prompt_label(label):
                 continue
-            target = unicodedata.normalize("NFKC", label).casefold()
-            if re.search(r"(?<!\w)" + re.escape(target) + _TARGET_END, query):
+            if target_pattern(label).search(query):
                 picked.append(f"{direction}: {label}")
                 if len(picked) == 3:
                     break

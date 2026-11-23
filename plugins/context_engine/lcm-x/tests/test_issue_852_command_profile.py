@@ -227,6 +227,8 @@ def test_unresolved_other_bound_session_refuses_write_allows_read(
 ):
     prototype, _session = engines
     prototype.on_session_start("bound-session")
+    # Finish the bind-time WAL checkpoints before sampling the main file size.
+    assert prototype.drain_rollup_maintenance(timeout=30.0)
     context = {context_key: "invoking-session", "HERMES_SESSION_PROFILE": "launch"}
     if profile_state == "unset":
         context.pop("HERMES_SESSION_PROFILE")

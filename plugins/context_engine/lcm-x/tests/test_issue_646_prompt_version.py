@@ -275,6 +275,7 @@ def test_t19_config_without_the_field_uses_version_1_everywhere():
 
     engine = object.__new__(LCMEngine)
     engine._config = old
+    engine._hermes_home = ""
     engine._summary_circuit_breaker = None
     engine._summary_spend_guard = None
     engine._serialize_messages_with_clip = lambda messages: ("historical transcript", False)

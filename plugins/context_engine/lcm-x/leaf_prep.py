@@ -641,6 +641,7 @@ class _LeafPrep:
                 result = summarize_leaf_chunk_with_rescue(
                     chunk,
                     config=config,
+                    hermes_home=job.hermes_home,
                     focus_topic=job.focus_topic,
                     circuit_breaker=job.breaker,
                     spend_guard=guard,
