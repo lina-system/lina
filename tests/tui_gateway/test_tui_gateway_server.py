@@ -220,6 +220,7 @@ def test_dashboard_process_isolation_config_coerces_raw_values():
     cfg = {
         "dashboard": {
             "turn_isolation": "yes",
+            "compute_host_impl": "rust",
             "compute_host_heartbeat_secs": "30",
             "compute_host_respawn_max": "0",
         }
@@ -227,6 +228,7 @@ def test_dashboard_process_isolation_config_coerces_raw_values():
 
     assert server._load_dashboard_process_isolation_config(cfg) == {
         "turn_isolation": True,
+        "compute_host_impl": "rust",
         "compute_host_heartbeat_secs": 30,
         "compute_host_respawn_max": 0,
     }
@@ -234,6 +236,7 @@ def test_dashboard_process_isolation_config_coerces_raw_values():
     malformed = {"dashboard": "enabled"}
     assert server._load_dashboard_process_isolation_config(malformed) == {
         "turn_isolation": False,
+        "compute_host_impl": "python",
         "compute_host_heartbeat_secs": 15,
         "compute_host_respawn_max": 3,
     }
@@ -3076,6 +3079,9 @@ def _two_repo_project_skill_sessions(tmp_path, monkeypatch) -> tuple[Path, Path]
     from agent import skill_utils
     from tools import skills_tool
 
+    # Bound discovery to this synthetic tree when TMPDIR is inside a real checkout.
+    monkeypatch.setattr(skill_utils, "_PROJECT_ROOT_MAX_DEPTH", 2)
+
     def repo(name: str, skill: str) -> Path:
         r = tmp_path / name
         (r / ".git").mkdir(parents=True)
@@ -3987,6 +3993,8 @@ def test_session_resume_profile_uses_profile_db_cwd(monkeypatch, tmp_path):
     launch_cwd.mkdir()
     profile_cwd.mkdir()
     profile_home.mkdir(parents=True)
+    # The synthetic workspace is outside its installation, even with worktree-local TMPDIR.
+    monkeypatch.setattr("agent.runtime_cwd._PACKAGE_ROOT", launch_cwd.resolve())
     captured = {}
 
     class ProfileDB:

@@ -597,6 +597,10 @@ def _teardown_session(session: dict | None, *, end_reason: str = "tui_close") ->
     slash-worker is closed in ``_finalize_session`` (the single chokepoint), NOT here. Idempotent via ``_finalized``."""
     if not session:
         return
+    with _history_lock(session):
+        session["_closing"] = True
+        _defer_isolated_active_session_lease(session)
+    _retire_session_rust_host(session)
     _finalize_session(session, end_reason=end_reason)
     _announce_session_reclaimed(session, end_reason)
     with contextlib.suppress(Exception):
@@ -680,19 +684,17 @@ def _settle_isolated_turn_before_close(session: dict) -> None:
     completion callback releases it on the correlated turn.end/turn.error (child death fails pending turns
     the same way). The RPC close is bounded; ownership ends with the child's last write, never with the
     grace timer, else a second backend acquires the stored session while the child is still writing."""
-    if not session.get("_compute_host_turn_id") or not _session_uses_compute_host(session):
+    if not session.get("_compute_host_turn_id"):
         return
-    with contextlib.suppress(Exception):
-        _interrupt_session_turn(_lifecycle_own_sid(session), session)
+    if not session.get("_rust_host_preparing") and _session_uses_compute_host(session):
+        with contextlib.suppress(Exception):
+            _interrupt_session_turn(_lifecycle_own_sid(session), session)
     deadline = time.monotonic() + _TURN_SETTLE_BEFORE_CLOSE_SECONDS
     while session.get("_compute_host_turn_id") and time.monotonic() < deadline:
         time.sleep(0.05)
     with session["history_lock"]:
-        if not session.get("_compute_host_turn_id") or (lease := session.pop("active_session_lease", None)) is None:
+        if not _defer_isolated_active_session_lease(session):
             return
-        session["_deferred_active_session_lease"] = lease
-        _deferred_active_session_leases[str(lease.lease_id)] = lease
-        _deferred_active_session_lease_ages[str(lease.lease_id)] = time.time()
     logger.warning("isolated turn still live after %.1fs close grace; holding lease for %s until the child settles",
                    _TURN_SETTLE_BEFORE_CLOSE_SECONDS, session.get("session_key"))
 
@@ -707,6 +709,16 @@ def _settle_isolated_turn_before_close(session: dict) -> None:
 # force-released by the reaper tick instead of leaking the slot until process exit.
 _DEFERRED_ACTIVE_SESSION_LEASE_TTL_SECONDS = 1800.0
 _deferred_active_session_lease_ages: dict[str, float] = {}
+
+
+def _defer_isolated_active_session_lease(session: dict) -> bool:
+    """Move an unsettled turn's active-session lease out of finalize's reach. Caller holds history_lock."""
+    if not session.get("_compute_host_turn_id") or (lease := session.pop("active_session_lease", None)) is None:
+        return False
+    session["_deferred_active_session_lease"] = lease
+    _deferred_active_session_leases[str(lease.lease_id)] = lease
+    _deferred_active_session_lease_ages[str(lease.lease_id)] = time.time()
+    return True
 
 
 def _reap_stale_deferred_leases(now: float | None = None) -> int:
@@ -735,7 +747,8 @@ def _reap_stale_deferred_leases(now: float | None = None) -> int:
 
 def _release_deferred_active_session_lease(session: dict) -> None:
     """Settlement half of ``_settle_isolated_turn_before_close``; a no-op for sessions that never deferred."""
-    lease = session.pop("_deferred_active_session_lease", None)
+    with _history_lock(session):
+        lease = session.pop("_deferred_active_session_lease", None)
     if lease is None:
         return
     _deferred_active_session_leases.pop(str(lease.lease_id), None)
@@ -783,18 +796,20 @@ def _interrupt_session_turn(
     compressing = bool(session.get("_manual_compress_active"))
     should_interrupt = bool(session.get("running")) and not compressing
     run_thread_alive = False
-    if use_compute_host:
-        # The host owns the live turn (parent `running` can lag a blocked tool), so let it decide. Gate on
-        # `_compute_host_active`: HostSupervisor.interrupt() calls start(), so a lazy session would spawn a child to interrupt.
-        if should_interrupt or session.get("_compute_host_active"):
-            _get_compute_host_supervisor().interrupt(sid, request_id=request_id)
-    else:
+    if not use_compute_host:
         run_thread_alive = (rt := session.get("_run_thread")) is not None and rt.is_alive()
     with session["history_lock"]:
+        rust_host = session.get("_compute_host_turn_host")
+        turn_id = session.get("_compute_host_turn_id")
+        python_owner = session.get("_compute_host_active") and not session.get("_rust_host_preparing")
         session["_turn_cancel_requested"] = True
         session["queued_prompt"] = None
         session.pop("queued_prompts", None)
         session["_queued_prompt_generation"] = int(session.get("_queued_prompt_generation", 0)) + 1
+    if rust_host is not None and should_interrupt:
+        rust_host.interrupt(sid, request_id=request_id, turn_id=turn_id)
+    elif use_compute_host and (python_owner or (should_interrupt and not turn_id)):
+        _get_compute_host_supervisor().interrupt(sid, request_id=request_id)
     if should_interrupt:
         # Sibling of gateway/run_agent_cache.py::_interrupt_and_clear_session: a user-initiated stop of a
         # live TUI/desktop turn is the same "loop is gone" event for plugins holding per-turn external

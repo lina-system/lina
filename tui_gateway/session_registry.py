@@ -186,7 +186,15 @@ def _announce_built_agent(sid: str, key: str, current: dict, agent) -> None:
         from agent.credits_tracker import seed_credits_at_session_start
         seed_credits_at_session_start(agent)
     _start_session_services(sid, key, current)
-    info = _session_info(agent, current)
+    if current.get("_rust_host_preparing"):
+        # Preserve both views of initialization: the parent has admitted work,
+        # while the prepared child has an agent but has yet to start streaming.
+        initial = {**current, "running": False, "inflight_turn": None, "_compute_host_active": False}
+        initial.pop("_metadata_mirror", None)
+        current["_rust_ready_info"] = _session_info(agent, initial)
+        info = _session_info(agent, {**current, "_compute_host_active": True})
+    else:
+        info = _session_info(agent, current)
     if cfg_warn := _probe_config_health(_load_cfg()):
         info["config_warning"] = cfg_warn
         logger.warning(cfg_warn)

@@ -29,9 +29,11 @@ def _turn_isolation_enabled(cfg: dict | None = None) -> bool:
 def _session_uses_compute_host(session: dict, cfg: dict | None = None) -> bool:
     # Routes lazy sessions whose AIAgent was never built in-process; already-built
     # sessions keep the in-process path unless a prior isolated turn marked host ownership.
+    if session.get("_compute_host_turn_id"):
+        return True
+    python_owner = bool(session.get("_compute_host_active"))
     return _turn_isolation_enabled(cfg) and (
-        bool(session.get("_compute_host_active"))
-        or (session.get("agent") is None and session.get("agent_ready") is not None))
+        python_owner or (session.get("agent") is None and session.get("agent_ready") is not None))
 
 
 def _get_compute_host_supervisor(cfg: dict | None = None):
@@ -43,8 +45,73 @@ def _get_compute_host_supervisor(cfg: dict | None = None):
             _compute_host_supervisor = HostSupervisor(
                 rpc_sink=_relay_compute_host_rpc,
                 heartbeat_secs=int(isolation_cfg.get("compute_host_heartbeat_secs") or 15),
-                respawn_max=int(isolation_cfg.get("compute_host_respawn_max") or 3))
+                respawn_max=int(isolation_cfg.get("compute_host_respawn_max", 3)))
         return _compute_host_supervisor
+
+
+def _submit_uses_compute_host(session: dict, cfg: dict | None = None) -> bool:
+    hosted = _session_uses_compute_host(session) if cfg is None else _session_uses_compute_host(session, cfg)
+    if hosted and not session.get("_rust_parent_history"):
+        return True
+    cfg = cfg or _load_dashboard_process_isolation_config()
+    return cfg.get("compute_host_impl") == "rust" and _turn_isolation_enabled(cfg)
+
+
+def _session_compute_host(session: dict):
+    return session.get("_compute_host_turn_host") or _get_compute_host_supervisor()
+
+
+def _retire_session_rust_host(session: dict) -> None:
+    with _history_lock(session):
+        host = session.pop("_rust_host", None)
+    if host is not None:
+        host.shutdown()
+        # A terminal callback may already have left the supervisor's pending table.
+        with host.settlement_lock:
+            pass
+
+
+def _restore_compute_host_history(session: dict) -> bool:
+    """Load the current Python child's durable transcript before taking it back."""
+    with session["history_lock"]:
+        if session.get("_closing"):
+            return False
+        key = session.get("session_key")
+        try:
+            with _session_db(session) as db:
+                if db is None or db.get_session(key) is None:
+                    return False
+                history = db.get_messages_as_conversation(key, repair_alternation=True, include_row_ids=True)
+        except Exception:
+            logger.debug("Could not load hosted transcript for parent dispatch", exc_info=True)
+            return False
+        session["history"] = history
+        agent = session.get("agent")
+        if agent is not None:
+            session["agent"] = None
+            session["agent_ready"] = threading.Event()
+            session.pop("agent_build_started", None)
+            session.pop("agent_error", None)
+    if agent is not None:
+        agent._end_session_on_close = False
+        with _session_profile_runtime_scope(session):
+            agent.close()
+    return True
+
+
+def _prepare_inline_after_compute_host(session: dict) -> bool:
+    """Return ownership to the parent only after recovering its transcript."""
+    host = session.get("_rust_host")
+    if host is not None and not host._stopped_respawning:
+        _retire_session_rust_host(session)
+    if session.get("_compute_host_active") and not _restore_compute_host_history(session):
+        return False
+    with session["history_lock"]:
+        if session.get("_closing") or session.get("_turn_cancel_requested"):
+            return False
+        session.pop("_compute_host_active", None)
+        session.pop("_metadata_mirror", None)
+    return True
 
 
 def _compute_host_turn_frame(
@@ -104,7 +171,36 @@ def _metadata_mirror(session: dict | None) -> dict:
 
 
 def _compute_host_session_info(session: dict) -> dict:
-    return _session_info(session.get("agent"), session)
+    agent = session.get("agent")
+    info = _session_info(agent, session)
+    if agent is not None and "_rust_usage_timings" in session:
+        info["usage"] = _compute_host_usage(session, agent)
+    return info
+
+
+def _compute_host_usage(session: dict, agent) -> dict:
+    return {**_get_usage(agent), **session.get("_rust_usage_timings", {})}
+
+
+def _apply_rust_turn_usage(session: dict, agent, usage: dict) -> None:
+    """Fold provider totals into the parent and retain the latest request's occupancy."""
+    fields = {
+        "input": "session_input_tokens", "output": "session_output_tokens",
+        "reasoning": "session_reasoning_tokens", "prompt": "session_prompt_tokens",
+        "completion": "session_completion_tokens", "total": "session_total_tokens",
+        "calls": "session_api_calls", "cache_read": "session_cache_read_tokens",
+        "cache_write": "session_cache_write_tokens",
+    }
+    for key, attr in fields.items():
+        count = usage.get(key)
+        if isinstance(count, int) and count >= 0:
+            setattr(agent, attr, (getattr(agent, attr, 0) or 0) + count)
+    last_prompt = usage.get("context_used")
+    if last_prompt is None and usage.get("calls") == 1:
+        last_prompt = usage.get("prompt")
+    if last_prompt and (compressor := getattr(agent, "context_compressor", None)) is not None:
+        compressor.update_from_response({"prompt_tokens": last_prompt})
+    session["_rust_usage_timings"] = {key: usage[key] for key in ("avg_latency_s", "avg_tps") if key in usage}
 
 
 def _compute_host_adopt_frame_meta(session: dict, frame: dict) -> None:
@@ -190,7 +286,7 @@ def _relay_compute_host_response(frame: dict) -> bool:
     with _history_lock(session):
         session.pop("_compute_host_open_request", None)
     try:
-        _get_compute_host_supervisor().respond(sid, {"frame": dict(frame)})
+        _session_compute_host(session).respond(sid, {"frame": dict(frame)})
     except Exception:
         logger.debug("compute-host response relay failed sid=%s", sid, exc_info=True)
     return True
@@ -211,7 +307,7 @@ def _cancel_session_requests(sid: str, reason: str, *, method: str) -> None:
     if not hosted or not _session_uses_compute_host(session):
         return
     try:
-        _get_compute_host_supervisor().respond(sid, {"cancel": {"method": method, "reason": reason}})
+        _session_compute_host(session).respond(sid, {"cancel": {"method": method, "reason": reason}})
     except Exception:  # health: allow BLE001 -- the bridge raises transport-specific errors unknown here; the child's own deadline still ends the wait
         logger.warning("compute-host request cancel failed sid=%s method=%s", sid, method, exc_info=True)
 
@@ -224,7 +320,7 @@ def _lock_compute_host_clarify(rid: str, request_id: str, question_id: str, answ
         return None
     sid, session = located
     try:
-        ack = _get_compute_host_supervisor().respond(
+        ack = _session_compute_host(session).respond(
             sid, {"lock": {"request_id": request_id, "question_id": question_id, "answer": answer}})
     except Exception as exc:
         return _err(rid, 5019, f"compute-host clarify lock failed: {exc}")
@@ -263,27 +359,43 @@ def _apply_compute_host_metadata_mirror(session: dict, frame: dict | None) -> No
         session["_metadata_mirror_updated_at"] = time.time()
 
 
-def _on_compute_host_turn_done(rid: str, sid: str, session: dict, frame: dict) -> None:
+_NO_FORWARDED_SWITCH = object()
+
+
+def _on_compute_host_turn_done(
+    rid: str, sid: str, session: dict, frame: dict, *, forwarded_switch=_NO_FORWARDED_SWITCH,
+) -> None:
+    _apply_compute_host_metadata_mirror(session, frame)
     with session["history_lock"]:
-        _compute_host_adopt_frame_meta(session, frame)
+        rust_crashed = frame.get("reason") == "crash" and session.get("_compute_host_turn_host") is not None
+        session.pop("_rust_turn_stage", None)
+        session.pop("_rust_pre_model_info", None)
+        session.pop("_rust_ready_info", None)
+        session.pop("_compute_host_turn_id", None)
+        session.pop("_compute_host_turn_host", None)
+        session.pop("_compute_host_activity_ns", None)
         session["running"] = False
         session["last_active"] = time.time()
-        _clear_inflight_turn(session)
+        if frame.get("status") == "error" and frame.get("error"):
+            _fail_inflight_turn(session, frame["error"], error_surface=frame.get("error_surface"))
+        else:
+            _clear_inflight_turn(session)
         session.pop("_compute_host_open_request", None)
-    # The isolated turn carried the queued model switch to the compute host, whose
-    # turn thread applied it. Clear the server-side stash so it isn't re-forwarded
-    # (kept on error so the fail-open in-process path can still apply it).
-    if frame.get("type") != "turn.error":
-        session.pop("pending_model_switch", None)
+        # A switch submitted after the slot becomes idle belongs to the next turn.
+        if frame.get("type") != "turn.error" and (
+                forwarded_switch is _NO_FORWARDED_SWITCH or session.get("pending_model_switch") is forwarded_switch):
+            session.pop("pending_model_switch", None)
+        # The retained agent is the planner. Until the replacement starts its
+        # next turn, no child owns a live execution inventory to advertise.
+        info_session = {**session, "_compute_host_active": True} if rust_crashed else session
+    _release_deferred_active_session_lease(session)
+    if session.get("_closing"):
+        return
     if frame.get("type") == "turn.error":
         message = str(frame.get("message") or "compute host turn failed")
         _emit("message.complete", sid, {"text": f"Error: {message}", "status": "error"})
-    _apply_compute_host_metadata_mirror(session, frame)
-    # Settlement of a turn whose session was closed mid-flight: the real lease was held for it.
-    _release_deferred_active_session_lease(session)
-    info = _compute_host_session_info(session)
     if not frame.get("session_info_emitted"):
-        _emit("session.info", sid, info)
+        _emit("session.info", sid, _compute_host_session_info(info_session))
     _drain_queued_prompt(rid, sid, session)
 
 
@@ -297,33 +409,101 @@ def _submit_prompt_to_compute_host(
                                      display_kind=display_kind, display_metadata=display_metadata)
     # Caller JSON-RPC ids may repeat across sockets and turns. Use an opaque
     # dispatch lifetime token, installed before a fast child can send activity.
+    from tui_gateway.rust_host_supervisor import RustHostSupervisor, select_host
+    from tui_gateway.rust_turn_plan import persist_rust_turn
+
+    leases = contextlib.ExitStack()
     turn_id = frame["turn_id"] = frame["request_id"] = uuid.uuid4().hex
     with session["history_lock"]:
+        if session.get("_closing") or session.get("_turn_cancel_requested"):
+            return _err(rid, 5019, "compute-host turn cancelled before dispatch")
+        previous_python_owner = session.get("_compute_host_active")
+        previous_mirror = session.get("_metadata_mirror")
         session["_compute_host_turn_id"] = turn_id
         session.pop("_compute_host_activity_ns", None)
 
     def _complete(done: dict) -> None:
         # submit_turn reports a synchronous pipe failure via the callback before re-raising;
         # leave the session untouched so prompt.submit can fail open to the in-process path.
-        if done.get("reason") != "send_failed":
-            with session["history_lock"]:
-                if session.get("_compute_host_turn_id") != turn_id:
-                    return
-                session.pop("_compute_host_turn_id", None)
-                session.pop("_compute_host_activity_ns", None)
-            _on_compute_host_turn_done(rid, sid, session, done)
+        if done.get("reason") == "send_failed":
+            return
+        with session["history_lock"]:
+            owns_turn = session.get("_compute_host_turn_id") == turn_id
+        if not owns_turn:
+            leases.close()
+            return
+        try:
+            if rust_host is not None:
+                terminal = {"type": done["type"], "message": done.get("message"), "reason": done.get("reason")}
+                with rust_host.settlement_lock:
+                    persisted = False
+                    receipt = None
+                    try:
+                        with session["history_lock"]:
+                            attached = session.get("_rust_host") is rust_host
+                        if attached and session.get("_rust_turn_stage"):
+                            details = rust_host.terminal_details(done)
+                            receipt = persist_rust_turn(
+                                session, {**{key: value for key, value in done.items() if key != "provider_error"},
+                                          **details})
+                            if details.get("status") == "error":
+                                terminal.update(details)
+                            persisted = True
+                    except Exception:
+                        if done.get("type") == "turn.end":
+                            terminal = {"type": "turn.error", "message": "Could not save the Rust turn transcript"}
+                        else:
+                            logger.debug("Could not persist terminal Rust error for sid=%s", sid, exc_info=True)
+                    finally:
+                        # Only the parent may advance Rust transcript metadata.
+                        done = terminal
+                        try:
+                            with _session_profile_runtime_scope(session, hydrate_secrets=False):
+                                rust_host.finish_events(
+                                    persisted=persisted and done.get("type") == "turn.end"
+                                    and not session.get("_closing"), receipt=receipt)
+                        finally:
+                            leases.close()
+        finally:
+            with _session_profile_runtime_scope(session, hydrate_secrets=False):
+                _on_compute_host_turn_done(
+                    rid, sid, session, done, forwarded_switch=frame.get("pending_model_switch"))
+
+    rust_host = None
+    claimed_images = []
     try:
-        _get_compute_host_supervisor(cfg).submit_turn(frame, on_complete=_complete)
-    except Exception as exc:
+        host = select_host(sid, session, cfg, frame, leases)
+        rust_host = host if isinstance(host, RustHostSupervisor) else None
+        with session["history_lock"]:
+            if (host is None or session.get("_closing") or session.get("_turn_cancel_requested")
+                    or (queued_prompt_generation is not None
+                        and queued_prompt_generation != int(session.get("_queued_prompt_generation", 0)))):
+                raise RuntimeError("compute host is unavailable for this dispatch")
+            session["_compute_host_active"] = rust_host is None
+            if rust_host is not None:
+                session["_compute_host_turn_host"] = rust_host
+                session.pop("_metadata_mirror", None)
+            if image_paths is None:
+                claimed_images = frame["attached_images"]
+                del session.setdefault("attached_images", [])[:len(claimed_images)]
+        host.submit_turn(frame, on_complete=_complete)
+    except Exception:
+        leases.close()
         with session["history_lock"]:
             if session.get("_compute_host_turn_id") == turn_id:
+                session.pop("_rust_turn_stage", None)
+                session.pop("_rust_pre_model_info", None)
+                session.pop("_rust_ready_info", None)
                 session.pop("_compute_host_turn_id", None)
+                session.pop("_compute_host_turn_host", None)
                 session.pop("_compute_host_activity_ns", None)
-        return _err(rid, 5019, f"compute-host dispatch failed: {exc}")
-    with session["history_lock"]:
-        session["_compute_host_active"] = True
-        if image_paths is None:
-            session["attached_images"] = []
+                session["_compute_host_active"] = bool(previous_python_owner)
+                if previous_mirror is not None:
+                    session["_metadata_mirror"] = previous_mirror
+                if claimed_images:
+                    session["attached_images"] = claimed_images + session.get("attached_images", [])
+        _release_deferred_active_session_lease(session)
+        return _err(rid, 5019, "compute-host dispatch failed before turn acceptance")
     return _ok(rid, {"status": "streaming", "turn_isolation": True})
 
 
@@ -333,7 +513,7 @@ def _send_compute_host_control(
     frame = dict(payload or {})
     frame.setdefault("type", "control")
     frame.setdefault("command", command)
-    return _get_compute_host_supervisor().control(
+    return _session_compute_host(_sessions.get(sid) or {}).control(
         sid, route_name=route_name, payload=frame, wait=wait, timeout=timeout,
         on_late_ack=on_late_ack)
 

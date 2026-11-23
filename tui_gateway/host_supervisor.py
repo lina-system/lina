@@ -124,18 +124,21 @@ def _signal_pid(pid: int, sig: int, label: str) -> bool:
         return False
 
 
-def _pid_command(pid: int) -> str:
-    if pid <= 0:
-        return ""
-    with contextlib.suppress(Exception):  # Linux fast path
-        data = (Path("/proc") / str(pid) / "cmdline").read_bytes()
-        if data:
-            return data.replace(b"\x00", b" ").decode("utf-8", errors="replace")
-    return _check_output(["ps", "-p", str(pid), "-o", "command="])
-
-
 def is_compute_host_identity(pid: int) -> bool:
-    return "tui_gateway.compute_host" in _pid_command(pid)
+    import psutil
+
+    if pid <= 0:
+        return False
+    try:
+        process = psutil.Process(pid)
+        executable = Path(process.exe()).name
+        if os.name == "nt":
+            executable = executable.casefold().removesuffix(".exe")
+        if executable == "lina-turn-host":
+            return True
+        return executable.startswith("python") and process.cmdline()[1:3] == ["-m", "tui_gateway.compute_host"]
+    except (psutil.Error, OSError):
+        return False
 
 
 class HostSupervisor:
@@ -336,17 +339,21 @@ class HostSupervisor:
         elif late is not None:
             _call_logged(late[1], frame, f"compute host late control ack handler failed (request_id={request_id})")
 
+    def _child_environment(self) -> dict[str, str]:
+        env = {**hermes_subprocess_env(inherit_credentials=True), **os.environ, **(self.env or {})}
+        root = str(_repo_root())
+        env.setdefault("PYTHONPATH", root)
+        if root not in env["PYTHONPATH"].split(os.pathsep):
+            env["PYTHONPATH"] = root + os.pathsep + env["PYTHONPATH"]
+        return env
+
     def _spawn_locked(self, *, reason: str) -> None:
         if self._stopped_respawning:
             raise RuntimeError("compute host respawn disabled after crash loop")
         self._hello_event.clear()
         self._hello = {}
-        env = {**hermes_subprocess_env(inherit_credentials=True), **os.environ, **(self.env or {})}
+        env = self._child_environment()
         env["HERMES_COMPUTE_HOST_HEARTBEAT_SECS"] = str(self.heartbeat_secs)
-        root = str(_repo_root())
-        env.setdefault("PYTHONPATH", root)
-        if root not in env["PYTHONPATH"].split(os.pathsep):
-            env["PYTHONPATH"] = root + os.pathsep + env["PYTHONPATH"]
         # Lossy UTF-8 decode: a locale-mismatched byte must not raise inside the drain threads.
         proc = subprocess.Popen(
             self.argv, cwd=str(self.cwd), env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -448,8 +455,10 @@ class HostSupervisor:
                 return
             self._proc = None
         self._remove_registry()
-        self._fail_pending_turns(reason="crash", message=f"compute host exited with code {code}")
-        self._maybe_respawn_after_crash()
+        try:
+            self._fail_pending_turns(reason="crash", message=f"compute host exited with code {code}")
+        finally:
+            self._maybe_respawn_after_crash()
 
     def _fail_pending_turns(self, *, reason: str, message: str) -> None:
         with self._lock:
@@ -457,8 +466,10 @@ class HostSupervisor:
             self._pending_turns = {}
         failure = {"reason": reason, "message": message}
         for request_id, (sid, cb) in pending.items():
-            self.rpc_sink({"jsonrpc": "2.0", "method": "event",
-                           "params": {"type": "error", "session_id": sid, "payload": dict(failure)}})
+            _call_logged(
+                self.rpc_sink, {"jsonrpc": "2.0", "method": "event",
+                                "params": {"type": "error", "session_id": sid, "payload": {"message": message}}},
+                "compute host crash event delivery failed")
             if cb is not None:
                 frame = {"type": "turn.error", "sid": sid, "request_id": request_id, **failure}
                 _call_logged(cb, frame, "compute host error callback failed")

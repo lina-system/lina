@@ -225,22 +225,35 @@ def _interrupt_busy_session(sid: str, session: dict, agent: Any) -> None:
     """Interrupt a busy turn on a worker thread, never under ``history_lock`` (some providers can't apply ``interrupt()``
     until a blocking call returns; inline it stalled ``session.resume``). At most one interrupt worker per session so
     repeated steering can't leak threads."""
-    use_agent = agent is not None and hasattr(agent, "interrupt")
-    if not use_agent and not _session_uses_compute_host(session):
-        return
     with session["history_lock"]:
         if session.get("_busy_interrupt_pending"):
+            return
+        rust_host = session.get("_compute_host_turn_host")
+        turn_id = session.get("_compute_host_turn_id")
+        use_host = _session_uses_compute_host(session)
+        use_agent = agent is not None and hasattr(agent, "interrupt") and not use_host
+        if use_host and turn_id and rust_host is None and (
+                not session.get("_compute_host_active") or session.get("_rust_host_preparing")):
+            return  # A queued correction can drain after this still-preparing turn.
+        if not use_agent and not use_host:
             return
         session["_busy_interrupt_pending"] = True
 
     def interrupt() -> None:
         try:
             with contextlib.suppress(Exception):
-                agent.interrupt() if use_agent else _get_compute_host_supervisor().interrupt(sid)
+                if rust_host is not None:
+                    rust_host.interrupt(sid, turn_id=turn_id)
+                elif use_agent:
+                    agent.interrupt()
+                else:
+                    _get_compute_host_supervisor().interrupt(sid)
         finally:
             with session["history_lock"]:
                 session["_busy_interrupt_pending"] = False
-    threading.Thread(target=interrupt, daemon=True, name=f"busy-interrupt-{sid}").start()
+    from agent.memory_provider import spawn_context_thread
+
+    spawn_context_thread(interrupt, name=f"busy-interrupt-{sid}").start()
 
 
 def _ac_try_correction(rid, session: dict, agent: Any, method: str, plain_text: str, status: str) -> dict | None:
@@ -421,7 +434,7 @@ def _handle_busy_submit(rid, sid: str, session: dict, text: Any, transport: Any,
     plain_text = _coerce_message_text(text).strip() if not image_paths and _is_text_only_busy_payload(text) else ""
     # Text-only corrections steer/redirect in place when supported; media payloads and older agents fall through to
     # the proven interrupt + queue path.
-    if plain_text and agent is not None:
+    if plain_text and agent is not None and not _session_uses_compute_host(session):
         supported = {
             "steer": hasattr(agent, "steer"),
             "interrupt": getattr(agent, "_supports_active_turn_redirect", False) is True and hasattr(agent, "redirect")}
@@ -457,12 +470,18 @@ def _handle_busy_submit(rid, sid: str, session: dict, text: Any, transport: Any,
 def _drain_queued_prompt(rid, sid: str, session: dict) -> bool:
     """Fire a queued next-turn prompt if one is waiting and the session is idle. True when dispatched: the caller
     skips lower-priority follow-ups this cycle (the user's message wins)."""
+    with _session_profile_runtime_scope(session):
+        return _drain_queued_prompt_scoped(rid, sid, session)
+
+
+def _drain_queued_prompt_scoped(rid, sid: str, session: dict) -> bool:
     with _session_turn_admission(session) as admitted:
         if not admitted or session.get("_closing") or not (queued := session.get("queued_prompt")) or session.get("running"):
             return False
         queue_generation = int(session.get("_queued_prompt_generation", 0))
         _ac_set_queue(session, session.get("queued_prompts") or [])
         session["running"] = True
+        session["_turn_cancel_requested"] = False
         queued_transport = queued.get("transport")
         # The queuer's transport is pinned so the drained turn reaches the client that sent it — but
         # ATTACHED, not rebound: a mid-turn prompt from a second client used to silence the first for the
@@ -470,7 +489,7 @@ def _drain_queued_prompt(rid, sid: str, session: dict) -> bool:
         # prompt still runs, only the dead pin is dropped.
         if queued_transport is not None and not _transport_is_dead(queued_transport):
             _attach_session_transport(session, queued_transport)
-    use_compute_host = _session_uses_compute_host(session)
+    use_compute_host = _submit_uses_compute_host(session)
     with session["history_lock"]:
         if int(session.get("_queued_prompt_generation", 0)) != queue_generation:
             # Generation bump cancelled the claim (Stop, compress re-anchor, …): don't dispatch, but restore the
@@ -505,14 +524,18 @@ def _drain_queued_prompt(rid, sid: str, session: dict) -> bool:
     author_kwargs = {"turn_author": queued["turn_author"]} if queued.get("turn_author") else {}
     dispatch_failed = False
     try:
-        if not use_compute_host:
-            _run_prompt_submit(rid, sid, session, queued["text"], **kwargs, **author_kwargs)
-        elif (resp := _submit_prompt_to_compute_host(rid, sid, session, queued["text"], **kwargs)).get("error"):
-            with session["history_lock"]:
-                session["running"] = False
-                _clear_inflight_turn(session)
-            _emit("error", sid, {"message": str((resp.get("error") or {}).get("message") or "queued prompt failed")})
-            dispatch_failed = True
+        if use_compute_host:
+            resp = _submit_prompt_to_compute_host(rid, sid, session, queued["text"], **kwargs)
+            if not resp.get("error"):
+                return True
+        if use_compute_host or session.get("_rust_host") or session.get("_compute_host_active"):
+            if not _prepare_inline_after_compute_host(session):
+                raise RuntimeError("could not transfer the queued compute-host turn to the parent")
+            if not _restart_completed_failed_agent_build(sid, session, session.get("agent_ready")):
+                _start_agent_build(sid, session)
+            if _wait_agent_for_prompt(session, rid, sid):
+                raise RuntimeError("agent initialization failed during queued compute-host fallback")
+        _run_prompt_submit(rid, sid, session, queued["text"], **kwargs, **author_kwargs)
     except Exception as exc:
         _notif_log_failure("queued prompt dispatch failed", exc)
         _notif_release_turn(session)
