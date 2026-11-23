@@ -100,22 +100,23 @@ def test_due_today_follows_configured_timezone_not_host_timezone(work):
     assert "2027-01-15" in notice
 
 
-def test_full_due_digest_is_sent_once_per_seoul_date(work):
+@pytest.mark.parametrize("ids", [(), ("T1",)], ids=["full", "partial"])
+def test_due_reminder_is_sent_once_per_seoul_date(work, ids):
     work.config(extra="  timezone: Asia/Seoul\n")
     seoul = ZoneInfo("Asia/Seoul")
     work.clock[0] = datetime.datetime(2027, 1, 15, 8, tzinfo=seoul).timestamp()
     work.ok("edit", "T1", "--due", "2027-01-15")
-    work.ok("check", "--notify", "--quiet")
+    work.ok("check", *ids, "--notify", "--quiet")
     assert work.notices("alpha").count("(T1) 2027-01-15") == 1
 
     # UTC midnight fell between these two checks on the same Seoul morning.
     work.clock[0] = datetime.datetime(2027, 1, 15, 10, tzinfo=seoul).timestamp()
-    work.ok("check", "--notify", "--quiet")
+    work.ok("check", *ids, "--notify", "--quiet")
     assert work.notices("alpha").count("(T1) 2027-01-15") == 1
 
     # Just 23 hours after the first digest, the same item is now overdue.
     work.clock[0] = datetime.datetime(2027, 1, 16, 7, tzinfo=seoul).timestamp()
-    work.ok("check", "--notify", "--quiet")
+    work.ok("check", *ids, "--notify", "--quiet")
     assert work.notices("alpha").count("(T1) 2027-01-15") == 2
 
 
@@ -128,8 +129,13 @@ def test_partial_due_check_leaves_full_digest_available(work):
     partial = work.notices("alpha")
     assert "(T1) 2027-01-14" in partial
 
+    work.ok("check", "T1", "G1", "--notify", "--quiet")
+    second = work.notices("alpha")[len(partial):]
+    assert "(T1) 2027-01-14" not in second
+    assert "(G1) 2027-01-15" in second
+
     work.ok("check", "--notify", "--quiet")
-    digest = work.notices("alpha")[len(partial):]
+    digest = work.notices("alpha")[len(partial) + len(second):]
     assert "(T1) 2027-01-14" in digest
     assert "(G1) 2027-01-15" in digest
 

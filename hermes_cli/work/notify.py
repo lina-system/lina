@@ -81,16 +81,18 @@ def alert_line(r: dict, c: dict, agent: str) -> str:
              cmd=next_command(r, c, agent))
 
 
-def _pending_alerts(items_alert, nst: dict, at: int) -> dict[str, list]:
+def _pending_alerts(items_alert, nst: dict, at: int, *, full_check: bool) -> dict[str, list]:
     by_agent: dict[str, list] = {}
     for r, c in items_alert:
         # a due reminder has its own key (id:due), so it and the item's other reminder never reset each other's gap
         last = nst["items"].get(c.get("key", r["id"]), {})
         sig = c["status"] + "|" + (c["reasons"][0] if c["reasons"] else "")
-        # due items are gated once a day per agent in notify(); do not filter them by ITEM_GAP
-        if c["status"] not in DUE_STATUSES:
-            if at - last.get("at", 0) < ITEM_GAP and last.get("sig", "").split("|")[0] == c["status"]:
+        if c["status"] in DUE_STATUSES:
+            # A full digest includes items already sent by a partial check this morning.
+            if not full_check and "at" in last and _seoul_date(last["at"]) == _seoul_date(at):
                 continue
+        elif at - last.get("at", 0) < ITEM_GAP and last.get("sig", "").split("|")[0] == c["status"]:
+            continue
         if answering_agent(r) in agents():
             by_agent.setdefault(answering_agent(r), []).append((r, c, sig))
     return by_agent
@@ -108,7 +110,7 @@ def notify(items_alert, *, full_check: bool, dry: bool = False) -> list[str]:
     """
     nst = load_json(paths()["notify"], {"bots": {}, "items": {}})
     at, sent = now(), []
-    pending = _pending_alerts(items_alert, nst, at)
+    pending = _pending_alerts(items_alert, nst, at, full_check=full_check)
     due_bots = nst.setdefault("due_bots", {})
     for agent, lst in pending.items():
         due = [(r, c, sig) for r, c, sig in lst if c["status"] in DUE_STATUSES]
