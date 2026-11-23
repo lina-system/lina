@@ -63,7 +63,9 @@ def test_date_hint_is_suppressed_when_due_exists(work):
 
 
 def test_overdue_open_item_notifies_when_checked(work):
-    # Given
+    # Given — overdue goes out only in the morning window (07:00-12:00, owner's timezone)
+    work.config(extra="  timezone: Asia/Seoul\n")
+    work.clock[0] = datetime.datetime(2027, 1, 15, 8, tzinfo=datetime.timezone(datetime.timedelta(hours=9))).timestamp()
     work.ok("edit", "T1", "--due", "2020-01-01")
     # When
     work.ok("check", "T1", "--notify", "--quiet")
@@ -71,6 +73,17 @@ def test_overdue_open_item_notifies_when_checked(work):
     notice = work.notices("alpha")
     assert "2020-01-01" in notice
     assert "T1" in notice
+
+
+def test_overdue_is_held_outside_morning_window(work):
+    # Given
+    work.config(extra="  timezone: Asia/Seoul\n")
+    work.clock[0] = datetime.datetime(2027, 1, 15, 14, tzinfo=datetime.timezone(datetime.timedelta(hours=9))).timestamp()
+    work.ok("edit", "T1", "--due", "2020-01-01")
+    # When
+    work.ok("check", "T1", "--notify", "--quiet")
+    # Then
+    assert "T1" not in work.notices("alpha")
 
 
 def test_due_today_follows_configured_timezone_not_host_timezone(work):
