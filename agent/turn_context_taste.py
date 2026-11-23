@@ -61,7 +61,15 @@ def owner_taste_prompt_scope(agent: AIAgent, home: Path | None) -> Iterator[None
     scope = _PromptScope(agent, home)
     token = _PROMPT_SCOPE.set(scope)
     try:
+        if home is not None and getattr(agent, "_owner_taste_allowed", False) is True:
+            from agent.taste_voice_turn import prepare
+            prepare(agent, home)
         yield
+    except BaseException:
+        if getattr(agent, "_taste_voice_turn", None):
+            from agent.taste_voice_turn import finish
+            finish(agent, None)
+        raise
     finally:
         # A compression worker may retain a copied context after the admitting turn exits.
         scope.home = None
@@ -100,6 +108,7 @@ def resolve_owner_taste_home(
         return None
     scope = caller_scope(bound, "owner taste")
     if scope and is_owner(row, author):
+        agent._taste_voice_source_uid = row.get("message_uid")
         return Path(scope["hermes_home"])
     return None
 
