@@ -59,9 +59,12 @@ def test_a_korean_agent_carries_the_rule_with_the_same_bytes_in_every_build(kore
     rebuilt = build_system_prompt(agent)
     other_session = build_system_prompt(_agent("20261116_180000_bbbbbb"))
 
-    assert KOREAN_RULE in _section(first)
+    section = _section(first)
+    assert KOREAN_RULE in section
+    for topic in ("머리말", "상대의 질문", "사과", "맺음말", "실제 상태", "약어와 경로"):
+        assert any(line.startswith("- ") and topic in line for line in section.splitlines()), topic
     assert first.index(FRAME) < first.index("Conversation started:")
-    assert _section(rebuilt) == _section(other_session) == _section(first)
+    assert _section(rebuilt) == _section(other_session) == section
 
 
 def test_an_agent_whose_language_is_not_korean_carries_no_rule(english):
