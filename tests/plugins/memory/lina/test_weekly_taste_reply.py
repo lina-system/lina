@@ -1,6 +1,7 @@
 """The weekly batch changes one completed reply without changing its model request."""
 
 from hashlib import sha256
+from types import SimpleNamespace
 
 import pytest
 
@@ -9,6 +10,30 @@ from tests.plugins.memory.lina.test_turn_taste_routes import _route_agent, _run
 
 home = test_cache_order.home
 clock = test_cache_order.clock
+
+
+def test_streamed_weekly_footer_prints_after_the_body_once(home, clock, memory_store_sql, capsys):
+    from cli import HermesCLI
+    from tests.agent.test_taste_voice_store import _promote
+
+    _promote(memory_store_sql, "default", "orchard sketches", "like", clock.now)
+    cli = HermesCLI.__new__(HermesCLI)
+    cli.final_response_markdown = "raw"
+    cli.show_reasoning = cli.show_timestamps = cli._last_turn_interrupted = False
+    cli._reset_stream_state()
+    with _route_agent(home, "cli") as (agent, requests):
+        agent.stream_delta_callback = cli._stream_delta
+        result, _ = _run(agent, requests, "Describe the weather.")
+    cli._flush_stream()
+    body = capsys.readouterr().out
+    assert body.count("reply 1") == 1 and "orchard sketches" not in body
+
+    response = result["final_response"]
+    turn = SimpleNamespace(result=result, use_streaming_tts=False, box_opened=False)
+    cli._chat_print_response_panel(turn, response)
+    tail = capsys.readouterr().out
+    print("Streamed CLI output:", repr(body), "Post-stream output:", repr(tail))
+    assert "orchard sketches" in response and tail.strip() == response.split("\n", 1)[1]
 
 
 def test_weekly_promotion_ends_the_next_reply_without_changing_the_prefix(home, clock, memory_store_sql):

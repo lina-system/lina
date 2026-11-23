@@ -743,7 +743,8 @@ class CLIChatTurnMixin:
                 # _flush_stream() already closed the streamed box; a post-stream transform
                 # hook shows a suffix for append-only changes, else the full replacement.
                 _post_stream_text = _post_stream_transform_output(response, turn.result)
-                if _post_stream_text.strip():
+                # A replay gap can already have painted the whole public final of a held turn.
+                if _post_stream_text.strip() and response != getattr(self, "_streamed_text_this_turn", ""):
                     _cprint(_post_stream_text)
             elif modern:
                 from hermes_cli.cli_modern_layout import answer_label, closing_separator

@@ -133,8 +133,14 @@ def finish(agent, result):
         changes = settle(state.home, state.turn_id, completed=completed) if state.claimed else ()
         if completed:
             if weekly := render_weekly(changes):
-                result["final_response"] = text.rstrip() + "\n" + weekly
-                result["response_reused"] = False
+                from agent.turn_finalizer import public_pre_transform
+
+                # The stream carried the original before any earlier output hook ran.
+                original = result.get("pre_transform_response") if result.get("response_transformed") else text
+                separator = "" if text.endswith("\n") else "\n"
+                result.update(final_response=text + separator + weekly, response_transformed=True,
+                              pre_transform_response=public_pre_transform(agent, original),
+                              response_previewed=False, response_reused=False)
             measure(state.home, state.turn_id, state.task_kind or _activity_kind(current),
                     len(text), verification_steps(current), disliked=state.disliked)
     except (Error, StoreUnavailableError):
