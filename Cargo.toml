@@ -1,0 +1,3 @@
+[workspace]
+members = ["crates/lina-turn-host"]
+resolver = "3"
