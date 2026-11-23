@@ -2718,6 +2718,11 @@ DEFAULT_CONFIG = {
     # Embedding endpoint settings read by agent/embedding_client.py. max_request_chars: characters of text
     # in one `lina store reembed` request; a larger batch is cut into runs of at most this many (lina#763).
     "embedding": {"max_request_chars": 100_000},
+    # LINA hub ``work`` (lina_root/config.yaml, hermes_cli/delivery/settings.py) is an
+    # ``_EXTRA_KNOWN_ROOT_KEYS`` root, not a DEFAULT_CONFIG section: seeding it here would
+    # write a Hermes ``work:`` block and reject sibling keys. Nested readers include
+    # "repos", "sprint", "base", "dev_workflow", "runner_labels", "contract_scopes",
+    # "owner_login", "author", "forbidden_patterns", "followup_two_level", "land_merge".
     # Managed llama.cpp runtime (docs: user-guide/local-models): official binaries, one supervised
     # llama-server in router mode. No context/VRAM knobs by design.
     "local_runtime": {

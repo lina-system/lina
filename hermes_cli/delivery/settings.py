@@ -12,6 +12,7 @@ work:
   author: Name <id+name@users.noreply.github.com>   # the only commit author a landed branch may carry
   forbidden_patterns: ["private-host", "/home/someone"]   # regexes refused in a landed branch's added lines
   followup_two_level: [scripts/ci]     # paths whose follow-up area is two directories deep
+  land_merge: false              # true: `lina work merge --branch` merges after the gates; off: open the PR and stop
 ```
 """
 from __future__ import annotations
@@ -55,6 +56,13 @@ def _list(value) -> list[str]:
 
 def repos(base: Path | None = None) -> list[str]:
     return _list(section(base).get("repos"))
+
+
+def land_merge(base: Path | None = None) -> bool:
+    """``work.land_merge``: True lets ``lina work merge --branch`` merge after the gates pass. Off by default
+    (2026-11-23, grokbot): a landing only pushes the branch and opens or updates the pull request, which
+    시온 reviews, 케른 checks and 시온 merges. ``lina work merge <repo> <pr>`` is unchanged."""
+    return section(base).get("land_merge") is True
 
 
 def base_branch(base: Path | None = None) -> str:

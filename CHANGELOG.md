@@ -18,6 +18,7 @@ Hermes Agent upstream changes are not listed here; see the upstream history on t
 
 ### Changed
 
+- `lina work merge --branch` opens or updates the pull request and stops by default: after the merge gates pass it prints the verdict and does not merge, enqueue or close. Exit 0 means the PR is open and waiting for review. Set `work.land_merge: true` (exactly true) to keep the old merge-after-land path. `lina work merge <repo> <pr>` is unchanged.
 - The ocx-omo policy routes the 6.2 astra and sol (lina#807): `policy.default.json` names `gpt-6.2-astra` and `gpt-6.2-sol` where it named `gpt-6-astra` and `gpt-6.1-sol`, matching the model order omo 5.1.77 ships. A plan against 5.1.77 puts them first on ultrabrain, deep-high, deep-low and plan-reviewer, and still routes no Gemini, antigravity or opencodex name; `ocx-omo` tests read a 5.1.77 task fixture.
 - LINA pins omo-ai 5.1.77 (was 5.1.69; lina#809): `lina omo install` and the omo runner use it with its engine `@code-yeongyu/senpi` 2026.11.18, which names the 6.2 astra and sol; `lina omo upgrade` moves an installed device to it. The permission-system sources the worker protocol cites (`config.js`, `parsers.js`) are byte-identical to the 5.1.69 engine's.
 

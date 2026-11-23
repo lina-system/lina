@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Protocol
 
 from hermes_cli.delivery import settings, size
-from hermes_cli.delivery.merge import merge_pr
+from hermes_cli.delivery.merge import merge_pr, report_only
 from hermes_platform.resolver import locate_command
 
 NOREPLY = "@users.noreply.github.com"
@@ -217,7 +217,8 @@ def follow_up(gh, hub, job: dict, pull: dict, branch: str, issue: int, *, base: 
         change = _change(clone, onto)
     if said := size.note(gh, repo, issue, number, change):
         out(said)
-    return merge_pr(gh, repo, number, base=base, out=out, **merge_options)
+    return (merge_pr if settings.land_merge(base) else report_only)(gh, repo, number, base=base, out=out,
+                                                                    **merge_options)
 
 
 def land(gh, branch: str, task: str, title: str, issue: int, *, base: Path | None = None, source=None, out=print,
@@ -260,4 +261,5 @@ def land(gh, branch: str, task: str, title: str, issue: int, *, base: Path | Non
     out(f"{branch}: opened #{number}")
     if said := size.note(gh, repo, issue, number, change):
         out(said)
-    return merge_pr(gh, repo, number, base=base, out=out, **merge_options)
+    return (merge_pr if settings.land_merge(base) else report_only)(gh, repo, number, base=base, out=out,
+                                                                    **merge_options)
