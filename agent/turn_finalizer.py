@@ -615,9 +615,9 @@ def finalize_turn(
 ):
     """Run the post-loop finalization and return the turn ``result`` dict."""
     from agent.conversation_loop import logger
-    from agent.turn_context import PRE_LLM_BLOCK_EXIT_REASON
+    from agent.turn_context import OWNER_TASTE_FORGET_EXIT_REASON, PRE_LLM_BLOCK_EXIT_REASON
 
-    vetoed = _turn_exit_reason == PRE_LLM_BLOCK_EXIT_REASON  # a pre_llm_call block: no model call at all
+    vetoed = _turn_exit_reason in (PRE_LLM_BLOCK_EXIT_REASON, OWNER_TASTE_FORGET_EXIT_REASON)
 
     final_response, _turn_exit_reason, preserved_verification_fallback, interrupted = _resolve_budget_fallback(
         agent, final_response=final_response, api_call_count=api_call_count,

@@ -107,6 +107,8 @@ RAW_READERS = {
     "db_bootstrap.py": {"_integrity_check_interval_hours"},
     "embedding_provider.py": {"probe_provider_availability", "_request", "rerank", "__init__"},
     "engine.py": {"_set_context_length"},
+    # The owner's LCM_DATABASE_PATH selects the database for tombstone evidence.
+    "taste_forget.py": {"queue_taste_forget"},
     # Fork: path lookups (TIKTOKEN_CACHE_DIR, DATA_GYM_CACHE_DIR, HERMES_HOME), not a boolean policy.
     "tokens.py": {"_tiktoken_cache_dir"},
 }

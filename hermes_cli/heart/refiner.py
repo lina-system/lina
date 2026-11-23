@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
-import time
 from collections import Counter, defaultdict
 
 from pydantic import ValidationError
@@ -16,7 +15,6 @@ from hermes_cli.heart.models import Entry
 from hermes_cli.heart.parser import ROUTES, TARGET_KINDS
 from hermes_cli.heart.taste_rules import Decision, Evidence, Taste, daily_decisions, evidence_weight, weekly_decisions
 from hermes_state_store import MessageStore
-from hermes_time import get_timezone
 
 logger = logging.getLogger(__name__)
 
@@ -153,9 +151,7 @@ def review(store: MessageStore, day: dt.date, *, weekly: bool = False) -> Counte
     counts = Counter()
     with store.write(), store._writer_cursor() as cur:
         # CURRENT_DATE in the taste constraints must use the same calendar as the review.
-        zone = get_timezone()
-        db_zone = zone.key if zone else f"INTERVAL '{time.localtime().tm_gmtoff} seconds'"
-        cur.execute("SELECT set_config('TimeZone', %s, true)", (db_zone,))
+        storage.use_profile_calendar(cur)
         # Share the importer's per-agent lock. Evidence, history and the daily budget commit together.
         cur.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 357))", (agent,))
         tomorrow = storage.midnight(day + dt.timedelta(days=1))

@@ -18,6 +18,7 @@ from .escalation import (
 )
 from .maintenance import backup_database
 from .sqlite_session import is_store_connection
+from .taste_forget import taste_instructions
 from .tokens import count_messages_tokens, count_tokens
 from .vector_store import VectorStore
 
@@ -132,6 +133,7 @@ def _groups(conn, scan: dict[str, Any]) -> tuple[dict[int, tuple], list[list[int
 def _summarise_group(engine, rows, group, result, spend_guard) -> tuple[dict[int, tuple[str, int, int, int | None, str]], str]:
     """New (text, tokens, level, source tokens, model) per node, leaves first and each ancestor from its repaired children."""
     cfg, new = engine._config, {}
+    instructions = taste_instructions(engine._hermes_home, cfg.custom_instructions)
     for node_id in group:
         depth, source_ids, source_type = rows[node_id][2], json.loads(rows[node_id][5] or "[]"), rows[node_id][6]
         if source_type == "messages":
@@ -159,7 +161,7 @@ def _summarise_group(engine, rows, group, result, spend_guard) -> tuple[dict[int
                 circuit_breaker=engine._summary_circuit_breaker, spend_guard=spend_guard,  # never the live budget
                 prompt_version=getattr(cfg, "summary_prompt_version", 1), provenance=provenance,
                 timeout=cfg.summary_timeout_ms / 1000, l2_budget_ratio=cfg.l2_budget_ratio,
-                l3_truncate_tokens=cfg.l3_truncate_tokens, custom_instructions=cfg.custom_instructions,
+                l3_truncate_tokens=cfg.l3_truncate_tokens, custom_instructions=instructions,
                 route_key_prefix="repair:",  # repair rejections never count against the live route's keys
             )
         except Exception as exc:

@@ -80,6 +80,8 @@ jobs:
             summary_outcome.py
             survival_codec.py
             survival_fit.py
+            taste_forget.py
+            taste_recondense.py
             tokens.py
             tool_pairs.py
             tool_registry.py
