@@ -155,28 +155,38 @@ def _send(h, run_id: str, payload: dict) -> None:
     h.send(run_id, payload["message"], request_key=payload["request_key"])
 
 
-def _accept_recorded(job: dict, run_id: str, request_key: str | None = None) -> bool:
+def _missing_accept_writes(job: dict, run_id: str, request_key: str | None = None,
+                           note: str | None = None) -> tuple[str, ...]:
     if job.get("verdict") != "accepted":
-        return False
+        return ("evidence", "note")
     if job.get("work_accept_key"):
-        return request_key is None or job["work_accept_key"] == request_key
-    # Older jobs have no completion key. The verdict alone predates the linked
-    # to-do commands, so only recognize an old acceptance whose effects exist.
+        return () if request_key in (None, job["work_accept_key"]) else ("evidence", "note")
+    # Both an older acceptance and a partial write can lack a completion key.
+    # Replay only the effects missing from the to-do.
     if not job.get("todo"):
-        return True
+        return ()
     todo = store.latest(ledger.db(), job["todo"]) or {}
-    ref = f"omo:{run_id}"
-    note = job.get("verdict_note")
-    return (any(e["ref"] == ref for e in todo.get("evidence", []))
-            and (not note or any(n["text"] == f"{run_id} checked: {note}" for n in todo.get("notes", []))))
+    missing = []
+    if not any(e["ref"] == f"omo:{run_id}" for e in todo.get("evidence", [])):
+        missing.append("evidence")
+    if note is None:
+        note = job.get("verdict_note")
+    if note and not any(n["text"] == f"{run_id} checked: {note}" for n in todo.get("notes", [])):
+        missing.append("note")
+    return tuple(missing)
 
 
 def _verdict(h, run_id: str, payload: dict) -> None:
     accept = VERDICT_OPS[payload["op"]]
-    if accept and _accept_recorded(h.store.load(run_id) or {}, run_id, payload["request_key"]):
+    note = payload.get("note") or ""
+    if not accept:
+        h.verdict(run_id, False, note)
         return
-    h.verdict(run_id, accept, payload.get("note") or "")
-    if accept:
+    job = h.store.load(run_id) or {}
+    writes = _missing_accept_writes(job, run_id, payload["request_key"], note)
+    if writes or job.get("verdict_note") != note:
+        h.verdict(run_id, True, note, todo_writes=writes)
+    if job.get("work_accept_key") != payload["request_key"]:
         h.store.update(run_id, work_accept_key=payload["request_key"])
 
 
@@ -241,7 +251,7 @@ def _dispatch_writer(*, wait: bool = True):
             yield writer
 
 
-def dispatch(writer: Lock) -> int:
+def dispatch(writer: Lock, *, required: int | None = None) -> int:
     """Hand every pending outbox row to the worker, oldest first. -> rows done."""
     from hermes_cli.worker.transport import TransportError
     done = 0
@@ -251,10 +261,14 @@ def dispatch(writer: Lock) -> int:
                 _call_worker(oid, op, run_id, json.loads(payload))
         except HandOffError as exc:
             _finish(oid, run_id, op, str(exc)[:500])
+            if oid == required:
+                die(str(exc), code=1)
             warn(t("{run}: 작업이 받지 않았다 — {why}", run=run_id, why=exc))
             continue
         except (HandOffNotYet, TransportError, OSError) as exc:
             _retry_later(oid, str(exc))
+            if required is not None:
+                die(str(exc), code=1)
             warn(t("{run}: 작업에 아직 못 넘김, 다음 호출 때 다시 — {why}", run=run_id, why=exc))
             break
         _finish(oid, run_id, op, None)
@@ -373,15 +387,15 @@ def _need_run(run_id: str) -> tuple:
 def _hand_off(run_id: str, op: str, kind: str, payload: dict, who: str | None) -> None:
     with _dispatch_writer() as writer:
         _, owner_agent = _need_run(run_id)
-        if op == "accept" and _accept_recorded(hub().store.load(run_id) or {}, run_id):
+        if op == "accept" and not _missing_accept_writes(hub().store.load(run_id) or {}, run_id):
             return
         who = who or owner_agent
         db = ledger.db()
         with store.transaction(db):
             store.run_event(db, run_id, kind, who, dict(payload, op=op), payload.get("message") or
                             payload.get("note") or payload.get("why"), store.utc(now()))
-            _outbox(db, run_id, op, payload, who)
-        dispatch(writer)
+            oid = _outbox(db, run_id, op, payload, who)
+        dispatch(writer, required=oid if op == "accept" else None)
 
 
 def cmd_steer(a) -> None:

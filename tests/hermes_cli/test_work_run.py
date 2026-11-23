@@ -248,6 +248,31 @@ def test_accept_links_todo_without_holding_the_work_lock(work, monkeypatch, reco
         (1, None)]
 
 
+@pytest.mark.parametrize("failed_verb", ["evidence", "note"])
+def test_accept_todo_write_failure_can_be_retried(work, failed_verb):
+    work.ok("run", "submit", "T1", "--brief", str(work.brief))
+    (run_id,) = _jobs(work)
+    accept = ("run", "accept", run_id, "--note", "checked")
+    command = [sys.executable, "-c",
+               "import sys; from hermes_cli.work import main\n"
+               "if sys.argv[1] == sys.argv[2]: sys.exit(23)\n"
+               "main(sys.argv[2:])", failed_verb]
+    work.config(extra=f"worker:\n  todo_link: {{kind: hermes, command: {json.dumps(command)}}}\n")
+
+    code, out, err = work.run(*accept)
+    assert code != 0, (out, err)
+    assert not _jobs(work)[run_id].get("work_accept_key")
+
+    command[-1] = "none"  # Restore both verbs against the same to-do.
+    work.config(extra=f"worker:\n  todo_link: {{kind: hermes, command: {json.dumps(command)}}}\n")
+    work.ok(*accept)
+    assert _jobs(work)[run_id].get("work_accept_key")
+    work.ok(*accept)
+    todo = next(r for r in work.json("--all")["items"] if r["id"] == "T1")
+    assert [e["ref"] for e in todo["evidence"]] == [f"omo:{run_id}"]
+    assert [n["text"] for n in todo["notes"]] == [f"{run_id} checked: checked"]
+
+
 def _freeze_after_hand_off(work, monkeypatch):
     from hermes_cli.work import common
 

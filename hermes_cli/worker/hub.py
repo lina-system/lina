@@ -452,7 +452,7 @@ class Hub:
         opts["bot"], opts["bot_source"] = owner(opts.get("bot"))
 
     def _todo(self, job: dict, *args: str) -> None:
-        """``worker.todo_link``'s command with *args* on the run's to-do; a failure is one line, never an error."""
+        """Run the configured to-do command. Submission links are best effort; verdict writes are required."""
         try:
             command = settings.todo_link(self.worker)
             if not command:
@@ -464,7 +464,10 @@ class Hub:
                 raise OSError(f"exited {done.returncode}: {(done.stderr or done.stdout).strip()[-200:]}")
         except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
             self.store.receipt(job["id"], "todo_link_failed", verb=args[0], error=str(exc)[:300])
-            self.out(f"lina worker: to-do {job.get('todo')}: {args[0]} for {job['id']} failed: {exc}"[:400])
+            message = f"lina worker: to-do {job.get('todo')}: {args[0]} for {job['id']} failed: {exc}"[:400]
+            if args[0] in ("evidence", "note"):
+                raise HubError(message) from exc
+            self.out(message)
             return
         self.store.receipt(job["id"], "todo_linked", verb=args[0], todo=job.get("todo"))
 
@@ -940,7 +943,8 @@ class Hub:
         self.notify(job["id"], "cancelled", run)
         return 0
 
-    def verdict(self, task_id: str, accepted: bool, note: str = "") -> int:
+    def verdict(self, task_id: str, accepted: bool, note: str = "", *,
+                todo_writes: tuple[str, ...] = ("evidence", "note")) -> int:
         job = self.need(task_id)
         verdict = "accepted" if accepted else "rejected"
         job = self.store.update(task_id, verdict=verdict, verdict_note=note) or job
@@ -948,8 +952,9 @@ class Hub:
                            delivery=job.get("delivery"))
         self.out(f"{task_id} {verdict}")
         if accepted and job.get("todo"):
-            self._todo(job, "evidence", job["todo"], f"omo:{task_id}")
-            if note:
+            if "evidence" in todo_writes:
+                self._todo(job, "evidence", job["todo"], f"omo:{task_id}")
+            if note and "note" in todo_writes:
                 self._todo(job, "note", job["todo"], f"{task_id} checked: {note}")
         return 0
 
