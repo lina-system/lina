@@ -62,22 +62,25 @@ def taste_instructions(hermes_home: str | Path, instructions: str, *, forgetting
     """Append the exact policy only to an owning taste profile's summary requests."""
     if TASTE_INSTRUCTION in instructions.splitlines():
         return instructions
-    if not forgetting and (not hermes_home or not _has_tastes(Path(hermes_home))):
+    if not forgetting and (not hermes_home or not _has_taste_history(Path(hermes_home))):
         return instructions
     return "\n".join(part for part in (instructions, TASTE_INSTRUCTION) if part)
 
 
-def _has_tastes(home: Path) -> bool:
+def _has_taste_history(home: Path) -> bool:
+    """A tombstone keeps the policy active while raw conversations remain available."""
     from hermes_state_store import StoreUnavailableError
 
     try:
         from psycopg.errors import UndefinedTable
     except ImportError:
         return False
-    from hermes_cli.heart.taste_context import has_tastes
+    from hermes_cli.heart import rows
 
     try:
-        return has_tastes(home)
+        with rows.open_store(home) as store, store._cursor() as cur:
+            cur.execute("SELECT EXISTS (SELECT 1 FROM memory.tastes WHERE agent_id=%s)", (store.agent_id,))
+            return cur.fetchone()[0]
     except (StoreUnavailableError, UndefinedTable):
         return False
 

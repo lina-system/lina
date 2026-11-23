@@ -1,4 +1,4 @@
-"""Operator rollup requests obey the owning home's taste policy (#360)."""
+"""Ordinary summary requests obey the owning home's taste history (#360)."""
 
 from datetime import UTC, datetime
 from importlib import import_module
@@ -6,16 +6,20 @@ from pathlib import Path
 
 import pytest
 
+from hermes_cli.heart.forget import forget_from_conversation
+from hermes_cli.heart.taste_context import has_tastes
+
 LCM = "plugins.context_engine.lcm-x"
 CLAUSE = "Do not record the agent's likes or dislikes as lasting traits; describe only what happened."
 
 
-@pytest.mark.parametrize("profile", ["synthetic-owner", "synthetic-peer"])
-def test_operator_rollup_request_uses_owning_taste_policy(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, memory_store_sql, profile: str,
+@pytest.mark.parametrize("surface", ["instructions", "leaf", "condensation", "rollup"])
+@pytest.mark.parametrize("history", ["live", "forgotten", "never"])
+def test_summary_request_uses_owning_taste_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, memory_store_sql, history: str, surface: str,
 ) -> None:
     owner = tmp_path / "profiles" / "synthetic-owner"
-    home = tmp_path / "profiles" / profile
+    home = owner if history != "never" else tmp_path / "profiles" / "synthetic-peer"
     owner.mkdir(parents=True)
     home.mkdir(parents=True, exist_ok=True)
     memory_store_sql(
@@ -25,6 +29,17 @@ def test_operator_rollup_request_uses_owning_taste_policy(
     )
     # The operator's ambient profile must not select the peer's policy.
     monkeypatch.setenv("HERMES_HOME", str(owner))
+    if history != "live":
+        result = forget_from_conversation(
+            "Forget the taste for Blue Triangles", owner_verified=True, history=[], target_home=owner,
+        )
+        assert result is not None and result.forgotten is not None
+    assert has_tastes(home) == (history == "live")
+    expected = history != "never"
+    if surface == "instructions":
+        instructions = import_module(f"{LCM}.taste_forget").taste_instructions(home, "Keep dates.")
+        assert instructions == ("Keep dates.\n" + CLAUSE if expected else "Keep dates.")
+        return
     config = import_module(f"{LCM}.config").LCMConfig(
         database_path=str(home / "lcm.db"), embeddings_enabled=False,
         temporal_rollups_enabled=False, custom_instructions="Keep dates.", l3_truncate_tokens=1,
@@ -40,20 +55,23 @@ def test_operator_rollup_request_uses_owning_taste_policy(
     try:
         engine.on_session_start("synthetic-session")
         stamp = datetime(2026, 7, 15, 12, tzinfo=UTC).timestamp()
-        engine._dag.add_node(import_module(f"{LCM}.dag").SummaryNode(
+        leaf = import_module(f"{LCM}.dag").SummaryNode(
             session_id="synthetic-session", depth=0,
             summary="The assistant chose blue triangles for the sample on Tuesday.",
             token_count=30, created_at=stamp, earliest_at=stamp, latest_at=stamp,
-        ))
-        config.temporal_rollups_enabled = True
-
-        result = import_module(f"{LCM}.command").handle_lcm_command(
-            "rollups rebuild day 2026-07-15", engine,
         )
-
-        assert "status: complete" in result
+        if surface == "leaf":
+            engine._summarize_leaf_chunk_with_rescue([{"role": "assistant", "content": leaf.summary}])
+        elif surface == "condensation":
+            engine._dag.add_node(leaf)
+            engine._condense_summary_nodes([leaf])
+        else:
+            engine._dag.add_node(leaf)
+            config.temporal_rollups_enabled = True
+            reply = import_module(f"{LCM}.command").handle_lcm_command("rollups rebuild day 2026-07-15", engine)
+            assert "status: complete" in reply
         assert requests
-        assert all((CLAUSE in prompt) == (profile == "synthetic-owner") for prompt in requests)
+        assert all((CLAUSE in prompt) == expected for prompt in requests)
         assert all("Keep dates." in prompt for prompt in requests)
         assert config.custom_instructions == "Keep dates."
     finally:
