@@ -1,5 +1,5 @@
 #!/usr/bin/env -S bash -c 'exec "$BASH" "$(dirname "$0")/run-in-hermes-env" python3 "$0" "$@"'
-"""Render ``tui_gateway/contracts`` into TypeScript and OpenRPC.
+"""Render ``tui_gateway/contracts`` into TypeScript, OpenRPC, and compute-host JSON Schema.
 
 Python-only (the Python CI lane has no Node): Pydantic's ``model_json_schema()`` output is walked
 by a deliberately small JSON-Schema-subset renderer — object/properties/required, primitives,
@@ -27,6 +27,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from tui_gateway import contracts
+from tui_gateway.contracts.compute_host import ComputeHostFrame
 from tui_gateway.contracts.connectors import (
     ConnectorAccountStatus,
     ConnectorErrorReason,
@@ -42,6 +43,7 @@ from tools.connectors.portal.wire import ConnectorTool
 
 TS_OUT = ROOT / "apps" / "shared" / "src" / "gateway-contract.generated.ts"
 OPENRPC_OUT = ROOT / "apps" / "shared" / "src" / "gateway-contract.openrpc.json"
+COMPUTE_HOST_OUT = ROOT / "docs" / "api" / "compute-host-frames.schema.json"
 _ENUM_PAIRS = (
     ("ConnectionTargetState", ConnectionTargetState, "TargetState", TargetState),
     ("ConnectionSettleReason", ConnectionSettleReason, "SettleReason", SettleReason),
@@ -355,15 +357,31 @@ def render_openrpc() -> str:
     return json.dumps(doc, indent=2, sort_keys=False) + "\n"
 
 
+def render_compute_host() -> str:
+    """Render the JSON Schema for a single frame in either direction."""
+    schema = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "Hermes compute-host frames",
+        "$comment": "Generated from tui_gateway/contracts by scripts/gen_gateway_contracts.py.",
+        **TypeAdapter(ComputeHostFrame).json_schema(schema_generator=_Schema),
+    }
+    return json.dumps(schema, indent=2, sort_keys=True) + "\n"
+
+
 def render_all() -> dict[Path, str]:
-    return {TS_OUT: _tidy(render_ts()), OPENRPC_OUT: render_openrpc()}
+    return {
+        TS_OUT: _tidy(render_ts()),
+        OPENRPC_OUT: render_openrpc(),
+        COMPUTE_HOST_OUT: render_compute_host(),
+    }
 
 
 def main(argv: list[str] | None = None) -> int:
     args = argv if argv is not None else sys.argv[1:]
     check = "--check" in args
     stale = []
-    for path, text in render_all().items():
+    outputs = {COMPUTE_HOST_OUT: render_compute_host()} if "--compute-host-only" in args else render_all()
+    for path, text in outputs.items():
         current = path.read_text(encoding="utf-8-sig") if path.exists() else None
         if current == text:
             continue
