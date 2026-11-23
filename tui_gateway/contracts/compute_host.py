@@ -266,6 +266,14 @@ class TurnStarted(_SessionReply):
     started_ns: int
 
 
+class ProviderError(_WireModel):
+    """Private HTTP failure summary used by the parent's error presenter."""
+
+    status_code: int = Field(ge=400, le=599)
+    message: str = Field(max_length=512, pattern=r"^[^\x00-\x1f\x7f]*$", repr=False)
+    attempts: int = Field(ge=1, description="Logical attempts, excluding diagnostic HTTP probes.")
+
+
 class TurnEnd(_SessionReply, _HistoryMetadata):
     type: Literal["turn.end"]
     request_id: str
@@ -275,6 +283,7 @@ class TurnEnd(_SessionReply, _HistoryMetadata):
     turn_id: str | None = None
     messages: list[JsonObject] | None = None
     new_messages: list[JsonObject] | None = None
+    provider_error: ProviderError | None = None
 
 
 class TurnError(_SessionReply):

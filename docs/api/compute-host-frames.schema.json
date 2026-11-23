@@ -545,6 +545,37 @@
       "title": "Orphan",
       "type": "object"
     },
+    "ProviderError": {
+      "additionalProperties": false,
+      "description": "Private HTTP failure summary used by the parent's error presenter.",
+      "properties": {
+        "attempts": {
+          "description": "Logical attempts, excluding diagnostic HTTP probes.",
+          "minimum": 1,
+          "title": "Attempts",
+          "type": "integer"
+        },
+        "message": {
+          "maxLength": 512,
+          "pattern": "^[^\\x00-\\x1f\\x7f]*$",
+          "title": "Message",
+          "type": "string"
+        },
+        "status_code": {
+          "maximum": 599,
+          "minimum": 400,
+          "title": "Status Code",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "status_code",
+        "message",
+        "attempts"
+      ],
+      "title": "ProviderError",
+      "type": "object"
+    },
     "ReadFileAuthorize": {
       "additionalProperties": false,
       "properties": {
@@ -1479,6 +1510,17 @@
           ],
           "default": null,
           "title": "New Messages"
+        },
+        "provider_error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProviderError"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "request_id": {
           "title": "Request Id",

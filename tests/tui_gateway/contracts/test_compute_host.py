@@ -168,6 +168,19 @@ def test_rust_turn_completion_preserves_history_and_suffix() -> None:
     }])
 
 
+def test_http_failure_summary_roundtrips_without_raw_provider_fields() -> None:
+    frame = {
+        "type": "turn.end", "sid": "planned", "request_id": "request", "host_ns": 200,
+        "ended_ns": 199, "interrupted": False,
+    }
+    summary = {"status_code": 503, "message": "Service unavailable", "attempts": 1}
+    _assert_response_roundtrip([{**frame, "provider_error": summary}])
+    for invalid in ({"body": "raw"}, {"attempts": 0}, {"status_code": 200},
+                    {"message": "x" * 513}, {"message": "line\nbreak"}):
+        with pytest.raises(ValidationError):
+            RESPONSE.validate_python({**frame, "provider_error": {**summary, **invalid}})
+
+
 def test_read_file_policy_roundtrips_real_authorize_and_redact_replies(tmp_path: Path) -> None:
     from tui_gateway.rust_file_policy import handle_file_policy
 
