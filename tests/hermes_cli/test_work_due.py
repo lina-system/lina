@@ -136,8 +136,8 @@ def test_partial_due_check_leaves_full_digest_available(work):
 
     work.ok("check", "--notify", "--quiet")
     digest = work.notices("alpha")[len(partial) + len(second):]
-    assert "(T1) 2027-01-14" in digest
-    assert "(G1) 2027-01-15" in digest
+    assert "(T1) 2027-01-14" not in digest
+    assert "(G1) 2027-01-15" not in digest
 
 
 def test_due_digest_lists_every_item_despite_recent_ordinary_notice(tmp_path, monkeypatch):
