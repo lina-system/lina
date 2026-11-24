@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
-import shutil
 import socket
 import time
 from collections.abc import Iterator
@@ -24,15 +22,17 @@ from tests._fixtures.memory_store import PROCESS_STORE
 from tests.tui_gateway._turn_host_parity_support import (
     MODEL,
     MODEL_KEY,
-    ROOT,
     Json,
     ModelHandler,
     Reply,
     loopback_model,
 )
+from tests.tui_gateway.test_rust_host_rollback import rust_binary, rust_binary_on_path
 from tests.waiting import wait_until
 from tui_gateway import server
 from tui_gateway.rust_host_supervisor import RustHostSupervisor
+
+__all__ = ["rust_binary", "rust_binary_on_path"]
 
 pytestmark = pytest.mark.platforms("linux")
 _log = logging.getLogger(__name__)
@@ -66,11 +66,8 @@ def _rpc(ws: ClientConnection, method: str, **params: str) -> dict:
 
 @pytest.mark.usefixtures("real_build_revision")
 def test_detached_rust_turn_keeps_running_past_orphan_grace(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, rust_binary_on_path: Path,
 ) -> None:
-    binary = Path(shutil.which("lina-turn-host") or ROOT / "target/debug/lina-turn-host").resolve()
-    assert binary.is_file(), f"Build lina-turn-host first or put it on PATH: {binary}"
-    monkeypatch.setenv("PATH", os.pathsep.join((str(binary.parent), os.environ["PATH"])))
     monkeypatch.setenv("HERMES_TUI_TOOLSETS", "file_read")
     monkeypatch.setenv("LINA_STORE_DSN", PROCESS_STORE.app_dsn())
     monkeypatch.setattr(server, "_WS_ORPHAN_REAP_GRACE_S", 3.0)
@@ -137,10 +134,13 @@ def test_detached_rust_turn_keeps_running_past_orphan_grace(
                 before = wait_for_activity()
                 session = server._sessions[sid]
                 pid = session["_rust_host"].pid
-                assert Path(f"/proc/{pid}/exe").resolve(strict=True) == binary
+                assert Path(f"/proc/{pid}/exe").resolve(strict=True) == rust_binary_on_path
                 assert before["session_id"] == sid
                 assert before["turn_id"] == session["_compute_host_turn_id"]
-                _log.info("Rust child pid=%s executable=%s emitted correlated activity before WebSocket close", pid, binary)
+                _log.info(
+                    "Rust child pid=%s executable=%s emitted correlated activity before WebSocket close",
+                    pid, rust_binary_on_path,
+                )
 
             def armed_orphan_timer() -> Timer | None:
                 timer = server._pending_ws_reaps.get(sid)

@@ -41,6 +41,13 @@ def rust_binary() -> Path:
 
 
 @pytest.fixture
+def rust_binary_on_path(rust_binary: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Expose the selected binary to supervisors launched in the pytest process."""
+    monkeypatch.setenv("PATH", str(rust_binary.parent), prepend=os.pathsep)
+    return rust_binary
+
+
+@pytest.fixture
 def workdir() -> Iterator[Path]:
     output = ROOT / "out"
     output.mkdir(exist_ok=True)

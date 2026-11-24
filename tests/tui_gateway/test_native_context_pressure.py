@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import shutil
 from contextlib import ExitStack
-from pathlib import Path
 from queue import Queue
 from threading import Lock
 from types import SimpleNamespace
@@ -13,9 +11,12 @@ import pytest
 
 from agent.agent_init import _init_usage_state
 from agent.context_compressor import ContextCompressor
-from tests.tui_gateway._turn_host_parity_support import MODEL, MODEL_KEY, ROOT, Reply, loopback_model
+from tests.tui_gateway._turn_host_parity_support import MODEL, MODEL_KEY, Reply, loopback_model
+from tests.tui_gateway.test_rust_host_rollback import rust_binary, rust_binary_on_path
 from tui_gateway import server
 from tui_gateway.rust_host_supervisor import RustHostSupervisor, select_host
+
+__all__ = ["rust_binary", "rust_binary_on_path"]
 
 
 @pytest.mark.platforms("linux")
@@ -23,12 +24,10 @@ from tui_gateway.rust_host_supervisor import RustHostSupervisor, select_host
     (25, "context_pressure", False), (5000, None, False),
     (5000, "context_preflight_unavailable", False), (5000, "context_preflight_unavailable", True),
 ])
-@pytest.mark.usefixtures("real_build_revision")
+@pytest.mark.usefixtures("real_build_revision", "rust_binary_on_path")
 def test_gateway_supervisor_enforces_pressure_before_native_continuation(
     tmp_path, threshold, failure, broken_preparation, monkeypatch, caplog,
 ):
-    binary = Path(shutil.which("lina-turn-host") or ROOT / "target/debug/lina-turn-host").resolve()
-    assert binary.is_file(), f"Build lina-turn-host first or put it on PATH: {binary}"
     compressor = ContextCompressor(model=MODEL, config_context_length=100000)
     compressor.threshold_tokens = threshold
     if failure == "context_preflight_unavailable":
