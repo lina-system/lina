@@ -491,17 +491,19 @@ def _tool_result_frame(frame):
 
 
 @pytest.mark.parametrize(
-    ("usage", "tool_text", "decision"),
+    ("usage", "tool_text", "decision", "ineffective"),
     [
         ({"prompt_tokens": 9000, "initial_prompt_tokens": 400, "completion_tokens": 25},
-         "small result", "allow"),
+         "small result", "allow", False),
         ({"prompt_tokens": 9000, "initial_prompt_tokens": 4900, "completion_tokens": 150},
-         "small result", "pressure"),
-        (None, "large synthetic result " * 2000, "pressure"),
+         "small result", "pressure", False),
+        ({"prompt_tokens": 9000, "initial_prompt_tokens": 4900, "completion_tokens": 150},
+         "small result", "pressure", True),
+        (None, "large synthetic result " * 2000, "pressure", False),
     ],
-    ids=["first-hop-fits", "anchored-pressure", "usage-less-pressure"],
+    ids=["first-hop-fits", "anchored-pressure", "rearmed-pressure", "usage-less-pressure"],
 )
-def test_native_continuation_uses_owned_python_pressure_policy(turn, monkeypatch, usage, tool_text, decision):
+def test_native_continuation_uses_owned_python_pressure_policy(turn, monkeypatch, usage, tool_text, decision, ineffective):
     from contextlib import ExitStack
 
     from agent.usage_anchor import anchored_context_tokens
@@ -519,6 +521,11 @@ def test_native_continuation_uses_owned_python_pressure_policy(turn, monkeypatch
         monkeypatch.setattr(host, "_send_frame", replies.append)
         host._handle_host_frame({"type": "turn.started", "sid": "runtime", "request_id": frame["turn_id"]})
         agent.context_compressor.threshold_tokens = 5000
+        agent.compression_enabled = True
+        agent._compression_feasibility_checked = True
+        if ineffective:
+            agent.context_compressor._record_ineffective_compression_verdict(2)
+            assert agent.context_compressor.should_compress_info(5050) == (False, "ineffective")
         terminal = _tool_result_frame(frame)
         terminal["messages"][-1]["content"] = tool_text
         check = {
@@ -527,14 +534,27 @@ def test_native_continuation_uses_owned_python_pressure_policy(turn, monkeypatch
             "usage": usage, "messages": terminal["messages"], "summary": False,
         }
         host._handle_host_frame({**check, "turn_id": "previous-turn", "request_id": "stale"})
+        if ineffective:
+            assert agent.context_compressor.should_compress_info(5050) == (False, "ineffective")
         host._handle_host_frame(check)
         assert [(reply["request_id"], reply["decision"]) for reply in replies] == [
             ("stale", "unavailable"), ("preflight", decision),
         ]
+        terminal["context_response"] = {
+            "priced_prefix_count": check["priced_prefix_count"], "usage": usage,
+        }
         if decision == "pressure":
             terminal.update(type="turn.end", status="error", context_failure="context_pressure",
                             error="Paused before the continuation.")
             assert persist_rust_turn(session, terminal) is None
+        else:
+            terminal["context_response"] = {"priced_prefix_count": len(check["messages"]), "usage": None}
+            terminal["messages"].append({"role": "assistant", "content": terminal["text"]})
+            persist_rust_turn(session, terminal)
+            before = getattr(agent, "session_api_calls", 0)
+            server._apply_rust_turn_usage(session, agent, {"calls": 2, "context_used": 400})
+            assert agent.session_api_calls == before + 2
+            assert not agent.context_compressor.should_defer_preflight_to_real_usage(5050)
 
     if decision == "pressure":
         stored = db.get_messages_as_conversation("stored")
@@ -546,8 +566,59 @@ def test_native_continuation_uses_owned_python_pressure_policy(turn, monkeypatch
             assert select_host("runtime", session, cfg, {}, leases) is None
         assert server._prepare_inline_after_compute_host(session)
         assert session["history"][2]["content"] == tool_text
+        if usage is None:
+            _assert_python_compacts_before_resumed_send(agent, session["history"], monkeypatch)
     else:
         host.shutdown()
+
+
+def _assert_python_compacts_before_resumed_send(agent, history, monkeypatch):
+    from agent.turn_preflight_gate import run_preflight_gate
+    from agent.turn_request_assembly import assemble_api_request
+    from tui_gateway import server
+
+    class CompressionStarted(Exception):
+        pass
+
+    def record_compression(*_args, trigger, **_kwargs):
+        raise CompressionStarted(trigger)
+
+    text = "Continue with the file result"
+    messages = [*history, {"role": "user", "content": text}]
+    system = agent._cached_system_prompt
+    assembled = assemble_api_request(
+        agent, messages=messages, current_turn_user_idx=len(history), _ext_prefetch_cache="",
+        _plugin_user_context="", moa_config=None, active_system_prompt=system, original_user_message=text,
+        pending_moa_prepared_request=None, request_logger=server.logger)
+    assert not agent._request_pressure_anchored
+    assert assembled.request_pressure_tokens >= agent.context_compressor.threshold_tokens
+    with monkeypatch.context() as scoped:
+        scoped.setattr(agent, "_compress_context", record_compression)
+        with pytest.raises(CompressionStarted, match="pre_api"):
+            run_preflight_gate(
+                agent, request_pressure_tokens=assembled.request_pressure_tokens, _moa_prepared_request=None,
+                pending_moa_prepared_request=None, messages=messages, system_message=None, user_message=text,
+                active_system_prompt=system, conversation_history=history, api_call_count=1,
+                compression_attempts=0, max_compression_attempts=3, effective_task_id=None, final_response=None,
+                failed=False, _turn_exit_reason=None, _compression_timeout_exhausted=False,
+                _preflight_compression_blocked=False, _provider_overflow_recovery_pending=False,
+                _last_preflight_pressure=None)
+
+
+def test_invalid_native_terminal_context_response_cannot_append_rows(turn):
+    session, frame, db = turn
+    assert prepare_rust_turn("runtime", session, frame) is not None
+    terminal = _done(frame)
+    terminal["context_response"] = {
+        "usage": {"prompt_tokens": 123},
+        "priced_prefix_count": len(terminal["messages"]) + 1,
+    }
+    with rust_turn_lease(session, frame):
+        before = db.get_messages_as_conversation("stored")
+        with pytest.raises(RustTurnConflict, match="invalid priced prefix"):
+            persist_rust_turn(session, terminal)
+        assert db.get_messages_as_conversation("stored") == before
+    assert session["history"] == []
 
 
 @pytest.mark.parametrize("empty_close", [False, True])

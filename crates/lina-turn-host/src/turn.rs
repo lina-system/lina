@@ -243,6 +243,15 @@ impl Worker {
         if let Some(provider_error) = provider_error {
             end.insert("provider_error".into(), provider_error);
         }
+        if transcript.priced_prefix_count > 0 {
+            end.insert(
+                "context_response".into(),
+                json!({
+                    "usage": transcript.last_usage,
+                    "priced_prefix_count": transcript.priced_prefix_count,
+                }),
+            );
+        }
         if let Some(context_failure) = context_failure {
             end.insert("context_failure".into(), json!(context_failure));
         }

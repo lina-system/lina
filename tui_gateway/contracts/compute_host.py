@@ -175,11 +175,14 @@ class IterationSummaryAck(_PolicyFrame):
     body: JsonObject | None = Field(default=None, repr=False)
 
 
-class ContextPreflight(_PolicyFrame):
-    type: Literal["context.preflight"]
-    messages: list[JsonObject] = Field(repr=False)
+class ContextResponseUsage(_WireModel):
     usage: JsonObject | None = Field(repr=False)
     priced_prefix_count: int = Field(ge=1)
+
+
+class ContextPreflight(_PolicyFrame, ContextResponseUsage):
+    type: Literal["context.preflight"]
+    messages: list[JsonObject] = Field(repr=False)
     summary: bool
 
 
@@ -310,6 +313,7 @@ class TurnEnd(_SessionReply, _HistoryMetadata):
     messages: list[JsonObject] | None = None
     new_messages: list[JsonObject] | None = None
     provider_error: ProviderError | None = None
+    context_response: ContextResponseUsage | None = None
     context_failure: Literal["context_pressure", "context_preflight_unavailable"] | None = None
     max_iterations_reached: Literal[True] | None = None
     summary_outcome: Literal["success", "empty", "error"] | None = None

@@ -22,6 +22,7 @@ Hermes Agent upstream changes are not listed here; see the upstream history on t
 - Dashboard turns with an output transform or active goal use Python so the profile can rewrite replies, withhold streamed text, and continue its goal.
 - The Rust dashboard host checks context pressure after tool results and before its iteration summary. A blocked request keeps the completed tool results for the next Python turn.
 - Local file reads reuse package manifest metadata across environment lookups and detect edits and replacements.
+- Rust turns update the parent compressor after each provider response, including responses without usage, so continuations and resumed Python turns use current pressure information.
 
 ### Changed
 

@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Literal
 from urllib.parse import urlsplit
 
 if TYPE_CHECKING:
-    from tui_gateway.contracts.compute_host import ContextPreflight
+    from tui_gateway.contracts.compute_host import ContextPreflight, ContextResponseUsage, JsonObject
 
 
 _BODY_PARAMS = frozenset({
@@ -476,6 +476,23 @@ def _rust_terminal_status(frame: dict, rows: list[dict]) -> str:
     return status
 
 
+def _apply_context_response_usage(agent, raw_usage: JsonObject | None) -> tuple[int, int]:
+    """Update the compressor once for a completed native model response."""
+    from agent.usage_pricing import normalize_usage
+
+    compressor = agent.context_compressor
+    if raw_usage is None:
+        if compressor.awaiting_real_usage_after_compression:
+            compressor.update_from_response({})
+        compressor.note_usage_less_response()
+        return 0, 0
+    usage = normalize_usage(raw_usage, provider=agent.provider, api_mode=agent.api_mode)
+    initial = raw_usage.get("initial_prompt_tokens")
+    prompt_tokens = initial if type(initial) is int and initial > 0 else usage.prompt_tokens
+    compressor.update_from_response({"prompt_tokens": prompt_tokens, "completion_tokens": usage.output_tokens})
+    return prompt_tokens, usage.output_tokens
+
+
 def prepare_context_preflight(session: dict, check: ContextPreflight) -> Literal["allow", "pressure", "unavailable"]:
     """Apply Python's pressure policy to the native worker's next logical request."""
     from agent.context_compressor import MAX_ITERATIONS_SUMMARY_REQUEST
@@ -484,12 +501,13 @@ def prepare_context_preflight(session: dict, check: ContextPreflight) -> Literal
     from agent.model_metadata import estimate_messages_tokens_rough
     from agent.turn_context import _agent_stale_thinking_on_wire
     from agent.usage_anchor import anchored_context_tokens, capture_usage_anchor
-    from agent.usage_pricing import normalize_usage
 
     with session["history_lock"]:
         stage = session.get("_rust_turn_stage")
         if not stage or stage["turn_id"] != check.turn_id or "rows" not in stage:
             raise RustTurnConflict("context preflight has no admitted turn")
+        if not session.get("running") or session.get("_closing") or session.get("_turn_cancel_requested"):
+            return "unavailable"
         _rust_suffix(stage, {"messages": check.messages})
         count = check.priced_prefix_count
         expected_count = stage.get("context_message_count", len(stage["wire_history"]) + 1)
@@ -500,14 +518,12 @@ def prepare_context_preflight(session: dict, check: ContextPreflight) -> Literal
             raise RustTurnConflict("context preflight has no completed model and tool round")
         system = stage["context_system"]
         agent = session["agent"]
-        anchor = stage.get("context_anchor")
-        usage_omitted = stage.get("context_usage_omitted", False) or check.usage is None
-
-    if check.usage is not None:
-        usage = normalize_usage(check.usage, provider=agent.provider, api_mode=agent.api_mode)
-        initial = check.usage.get("initial_prompt_tokens")
-        prompt_tokens = initial if type(initial) is int and initial > 0 else usage.prompt_tokens
-        anchor = capture_usage_anchor(prompt_tokens, usage.output_tokens, check.messages[:count]) or anchor
+        prompt_tokens, completion_tokens = _apply_context_response_usage(agent, check.usage)
+        anchor = (capture_usage_anchor(prompt_tokens, completion_tokens, check.messages[:count])
+                  or stage.get("context_anchor"))
+        stage["context_message_count"] = len(check.messages)
+        stage["context_response_count"] = count
+        stage["context_anchor"] = anchor
 
     messages = check.messages
     if check.summary:
@@ -523,17 +539,31 @@ def prepare_context_preflight(session: dict, check: ContextPreflight) -> Literal
     blocked = False
     if agent.compression_enabled and getattr(agent, "max_compression_attempts", 3) > 0:
         ensure_compression_feasibility_checked(agent, pressure)
-        defer = not anchored and not usage_omitted and compressor.should_defer_preflight_to_real_usage(pressure)
+        defer = not anchored and compressor.should_defer_preflight_to_real_usage(pressure)
         blocked = not defer and compressor.should_compress(pressure)
 
     with session["history_lock"]:
         if (session.get("_rust_turn_stage") is not stage or not session.get("running")
                 or session.get("_closing") or session.get("_turn_cancel_requested")):
             return "unavailable"
-        stage["context_message_count"] = len(check.messages)
-        stage["context_anchor"] = anchor
-        stage["context_usage_omitted"] = usage_omitted
     return "pressure" if blocked else "allow"
+
+
+def _pending_context_response(stage: dict, frame: dict) -> ContextResponseUsage | None:
+    """Validate the terminal sample before persistence and discard a counted response."""
+    from tui_gateway.contracts.compute_host import ContextResponseUsage
+
+    if (raw := frame.get("context_response")) is None:
+        return None
+    response = ContextResponseUsage.model_validate(raw)
+    count = response.priced_prefix_count
+    if count > len(frame.get("messages") or ()):
+        raise RustTurnConflict("terminal context response has an invalid priced prefix")
+    if count == stage.get("context_response_count"):
+        return None
+    if count != stage.get("context_message_count", len(stage["wire_history"]) + 1):
+        raise RustTurnConflict("terminal context response has an invalid priced prefix")
+    return response
 
 
 def _stage_context_recovery(session: dict, stage: dict, history: list[dict]) -> None:
@@ -689,6 +719,7 @@ def persist_rust_turn(session: dict, frame: dict) -> dict | None:
         if "rows" not in stage:
             raise RustTurnConflict("Rust turn was not durably admitted")
         rows = _rust_suffix(stage, frame)
+        context_response = _pending_context_response(stage, frame)
         if frame.get("max_iterations_reached") or frame.get("summary_outcome") is not None:
             _finish_iteration_summary(session, stage, frame, rows)
         status = _rust_terminal_status(frame, rows)
@@ -698,6 +729,9 @@ def persist_rust_turn(session: dict, frame: dict) -> dict | None:
         _append_rust_rows(session, stage, actual)
         _close_rust_outcome(session, frame, rows, status)
         _append_rust_rows(session, stage, rows)
+        if context_response is not None:
+            with server._session_profile_runtime_scope(session, hydrate_secrets=False):
+                _apply_context_response_usage(session["agent"], context_response.usage)
         history = [*stage["history"], *rows]
         _adopt_rust_snapshot(session, history)
         receipt_state = server._TurnRun(

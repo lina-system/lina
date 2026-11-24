@@ -82,13 +82,13 @@
         }
       },
       "required": [
+        "usage",
+        "priced_prefix_count",
         "sid",
         "turn_id",
         "request_id",
         "type",
         "messages",
-        "usage",
-        "priced_prefix_count",
         "summary"
       ],
       "title": "ContextPreflight",
@@ -139,6 +139,36 @@
         "decision"
       ],
       "title": "ContextPreflightAck",
+      "type": "object"
+    },
+    "ContextResponseUsage": {
+      "additionalProperties": false,
+      "properties": {
+        "priced_prefix_count": {
+          "minimum": 1,
+          "title": "Priced Prefix Count",
+          "type": "integer"
+        },
+        "usage": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Usage"
+        }
+      },
+      "required": [
+        "usage",
+        "priced_prefix_count"
+      ],
+      "title": "ContextResponseUsage",
       "type": "object"
     },
     "Control": {
@@ -1680,6 +1710,17 @@
           ],
           "default": null,
           "title": "Context Failure"
+        },
+        "context_response": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ContextResponseUsage"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "ended_ns": {
           "title": "Ended Ns",

@@ -183,7 +183,7 @@ def _compute_host_usage(session: dict, agent) -> dict:
 
 
 def _apply_rust_turn_usage(session: dict, agent, usage: dict) -> None:
-    """Fold provider totals into the parent and retain the latest request's occupancy."""
+    """Fold provider totals into the parent after per-response context accounting."""
     fields = {
         "input": "session_input_tokens", "output": "session_output_tokens",
         "reasoning": "session_reasoning_tokens", "prompt": "session_prompt_tokens",
@@ -195,11 +195,6 @@ def _apply_rust_turn_usage(session: dict, agent, usage: dict) -> None:
         count = usage.get(key)
         if isinstance(count, int) and count >= 0:
             setattr(agent, attr, (getattr(agent, attr, 0) or 0) + count)
-    last_prompt = usage.get("context_used")
-    if last_prompt is None and usage.get("calls") == 1:
-        last_prompt = usage.get("prompt")
-    if last_prompt and (compressor := getattr(agent, "context_compressor", None)) is not None:
-        compressor.update_from_response({"prompt_tokens": last_prompt})
     session["_rust_usage_timings"] = {key: usage[key] for key in ("avg_latency_s", "avg_tps") if key in usage}
 
 
