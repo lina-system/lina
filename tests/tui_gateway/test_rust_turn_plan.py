@@ -503,17 +503,20 @@ def _tool_result_frame(frame):
     ],
     ids=["first-hop-fits", "anchored-pressure", "rearmed-pressure", "usage-less-pressure"],
 )
+@pytest.mark.usefixtures("real_build_revision")
 def test_native_continuation_uses_owned_python_pressure_policy(turn, monkeypatch, usage, tool_text, decision, ineffective):
     from contextlib import ExitStack
 
     from agent.usage_anchor import anchored_context_tokens
     from tui_gateway import server
+    from tui_gateway.host_supervisor import HostSupervisor
     from tui_gateway.rust_host_supervisor import select_host
 
     session, frame, db = turn
     agent = session["agent"]
     cfg = {"compute_host_impl": "rust", "compute_host_heartbeat_secs": 15, "compute_host_respawn_max": 1}
     replies = []
+    monkeypatch.setattr(HostSupervisor, "start", lambda _host: None)
     with ExitStack() as leases:
         host = select_host("runtime", session, cfg, frame, leases)
         assert host is not None
@@ -680,6 +683,7 @@ def test_crash_keeps_real_accepted_user_open_for_cold_rehydration(turn):
     assert session["agent"] is None
 
 
+@pytest.mark.usefixtures("real_build_revision")
 def test_crash_preserves_parent_mirror_and_requires_fresh_agent_sync(turn, monkeypatch):
     import time
     from contextlib import ExitStack
@@ -696,6 +700,7 @@ def test_crash_preserves_parent_mirror_and_requires_fresh_agent_sync(turn, monke
     host = RustHostSupervisor(
         "runtime", session, home=session["profile_home"],
         credentials={"OPENAI_API_KEY": "scoped-test-key"}, endpoint=agent.base_url, cfg=cfg)
+    monkeypatch.setattr(host, "start", lambda: None)
     restart_times = [time.monotonic()]
     host._restart_times = restart_times
     host._replacement_ready = True

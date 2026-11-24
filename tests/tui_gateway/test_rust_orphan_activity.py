@@ -64,6 +64,7 @@ def _rpc(ws: ClientConnection, method: str, **params: str) -> dict:
     return frame["result"]
 
 
+@pytest.mark.usefixtures("real_build_revision")
 def test_detached_rust_turn_keeps_running_past_orphan_grace(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

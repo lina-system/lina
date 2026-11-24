@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import queue
+import re
 import signal
 import subprocess
 import sys
@@ -80,18 +81,26 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
-def _check_output(argv: list[str], **kwargs: Any) -> str:
-    """Stripped stdout of a short subprocess, or ``""`` on any failure."""
-    with contextlib.suppress(Exception):
-        return subprocess.check_output(
-            argv, stdin=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace", stderr=subprocess.DEVNULL,
-            timeout=2, **kwargs).strip()
-    return ""
+def _known_build_sha(value: Any) -> bool:
+    return isinstance(value, str) and value != "0" * 40 and re.fullmatch(r"[0-9a-f]{40}", value) is not None
 
 
 def _build_sha() -> str:
-    """HEAD sha or ``"unknown"``; shared with ``compute_host`` so the hello handshake agrees."""
-    return _check_output(["git", "rev-parse", "HEAD"], cwd=str(_repo_root())) or "unknown"
+    """Resolve the running code's install stamp or checkout revision."""
+    from hermes_cli.version_info import get_version_info
+
+    try:
+        info = get_version_info()
+    except (TypeError, ValueError):
+        return "unknown"  # Malformed install metadata cannot identify this build.
+    # The version display can use a checkout under the process home as a fallback.
+    if info.source == "git" and not (_repo_root() / ".git").exists():
+        return "unknown"
+    return info.commit if info.commit is not None and _known_build_sha(info.commit) else "unknown"
+
+
+class NativeHostBuildError(RuntimeError):
+    """The Python parent and Rust executable could not prove matching revisions."""
 
 
 def _call_logged(cb: Callable[[dict], None], frame: dict, failure: str) -> None:
@@ -143,6 +152,8 @@ def is_compute_host_identity(pid: int) -> bool:
 
 class HostSupervisor:
     """Own one persistent compute-host child and relay its frames."""
+
+    requires_build_sha = False
 
     def __init__(
         self, *, registry_path: str | Path | None = None, argv: list[str] | None = None,
@@ -350,6 +361,8 @@ class HostSupervisor:
     def _spawn_locked(self, *, reason: str) -> None:
         if self._stopped_respawning:
             raise RuntimeError("compute host respawn disabled after crash loop")
+        if self.requires_build_sha and not _known_build_sha(self.expected_build_sha):
+            raise NativeHostBuildError("compute host parent build SHA is unknown")
         self._hello_event.clear()
         self._hello = {}
         env = self._child_environment()
@@ -365,11 +378,16 @@ class HostSupervisor:
                              (self._drain_stderr, "compute-host-stderr"),
                              (self._wait_for_exit, "compute-host-wait")):
             threading.Thread(target=target, args=(proc,), name=name, daemon=True).start()
-        if not self._hello_event.wait(timeout=_HELLO_TIMEOUT_SECS):
+        try:
+            if not self._hello_event.wait(timeout=_HELLO_TIMEOUT_SECS):
+                raise RuntimeError(f"compute host did not send hello; stderr={self._stderr_tail[-5:]}")
+            self._validate_hello()
+            self._persist_registry()
+        except (RuntimeError, OSError):
+            # Detach before reaping so the exit watcher cannot restart a rejected child.
+            self._proc = None
             self._terminate_process(proc)
-            raise RuntimeError(f"compute host did not send hello; stderr={self._stderr_tail[-5:]}")
-        self._validate_hello()
-        self._persist_registry()
+            raise
         logger.info("compute host started pid=%s reason=%s", proc.pid, reason)
 
     def _validate_hello(self) -> None:
@@ -380,9 +398,14 @@ class HostSupervisor:
         if got_home and got_home != self.expected_hermes_home:
             raise RuntimeError(
                 f"compute host HERMES_HOME mismatch: {got_home} != {self.expected_hermes_home}")
-        got_sha = str(hello.get("build_sha") or "")
+        got_sha = hello.get("build_sha")
         expected = self.expected_build_sha
-        if expected != "unknown" and got_sha not in {"", "unknown", expected}:
+        if self.requires_build_sha:
+            if not _known_build_sha(got_sha):
+                raise NativeHostBuildError("compute host child build SHA is unknown")
+            if got_sha != expected:
+                raise NativeHostBuildError(f"compute host build mismatch: {got_sha} != {expected}")
+        elif expected != "unknown" and str(got_sha or "") not in {"", "unknown", expected}:
             raise RuntimeError(f"compute host build mismatch: {got_sha} != {expected}")
 
     def _persist_registry(self) -> None:

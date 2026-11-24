@@ -24,6 +24,7 @@ Hermes Agent upstream changes are not listed here; see the upstream history on t
 - Local file reads reuse package manifest metadata across environment lookups and detect edits and replacements.
 - Rust turns update the parent compressor after each provider response, including responses without usage, so continuations and resumed Python turns use current pressure information.
 - A failed context check stops the next Rust model request and leaves the dashboard reader available to settle the turn.
+- Dashboard turns use Python when the native host cannot prove it was built from the parent's revision. Git-free builds can supply the revision through `LINA_TURN_HOST_BUILD_SHA`.
 
 ### Changed
 

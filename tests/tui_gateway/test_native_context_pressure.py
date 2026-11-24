@@ -21,6 +21,7 @@ from tui_gateway.rust_host_supervisor import RustHostSupervisor, select_host
 @pytest.mark.parametrize(("threshold", "failure"), [
     (25, "context_pressure"), (5000, None), (5000, "context_preflight_unavailable"),
 ])
+@pytest.mark.usefixtures("real_build_revision")
 def test_gateway_supervisor_enforces_pressure_before_native_continuation(tmp_path, threshold, failure, monkeypatch, caplog):
     binary = Path(shutil.which("lina-turn-host") or ROOT / "target/debug/lina-turn-host").resolve()
     assert binary.is_file(), f"Build lina-turn-host first or put it on PATH: {binary}"

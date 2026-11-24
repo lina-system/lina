@@ -13,7 +13,9 @@ from weakref import WeakKeyDictionary
 
 from pydantic import ValidationError
 
-from tui_gateway.host_supervisor import HostSupervisor
+from tui_gateway.host_supervisor import HostSupervisor, NativeHostBuildError, _build_sha
+
+logger = logging.getLogger(__name__)
 
 _TURN_EVENTS = frozenset({
     "message.start", "message.delta", "message.interim", "message.complete",
@@ -29,6 +31,8 @@ class _ProviderFailure(Exception):
 
 
 class RustHostSupervisor(HostSupervisor):
+    requires_build_sha = True
+
     def __init__(self, sid, session, *, home, credentials, endpoint, cfg):
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", sid):
             raise ValueError("invalid compute host session id")
@@ -405,6 +409,15 @@ class RustHostSupervisor(HostSupervisor):
             self._fail_pending_turns(reason="shutdown", message="compute host shut down")
 
 
+def _select_python_host(session, cfg):
+    from tui_gateway import server
+
+    server._retire_session_rust_host(session)
+    if session.get("_rust_parent_history"):
+        return None  # A previous Python child may still cache a pre-Rust transcript.
+    return server._get_compute_host_supervisor(cfg)
+
+
 def select_host(sid, session, cfg, frame, leases):
     """Prepare the eligible session before launching a child with its provider credential."""
     from hermes_constants import get_hermes_home
@@ -418,29 +431,29 @@ def select_host(sid, session, cfg, frame, leases):
         if recover_context:
             server._retire_session_rust_host(session)
             return None  # Continue inline with the settled transcript and Python compaction.
+        if _build_sha() == "unknown":
+            logger.warning("Rust compute host unavailable: parent build SHA is unknown")
+            return _select_python_host(session, cfg)
 
     ready = not rust or not session.get("_compute_host_active") or server._restore_compute_host_history(session)
     if rust and ready and session.get("_compute_host_active"):
         frame.update(history=list(session["history"]), history_version=session.get("history_version", 0))
     prepared = None
     if rust and ready:
+        rust_frame = frame.copy()
         session["_rust_host_preparing"] = True
         try:
-            prepared = prepare_rust_turn(sid, session, frame)
+            prepared = prepare_rust_turn(sid, session, rust_frame)
         finally:
             session.pop("_rust_host_preparing", None)
             if prepared is None:
                 session.pop("_rust_pre_model_info", None)
                 session.pop("_rust_ready_info", None)
     if prepared is None:
-        server._retire_session_rust_host(session)
-        if session.get("_rust_parent_history"):
-            return None  # A previous Python child may still cache a pre-Rust transcript.
-        return server._get_compute_host_supervisor(cfg)
+        return _select_python_host(session, cfg)
     with session["history_lock"]:
         host = session.get("_rust_host")
     plan, env = prepared
-    leases.enter_context(rust_turn_lease(session, frame))
     home = str(session.get("profile_home") or get_hermes_home())
     if host and (host.endpoint != plan["base_url"] or host.env != {"HERMES_HOME": home, **env}):
         server._retire_session_rust_host(session)
@@ -451,5 +464,17 @@ def select_host(sid, session, cfg, frame, leases):
         if host is None:
             host = RustHostSupervisor(sid, session, home=home, credentials=env, endpoint=plan["base_url"], cfg=cfg)
             session["_rust_host"] = host
+    try:
+        host.start()
+    except NativeHostBuildError as exc:
+        logger.warning("Rust compute host unavailable: %s", exc)
+        with session["history_lock"]:
+            session.pop("_rust_turn_stage", None)
+            session.pop("_rust_pre_model_info", None)
+            session.pop("_rust_ready_info", None)
+        return _select_python_host(session, cfg)
+    # This lease may persist the user row, so acquire it only after hello validates.
+    leases.enter_context(rust_turn_lease(session, rust_frame))
+    frame.update(rust_frame)
     frame["turn_plan"] = plan
     return host
