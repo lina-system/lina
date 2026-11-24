@@ -12,6 +12,8 @@ import json
 import os
 import re
 import shlex
+from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 from hermes_constants import get_default_hermes_root, project_venv_dir
@@ -147,29 +149,64 @@ def record_activation_inputs(stamps: Path, mtimes: dict[str, int], project_root:
         os.utime(stamp, ns=(mtime, mtime))
 
 
-def _payload_manifest(root: Path) -> tuple[dict, Path] | None:
-    """The manifest of the sealed payload whose tree is the resolved *root*, with the
-    payload directory its entries resolve from, or ``None``.
+# Launchers import this module from copied boot trees, so payload discovery
+# must not require another source file in those trees.
+@dataclass(frozen=True, slots=True)
+class PayloadManifest:
+    repo: str
+    venv: str
+    store: str
+    hermes_command: str
+    store_python: str | None
+    target: str
 
-    The manifest sits at the payload root: beside the tree, or on the tree itself when
-    the tree IS the payload root (the Docker image's in-place ``repo: "."`` assembly).
-    Every install asks, so a ``manifest.json`` that some other tool left beside a
-    checkout, or one with a mistyped field, must read as "not a payload", never as an
-    error. Readers then take each field with ``.get`` and treat an absent one as unset.
-    """
+
+def _file_identity(info: os.stat_result) -> tuple[int, int, int, int, int]:
+    return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
+
+
+@lru_cache(maxsize=8)
+def _read_manifest(path: Path, identity: tuple[int, int, int, int, int]) -> PayloadManifest | None:
+    # Compare the opened file on both sides of the read. A concurrent replacement
+    # or edit must not cache bytes under the wrong identity.
+    with path.open("rb") as stream:
+        if _file_identity(os.fstat(stream.fileno())) != identity:
+            raise OSError("payload manifest changed before reading")
+        raw = stream.read()
+        if _file_identity(os.fstat(stream.fileno())) != identity:
+            raise OSError("payload manifest changed while reading")
+    try:
+        manifest = json.loads(raw.decode("utf-8-sig"))
+    except ValueError:
+        return None
+    if not isinstance(manifest, dict) or not isinstance(manifest.get("repo"), str):
+        return None
+    runtime = manifest.get("runtime", {})
+    commands = runtime.get("commands", {}) if isinstance(runtime, dict) else None
+    if not isinstance(commands, dict):
+        return None
+    hermes_command = commands.get("hermes", "")
+    venv = manifest.get("venv", "")
+    store = manifest.get("store", "")
+    if not all(isinstance(value, str) for value in (hermes_command, venv, store)):
+        return None
+    store_python = runtime.get("storePython")
+    target = manifest.get("target")
+    return PayloadManifest(manifest["repo"], venv, store, hermes_command,
+                           store_python if isinstance(store_python, str) else None,
+                           target if isinstance(target, str) else "")
+
+
+def payload_manifest(root: Path) -> tuple[PayloadManifest, Path] | None:
+    """Find the manifest beside the tree or on an in-place payload tree."""
     for path in (root.parent / "manifest.json", root / "manifest.json"):
         try:
-            manifest = json.loads(path.read_text(encoding="utf-8-sig"))
-        except (OSError, ValueError):
+            manifest = _read_manifest(path, _file_identity(path.stat()))
+        except OSError:
             continue
-        if not isinstance(manifest, dict) or not isinstance(manifest.get("repo"), str):
-            continue
-        runtime = manifest.get("runtime", {})
-        commands = runtime.get("commands", {}) if isinstance(runtime, dict) else None
-        well_formed = (isinstance(commands, dict)
-                       and isinstance(commands.get("hermes", ""), str)
-                       and all(isinstance(manifest.get(key, ""), str) for key in ("venv", "store")))
-        if well_formed and (path.parent / manifest["repo"]).resolve() == root:
+        # Resolve on every lookup so a changed repo symlink takes effect even
+        # when the manifest itself has stayed the same.
+        if manifest is not None and (path.parent / manifest.repo).resolve() == root:
             return manifest, path.parent
     return None
 
@@ -186,14 +223,14 @@ def _payload_path(payload_root: Path, relative: str, what: str) -> Path:
 def payload_venv(project_root: Path) -> Path | None:
     """The environment a sealed payload ships with its tree, or ``None``."""
     root = Path(project_root).resolve()
-    payload = _payload_manifest(root)
-    venv = payload[0].get("venv") if payload else None
+    payload = payload_manifest(root)
+    venv = payload[0].venv if payload else None
     return _payload_path(payload[1], venv, "environment") if venv else None
 
 
 def _payload_hermes_command(root: Path) -> Path | None:
-    payload = _payload_manifest(root)
-    command = payload[0].get("runtime", {}).get("commands", {}).get("hermes") if payload else None
+    payload = payload_manifest(root)
+    command = payload[0].hermes_command if payload else None
     return _payload_path(payload[1], command, "launcher") if command else None
 
 
@@ -231,8 +268,8 @@ def store_root(project_root: Path, *, honor_runtime_override: bool = True) -> Pa
         if override:
             return Path(override).resolve()
     root = Path(project_root).resolve()
-    payload = _payload_manifest(root)
-    store = payload[0].get("store") if payload else None
+    payload = payload_manifest(root)
+    store = payload[0].store if payload else None
     if store:
         return _payload_path(payload[1], store, "store")
     from pm.paths import install_stamp_path
@@ -350,13 +387,11 @@ def project_python(project_root: Path) -> Path:
 
 def _payload_store_python(root: Path) -> Path | None:
     """A sealed payload's own interpreter when a venv must not be entered through its own."""
-    payload = _payload_manifest(root)
-    if payload is None or str(payload[0].get("target", "")).endswith("-bionic"):
+    payload = payload_manifest(root)
+    if payload is None or payload[0].target.endswith("-bionic"):
         return None  # Termux payloads launch through their venv interpreter by design.
-    relative = payload[0].get("runtime", {}).get("storePython")
-    if not isinstance(relative, str) or not relative:
-        return None
-    return _payload_path(payload[1], relative, "interpreter")
+    relative = payload[0].store_python
+    return _payload_path(payload[1], relative, "interpreter") if relative else None
 
 
 def venv_command(project_root: Path, venv: Path, options: tuple[str, ...] | list[str] = ()) -> list[str]:
@@ -519,7 +554,7 @@ def activate_dependencies(project_root: Path) -> None:
     # A sealed payload's Windows venv redirectors never go on PATH: a shipped venv's still
     # names the build machine, and a generation built since names PM's writable Python copy,
     # which cannot start the package's executables (see venv_command).
-    if not (os.name == "nt" and _payload_manifest(project_root.resolve()) is not None):
+    if not (os.name == "nt" and payload_manifest(project_root.resolve()) is not None):
         directories.append(venv_bin_dir(environment))
     prefix = [str(path) for path in directories if path.is_dir()]
     if prefix:

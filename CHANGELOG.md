@@ -19,6 +19,22 @@ Hermes Agent upstream changes are not listed here; see the upstream history on t
 - An open app screen follows the connected Hermes board's cards (`board.hermes`): the change stream `GET /api/lina/events` sends `{source: kanban, id: hermes:<card>}` when a board pass finds a card changed since the last good pass (`added`, `changed`, `removed`; at most 50 a pass, none on a reader's first pass) and when the board lines writer stores a changed line of such a card (`line`), from the new `board/cards.jsonl` journal, cut to `cards.jsonl.1` past 1 MiB (a socket reading it when it is cut resyncs once). Those cards' comments and state changes used to reach no stream, so the app kept the first read until a reload. The cursor format is `c6.`; a `c5.` cursor gets one resync.
 - A card's `now` line no longer names who does the work: the writer's prompt says to write what is being done, not who, and `check_now` refuses a line whose first word is an agent's name (bare or with any particle) or that carries one with a subject or dative particle (the agents' ids and display names of the work record and of the Hermes board's old record, less the owner's), so a stored line like that is asked again once. `리나` before `웹`, `서버`, `코어` or `허브` is the product and passes.
 
+- Dashboard session teardown handles a missing history lock when reclaiming gateway and desktop sessions.
+- Dashboard turns with an output transform or active goal use Python so the profile can rewrite replies, withhold streamed text, and continue its goal.
+- The Rust dashboard host checks context pressure after tool results and before its iteration summary. A blocked request keeps the completed tool results for the next Python turn.
+- Local file reads reuse package manifest metadata across environment lookups and detect edits and replacements.
+- Rust turns update the parent compressor after each provider response, including responses without usage, so continuations and resumed Python turns use current pressure information.
+- A failed context check stops the next Rust model request and leaves the dashboard reader available to settle the turn.
+- Rust file reads attach the session's subdirectory instructions to the next model request, including after a missing-file result.
+- Dashboard turns use Python when the native host cannot prove it was built from the parent's revision. Git-free builds can supply the revision through `LINA_TURN_HOST_BUILD_SHA`.
+- Rust dashboard turns now record token counts, estimated cost and billing route in the served profile's session database using the Python pricing path.
+- Rust dashboard turns retry empty and reasoning-only replies, preserve completed tool results during recovery, and show the Python no-reply notice when retries are exhausted.
+- A compute-host frame handler failure settles the affected turn and lets the dashboard process later frames. The dashboard retires a child that cannot settle the interrupted turn.
+- Rust dashboard turns report truncated answers as retryable failures and show provider refusals without making an empty-response retry.
+- Rust dashboard turns honor the configured model retry budget and count empty recovery attempts toward the iteration limit.
+- Reading the same file in a later Rust dashboard turn returns its contents again.
+- A goal set or resumed while a Rust dashboard turn is running receives the completed reply for evaluation.
+
 ### Changed
 
 - `lina work merge --branch` opens or updates the pull request and stops by default. Exit 0 on an open PR means the gates passed and it awaits review. Rerun the command after the PR merges to complete the linked issues and file review follow-ups. Set `work.land_merge: true` to merge after landing. `lina work merge <repo> <pr>` is unchanged.
@@ -223,6 +239,8 @@ Hermes Agent upstream changes are not listed here; see the upstream history on t
 ### Added
 
 - Sessions freeze the owner's applicable standing rules ahead of the self note and carry changes once on the next user message.
+- Isolated dashboard turns can select a Rust compute host for local `read_file` sessions through `dashboard.compute_host_impl`. Python remains the default.
+- The Rust turn host now returns an unavailable-tool error to the model and lets it continue the turn, matching the Python host.
 
 ## [0.0.1-alpha.20261102.1] - 2026-11-02
 

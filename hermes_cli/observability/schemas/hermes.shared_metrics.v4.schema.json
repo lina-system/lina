@@ -3637,6 +3637,7 @@
                 "feishu_doc",
                 "feishu_drive",
                 "file",
+                "file_read",
                 "hermes-acp",
                 "hermes-api-server",
                 "hermes-bluebubbles",

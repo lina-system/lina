@@ -1,0 +1,3136 @@
+{
+  "$comment": "Generated from tui_gateway/contracts by scripts/gen_gateway_contracts.py.",
+  "$defs": {
+    "ActiveSessionLease": {
+      "additionalProperties": false,
+      "properties": {
+        "lease_id": {
+          "title": "Lease Id",
+          "type": "string"
+        },
+        "session_id": {
+          "title": "Session Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "lease_id",
+        "session_id"
+      ],
+      "title": "ActiveSessionLease",
+      "type": "object"
+    },
+    "ContextPreflight": {
+      "additionalProperties": false,
+      "properties": {
+        "api_duration_s": {
+          "default": 0.0,
+          "minimum": 0.0,
+          "title": "Api Duration S",
+          "type": "number"
+        },
+        "empty_attempt": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EmptyAttempt"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "empty_retry": {
+          "anyOf": [
+            {
+              "const": true,
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Empty Retry"
+        },
+        "messages": {
+          "items": {
+            "additionalProperties": {
+              "$ref": "#/$defs/JsonValue"
+            },
+            "type": "object"
+          },
+          "title": "Messages",
+          "type": "array"
+        },
+        "priced_prefix_count": {
+          "minimum": 1,
+          "title": "Priced Prefix Count",
+          "type": "integer"
+        },
+        "request_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "title": "Request Id"
+        },
+        "response_index": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Response Index"
+        },
+        "sid": {
+          "title": "Sid",
+          "type": "string"
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "boolean"
+        },
+        "turn_id": {
+          "title": "Turn Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "context.preflight",
+          "title": "Type",
+          "type": "string"
+        },
+        "usage": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Usage"
+        }
+      },
+      "required": [
+        "usage",
+        "priced_prefix_count",
+        "sid",
+        "turn_id",
+        "request_id",
+        "type",
+        "messages",
+        "summary"
+      ],
+      "title": "ContextPreflight",
+      "type": "object"
+    },
+    "ContextPreflightAck": {
+      "additionalProperties": false,
+      "properties": {
+        "decision": {
+          "enum": [
+            "allow",
+            "pressure",
+            "unavailable"
+          ],
+          "title": "Decision",
+          "type": "string"
+        },
+        "request_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "title": "Request Id"
+        },
+        "retry_delay_s": {
+          "anyOf": [
+            {
+              "maximum": 90,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Retry Delay S"
+        },
+        "sid": {
+          "title": "Sid",
+          "type": "string"
+        },
+        "turn_id": {
+          "title": "Turn Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "context.preflight.ack",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sid",
+        "turn_id",
+        "request_id",
+        "type",
+        "decision"
+      ],
+      "title": "ContextPreflightAck",
+      "type": "object"
+    },
+    "ContextResponseUsage": {
+      "additionalProperties": false,
+      "properties": {
+        "api_duration_s": {
+          "default": 0.0,
+          "minimum": 0.0,
+          "title": "Api Duration S",
+          "type": "number"
+        },
+        "priced_prefix_count": {
+          "minimum": 1,
+          "title": "Priced Prefix Count",
+          "type": "integer"
+        },
+        "response_index": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Response Index"
+        },
+        "usage": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Usage"
+        }
+      },
+      "required": [
+        "usage",
+        "priced_prefix_count"
+      ],
+      "title": "ContextResponseUsage",
+      "type": "object"
+    },
+    "Control": {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Command"
+        },
+        "request_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Request Id"
+        },
+        "route_name": {
+          "title": "Route Name",
+          "type": "string"
+        },
+        "sid": {
+          "title": "Sid",
+          "type": "string"
+        },
+        "type": {
+          "const": "control",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sid",
+        "type",
+        "route_name"
+      ],
+      "title": "Control",
+      "type": "object"
+    },
+    "ControlAck": {
+      "additionalProperties": false,
+      "properties": {
+        "history_version": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "History Version"
+        },
+        "host_ns": {
+          "title": "Host Ns",
+          "type": "integer"
+        },
+        "message_count": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Message Count"
+        },
+        "messages": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/TranscriptMessage"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Messages"
+        },
+        "output": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output"
+        },
+        "request_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Request Id"
+        },
+        "result": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Result"
+        },
+        "route_name": {
+          "title": "Route Name",
+          "type": "string"
+        },
+        "session_info": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Session Info"
+        },
+        "session_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Session Key"
+        },
+        "sid": {
+          "title": "Sid",
+          "type": "string"
+        },
+        "type": {
+          "const": "control.ack",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "host_ns",
+        "sid",
+        "request_id",
+        "type",
+        "route_name"
+      ],
+      "title": "ControlAck",
+      "type": "object"
+    },
+    "ControlError": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Code"
+        },
+        "host_ns": {
+          "title": "Host Ns",
+          "type": "integer"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "request_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Request Id"
+        },
+        "sid": {
+          "title": "Sid",
+          "type": "string"
+        },
+        "type": {
+          "const": "control.error",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "host_ns",
+        "sid",
+        "request_id",
+        "type",
+        "message"
+      ],
+      "title": "ControlError",
+      "type": "object"
+    },
+    "EmptyAttempt": {
+      "additionalProperties": false,
+      "properties": {
+        "finish_reason": {
+          "title": "Finish Reason",
+          "type": "string"
+        },
+        "observed_generation": {
+          "title": "Observed Generation",
+          "type": "boolean"
+        },
+        "retry_count": {
+          "maximum": 3,
+          "minimum": 0,
+          "title": "Retry Count",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "finish_reason",
+        "retry_count",
+        "observed_generation"
+      ],
+      "title": "EmptyAttempt",
+      "type": "object"
+    },
+    "Error": {
+      "additionalProperties": false,
+      "properties": {
+        "host_ns": {
+          "title": "Host Ns",
+          "type": "integer"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "request_id": {
+          "$ref": "#/$defs/JsonValue",
+          "default": null
+        },
+        "type": {
+          "const": "error",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "host_ns",
+        "type",
+        "message"
+      ],
+      "title": "Error",
+      "type": "object"
+    },
+    "FileIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "ctime_ns": {
+          "title": "Ctime Ns",
+          "type": "integer"
+        },
+        "dev": {
+          "title": "Dev",
+          "type": "integer"
+        },
+        "ino": {
+          "title": "Ino",
+          "type": "integer"
+        },
+        "mtime_ns": {
+          "title": "Mtime Ns",
+          "type": "integer"
+        },
+        "size": {
+          "title": "Size",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "dev",
+        "ino",
+        "size",
+        "mtime_ns",
+        "ctime_ns"
+      ],
+      "title": "FileIdentity",
+      "type": "object"
+    },
+    "Heartbeat": {
+      "additionalProperties": false,
+      "properties": {
+        "active_turns": {
+          "title": "Active Turns",
+          "type": "integer"
+        },
+        "host_ns": {
+          "title": "Host Ns",
+          "type": "integer"
+        },
+        "progress_counter": {
+          "title": "Progress Counter",
+          "type": "integer"
+        },
+        "rss_mb": {
+          "title": "Rss Mb",
+          "type": "number"
+        },
+        "type": {
+          "const": "hb",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "host_ns",
+        "type",
+        "active_turns",
+        "progress_counter",
+        "rss_mb"
+      ],
+      "title": "Heartbeat",
+      "type": "object"
+    },
+    "Hello": {
+      "additionalProperties": false,
+      "properties": {
+        "boot_id": {
+          "title": "Boot Id",
+          "type": "string"
+        },
+        "build_sha": {
+          "title": "Build Sha",
+          "type": "string"
+        },
+        "cwd": {
+          "title": "Cwd",
+          "type": "string"
+        },
+        "hermes_home": {
+          "title": "Hermes Home",
+          "type": "string"
+        },
+        "host_ns": {
+          "title": "Host Ns",
+          "type": "integer"
+        },
+        "host_pid": {
+          "title": "Host Pid",
+          "type": "integer"
+        },
+        "type": {
+          "const": "hello",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "host_ns",
+        "type",
+        "host_pid",
+        "boot_id",
+        "build_sha",
+        "cwd",
+        "hermes_home"
+      ],
+      "title": "Hello",
+      "type": "object"
+    },
+    "Interrupt": {
+      "additionalProperties": false,
+      "properties": {
+        "request_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Request Id"
+        },
+        "sid": {
+          "title": "Sid",
+          "type": "string"
+        },
+        "type": {
+          "const": "interrupt",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sid",
+        "type"
+      ],
+      "title": "Interrupt",
+      "type": "object"
+    },
+    "InterruptAck": {
+      "additionalProperties": false,
+      "properties": {
+        "applied": {
+          "title": "Applied",
+          "type": "boolean"
+        },
+        "applied_ns": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Applied Ns"
+        },
+        "host_ns": {
+          "title": "Host Ns",
+          "type": "integer"
+        },
+        "message": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Message"
+        },
+        "request_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Request Id"
+        },
+        "sid": {
+          "title": "Sid",
+          "type": "string"
+        },
+        "type": {
+          "const": "interrupt.ack",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "host_ns",
+        "sid",
+        "request_id",
+        "type",
+        "applied"
+      ],
+      "title": "InterruptAck",
+      "type": "object"
+    },
+    "IterationSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "messages": {
+          "items": {
+            "additionalProperties": {
+              "$ref": "#/$defs/JsonValue"
+            },
+            "type": "object"
+          },
+          "title": "Messages",
+          "type": "array"
+        },
+        "request_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "title": "Request Id"
+        },
+        "sid": {
+          "title": "Sid",
+          "type": "string"
+        },
+        "turn_id": {
+          "title": "Turn Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "iteration.summary",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sid",
+        "turn_id",
+        "request_id",
+        "type",
+        "messages"
+      ],
+      "title": "IterationSummary",
+      "type": "object"
+    },
+    "IterationSummaryAck": {
+      "additionalProperties": false,
+      "properties": {
+        "body": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Body"
+        },
+        "ok": {
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "request_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "title": "Request Id"
+        },
+        "sid": {
+          "title": "Sid",
+          "type": "string"
+        },
+        "turn_id": {
+          "title": "Turn Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "iteration.summary.ack",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sid",
+        "turn_id",
+        "request_id",
+        "type",
+        "ok"
+      ],
+      "title": "IterationSummaryAck",
+      "type": "object"
+    },
+    "JsonValue": {},
+    "ModelRetry": {
+      "additionalProperties": false,
+      "properties": {
+        "failure": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProviderError"
+            },
+            {
+              "$ref": "#/$defs/TransportError"
+            }
+          ],
+          "title": "Failure"
+        },
+        "request_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "title": "Request Id"
+        },
+        "sid": {
+          "title": "Sid",
+          "type": "string"
+        },
+        "turn_id": {
+          "title": "Turn Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "model.retry",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sid",
+        "turn_id",
+        "request_id",
+        "type",
+        "failure"
+      ],
+      "title": "ModelRetry",
+      "type": "object"
+    },
+    "ModelRetryAck": {
+      "additionalProperties": false,
+      "properties": {
+        "request_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "title": "Request Id"
+        },
+        "retry_delay_s": {
+          "anyOf": [
+            {
+              "maximum": 600,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Retry Delay S"
+        },
+        "sid": {
+          "title": "Sid",
+          "type": "string"
+        },
+        "turn_id": {
+          "title": "Turn Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "model.retry.ack",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sid",
+        "turn_id",
+        "request_id",
+        "type"
+      ],
+      "title": "ModelRetryAck",
+      "type": "object"
+    },
+    "Orphan": {
+      "additionalProperties": false,
+      "properties": {
+        "host_ns": {
+          "title": "Host Ns",
+          "type": "integer"
+        },
+        "old_ppid": {
+          "title": "Old Ppid",
+          "type": "integer"
+        },
+        "ppid": {
+          "title": "Ppid",
+          "type": "integer"
+        },
+        "type": {
+          "const": "orphan",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "host_ns",
+        "type",
+        "old_ppid",
+        "ppid"
+      ],
+      "title": "Orphan",
+      "type": "object"
+    },
+    "ProviderError": {
+      "additionalProperties": false,
+      "description": "Private, bounded fields used for retry policy and terminal presentation.",
+      "properties": {
+        "attempts": {
+          "description": "Logical attempts, excluding diagnostic HTTP probes.",
+          "minimum": 1,
+          "title": "Attempts",
+          "type": "integer"
+        },
+        "body_reset": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "pattern": "^[^\\x00-\\x1f\\x7f]*$",
+                "type": "string"
+              },
+              {
+                "type": "number"
+              }
+            ]
+          },
+          "maxProperties": 4,
+          "propertyNames": {
+            "enum": [
+              "resets_in_seconds",
+              "resets_at",
+              "reset_at",
+              "retry_after"
+            ]
+          },
+          "title": "Body Reset",
+          "type": "object"
+        },
+        "body_retry_after": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Body Retry After"
+        },
+        "code": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Code"
+        },
+        "error_reset": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "pattern": "^[^\\x00-\\x1f\\x7f]*$",
+                "type": "string"
+              },
+              {
+                "type": "number"
+              }
+            ]
+          },
+          "maxProperties": 4,
+          "propertyNames": {
+            "enum": [
+              "resets_in_seconds",
+              "resets_at",
+              "reset_at",
+              "retry_after"
+            ]
+          },
+          "title": "Error Reset",
+          "type": "object"
+        },
+        "message": {
+          "maxLength": 512,
+          "pattern": "^[^\\x00-\\x1f\\x7f]*$",
+          "title": "Message",
+          "type": "string"
+        },
+        "rate_limit_reset": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rate Limit Reset"
+        },
+        "retry_after": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Retry After"
+        },
+        "status_code": {
+          "maximum": 599,
+          "minimum": 400,
+          "title": "Status Code",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "status_code",
+        "message",
+        "attempts"
+      ],
+      "title": "ProviderError",
+      "type": "object"
+    },
+    "ReadFileAuthorize": {
+      "additionalProperties": false,
+      "properties": {
+        "op": {
+          "const": "authorize",
+          "title": "Op",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "request_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "title": "Request Id"
+        },
+        "sid": {
+          "title": "Sid",
+          "type": "string"
+        },
+        "turn_id": {
+          "title": "Turn Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "read_file.policy",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sid",
+        "turn_id",
+        "request_id",
+        "type",
+        "path",
+        "op"
+      ],
+      "title": "ReadFileAuthorize",
+      "type": "object"
+    },
+    "ReadFileAuthorizeAck": {
+      "additionalProperties": false,
+      "properties": {
+        "display_path": {
+          "title": "Display Path",
+          "type": "string"
+        },
+        "identity": {
+          "$ref": "#/$defs/FileIdentity"
+        },
+        "max_chars": {
+          "title": "Max Chars",
+          "type": "integer"
+        },
+        "max_line_length": {
+          "title": "Max Line Length",
+          "type": "integer"
+        },
+        "max_lines": {
+          "title": "Max Lines",
+          "type": "integer"
+        },
+        "ok": {
+          "const": true,
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "request_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "title": "Request Id"
+        },
+        "resolved": {
+          "title": "Resolved",
+          "type": "string"
+        },
+        "sid": {
+          "title": "Sid",
+          "type": "string"
+        },
+        "turn_id": {
+          "title": "Turn Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "read_file.policy.ack",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sid",
+        "turn_id",
+        "request_id",
+        "type",
+        "ok",
+        "resolved",
+        "display_path",
+        "identity",
+        "max_chars",
+        "max_line_length",
+        "max_lines"
+      ],
+      "title": "ReadFileAuthorizeAck",
+      "type": "object"
+    },
+    "ReadFileDeniedAck": {
+      "additionalProperties": false,
+      "properties": {
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        },
+        "ok": {
+          "const": false,
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "request_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Request Id"
+        },
+        "result": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Result"
+        },
+        "sid": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Sid"
+        },
+        "turn_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Turn Id"
+        },
+        "type": {
+          "const": "read_file.policy.ack",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sid",
+        "turn_id",
+        "request_id",
+        "type",
+        "ok"
+      ],
+      "title": "ReadFileDeniedAck",
+      "type": "object"
+    },
+    "ReadFileHintArgs": {
+      "additionalProperties": false,
+      "properties": {
+        "file_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "File Path"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Path"
+        },
+        "workdir": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Workdir"
+        }
+      },
+      "title": "ReadFileHintArgs",
+      "type": "object"
+    },
+    "ReadFileHints": {
+      "additionalProperties": false,
+      "properties": {
+        "hint_args": {
+          "$ref": "#/$defs/ReadFileHintArgs"
+        },
+        "op": {
+          "const": "hints",
+          "title": "Op",
+          "type": "string"
+        },
+        "request_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "title": "Request Id"
+        },
+        "sid": {
+          "title": "Sid",
+          "type": "string"
+        },
+        "turn_id": {
+          "title": "Turn Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "read_file.policy",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sid",
+        "turn_id",
+        "request_id",
+        "type",
+        "op",
+        "hint_args"
+      ],
+      "title": "ReadFileHints",
+      "type": "object"
+    },
+    "ReadFileHintsAck": {
+      "additionalProperties": false,
+      "properties": {
+        "hints": {
+          "title": "Hints",
+          "type": "string"
+        },
+        "ok": {
+          "const": true,
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "request_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "title": "Request Id"
+        },
+        "sid": {
+          "title": "Sid",
+          "type": "string"
+        },
+        "turn_id": {
+          "title": "Turn Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "read_file.policy.ack",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sid",
+        "turn_id",
+        "request_id",
+        "type",
+        "ok",
+        "hints"
+      ],
+      "title": "ReadFileHintsAck",
+      "type": "object"
+    },
+    "ReadFileRedact": {
+      "additionalProperties": false,
+      "properties": {
+        "content": {
+          "title": "Content",
+          "type": "string"
+        },
+        "hint_args": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReadFileHintArgs"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "identity": {
+          "$ref": "#/$defs/FileIdentity"
+        },
+        "op": {
+          "const": "redact",
+          "title": "Op",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "request_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "title": "Request Id"
+        },
+        "resolved": {
+          "title": "Resolved",
+          "type": "string"
+        },
+        "sid": {
+          "title": "Sid",
+          "type": "string"
+        },
+        "turn_id": {
+          "title": "Turn Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "read_file.policy",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sid",
+        "turn_id",
+        "request_id",
+        "type",
+        "path",
+        "op",
+        "resolved",
+        "identity",
+        "content"
+      ],
+      "title": "ReadFileRedact",
+      "type": "object"
+    },
+    "ReadFileRedactAck": {
+      "additionalProperties": false,
+      "properties": {
+        "content": {
+          "title": "Content",
+          "type": "string"
+        },
+        "hints": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Hints"
+        },
+        "ok": {
+          "const": true,
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "request_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "title": "Request Id"
+        },
+        "sid": {
+          "title": "Sid",
+          "type": "string"
+        },
+        "turn_id": {
+          "title": "Turn Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "read_file.policy.ack",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sid",
+        "turn_id",
+        "request_id",
+        "type",
+        "ok",
+        "content"
+      ],
+      "title": "ReadFileRedactAck",
+      "type": "object"
+    },
+    "ReloadMcp": {
+      "additionalProperties": false,
+      "properties": {
+        "request_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Request Id"
+        },
+        "route_name": {
+          "anyOf": [
+            {
+              "const": "reload.mcp",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Route Name"
+        },
+        "sid": {
+          "title": "Sid",
+          "type": "string"
+        },
+        "type": {
+          "const": "reload_mcp",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sid",
+        "type"
+      ],
+      "title": "ReloadMcp",
+      "type": "object"
+    },
+    "ReloadMcpAck": {
+      "additionalProperties": false,
+      "properties": {
+        "host_ns": {
+          "title": "Host Ns",
+          "type": "integer"
+        },
+        "request_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Request Id"
+        },
+        "response": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Response",
+          "type": "object"
+        },
+        "sid": {
+          "title": "Sid",
+          "type": "string"
+        },
+        "type": {
+          "const": "reload_mcp.ack",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "host_ns",
+        "sid",
+        "request_id",
+        "response",
+        "type"
+      ],
+      "title": "ReloadMcpAck",
+      "type": "object"
+    },
+    "Respond": {
+      "additionalProperties": false,
+      "properties": {
+        "params": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Params",
+          "type": "object"
+        },
+        "request_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Request Id"
+        },
+        "sid": {
+          "title": "Sid",
+          "type": "string"
+        },
+        "type": {
+          "const": "respond",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sid",
+        "type",
+        "params"
+      ],
+      "title": "Respond",
+      "type": "object"
+    },
+    "RespondAck": {
+      "additionalProperties": false,
+      "properties": {
+        "host_ns": {
+          "title": "Host Ns",
+          "type": "integer"
+        },
+        "request_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Request Id"
+        },
+        "response": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Response",
+          "type": "object"
+        },
+        "sid": {
+          "title": "Sid",
+          "type": "string"
+        },
+        "type": {
+          "const": "respond.ack",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "host_ns",
+        "sid",
+        "request_id",
+        "response",
+        "type"
+      ],
+      "title": "RespondAck",
+      "type": "object"
+    },
+    "RespondError": {
+      "additionalProperties": false,
+      "properties": {
+        "host_ns": {
+          "title": "Host Ns",
+          "type": "integer"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "request_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Request Id"
+        },
+        "sid": {
+          "title": "Sid",
+          "type": "string"
+        },
+        "type": {
+          "const": "respond.error",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "host_ns",
+        "sid",
+        "request_id",
+        "type",
+        "message"
+      ],
+      "title": "RespondError",
+      "type": "object"
+    },
+    "Rpc": {
+      "additionalProperties": false,
+      "properties": {
+        "host_ns": {
+          "title": "Host Ns",
+          "type": "integer"
+        },
+        "message": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Message",
+          "type": "object"
+        },
+        "sid": {
+          "title": "Sid",
+          "type": "string"
+        },
+        "type": {
+          "const": "rpc",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "host_ns",
+        "type",
+        "sid",
+        "message"
+      ],
+      "title": "Rpc",
+      "type": "object"
+    },
+    "Shutdown": {
+      "additionalProperties": false,
+      "properties": {
+        "request_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Request Id"
+        },
+        "type": {
+          "const": "shutdown",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "Shutdown",
+      "type": "object"
+    },
+    "ShutdownAck": {
+      "additionalProperties": false,
+      "properties": {
+        "host_ns": {
+          "title": "Host Ns",
+          "type": "integer"
+        },
+        "request_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Request Id"
+        },
+        "type": {
+          "const": "shutdown.ack",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "host_ns",
+        "type",
+        "request_id"
+      ],
+      "title": "ShutdownAck",
+      "type": "object"
+    },
+    "ToolLabel": {
+      "additionalProperties": false,
+      "description": "``tools.tool_labels.ToolLabel`` \u2014 what one call executed through the tool_search bridge is,\nin words. Clients render ``text`` (or ``app``/``action`` in their own columns) and never parse\nthe tool name themselves.",
+      "properties": {
+        "action": {
+          "title": "Action",
+          "type": "string"
+        },
+        "app": {
+          "title": "App",
+          "type": "string"
+        },
+        "emoji": {
+          "title": "Emoji",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/ToolLabelKind"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "preview": {
+          "default": "",
+          "title": "Preview",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "app",
+        "action",
+        "emoji",
+        "text",
+        "name"
+      ],
+      "title": "ToolLabel",
+      "type": "object"
+    },
+    "ToolLabelKind": {
+      "description": "Which surface one inner call of a bridged ``tool_call`` runs on.",
+      "enum": [
+        "connector",
+        "mcp",
+        "tool"
+      ],
+      "title": "ToolLabelKind",
+      "type": "string"
+    },
+    "TranscriptMessage": {
+      "additionalProperties": true,
+      "description": "One transcript row as the gateway PROJECTS it for renderers (``session_history._project_history``):\n``text``, display-only ``timestamp`` / ``display_kind`` / ``display_metadata``, the durable ``row_id``\nrewind targets, and for tool rows raw ``content``, ``tool_call_id``, ``name``, ``context`` and ``args``.\nAssistant detail sidecars (``reasoning``, \u2026) ride as extra keys.",
+      "properties": {
+        "args": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Args"
+        },
+        "content": {
+          "anyOf": [
+            {},
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Content"
+        },
+        "context": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Context"
+        },
+        "display_kind": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Display Kind"
+        },
+        "display_metadata": {
+          "anyOf": [
+            {},
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Display Metadata"
+        },
+        "labels": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/ToolLabel"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Labels"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "reasoning": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reasoning"
+        },
+        "role": {
+          "title": "Role",
+          "type": "string"
+        },
+        "row_id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Row Id"
+        },
+        "text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Text"
+        },
+        "timestamp": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Timestamp"
+        },
+        "tool_call_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tool Call Id"
+        }
+      },
+      "required": [
+        "role"
+      ],
+      "title": "TranscriptMessage",
+      "type": "object"
+    },
+    "TransportError": {
+      "additionalProperties": false,
+      "properties": {
+        "attempts": {
+          "minimum": 1,
+          "title": "Attempts",
+          "type": "integer"
+        },
+        "transport": {
+          "const": "connection",
+          "title": "Transport",
+          "type": "string"
+        }
+      },
+      "required": [
+        "transport",
+        "attempts"
+      ],
+      "title": "TransportError",
+      "type": "object"
+    },
+    "TurnEnd": {
+      "additionalProperties": false,
+      "properties": {
+        "context_failure": {
+          "anyOf": [
+            {
+              "enum": [
+                "context_pressure",
+                "context_preflight_unavailable"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Context Failure"
+        },
+        "context_response": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ContextResponseUsage"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "empty_response_exhausted": {
+          "anyOf": [
+            {
+              "enum": [
+                "empty",
+                "reasoning"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Empty Response Exhausted"
+        },
+        "ended_ns": {
+          "title": "Ended Ns",
+          "type": "integer"
+        },
+        "failure_reason": {
+          "anyOf": [
+            {
+              "enum": [
+                "truncated",
+                "content_policy_blocked"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Failure Reason"
+        },
+        "failure_retryable": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Failure Retryable"
+        },
+        "history_version": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "History Version"
+        },
+        "host_ns": {
+          "title": "Host Ns",
+          "type": "integer"
+        },
+        "interrupted": {
+          "title": "Interrupted",
+          "type": "boolean"
+        },
+        "max_iterations_reached": {
+          "anyOf": [
+            {
+              "const": true,
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Iterations Reached"
+        },
+        "message_count": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Message Count"
+        },
+        "messages": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/JsonValue"
+                },
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Messages"
+        },
+        "new_messages": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/JsonValue"
+                },
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "New Messages"
+        },
+        "provider_error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProviderError"
+            },
+            {
+              "$ref": "#/$defs/TransportError"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Provider Error"
+        },
+        "request_id": {
+          "title": "Request Id",
+          "type": "string"
+        },
+        "session_info": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Session Info"
+        },
+        "session_info_emitted": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Session Info Emitted"
+        },
+        "session_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Session Key"
+        },
+        "sid": {
+          "title": "Sid",
+          "type": "string"
+        },
+        "summary_outcome": {
+          "anyOf": [
+            {
+              "enum": [
+                "success",
+                "empty",
+                "error"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Summary Outcome"
+        },
+        "turn_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Turn Id"
+        },
+        "type": {
+          "const": "turn.end",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "host_ns",
+        "sid",
+        "request_id",
+        "type",
+        "interrupted",
+        "ended_ns"
+      ],
+      "title": "TurnEnd",
+      "type": "object"
+    },
+    "TurnError": {
+      "additionalProperties": false,
+      "properties": {
+        "host_ns": {
+          "title": "Host Ns",
+          "type": "integer"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "request_id": {
+          "title": "Request Id",
+          "type": "string"
+        },
+        "sid": {
+          "title": "Sid",
+          "type": "string"
+        },
+        "type": {
+          "const": "turn.error",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "host_ns",
+        "sid",
+        "request_id",
+        "type",
+        "message"
+      ],
+      "title": "TurnError",
+      "type": "object"
+    },
+    "TurnPlan": {
+      "additionalProperties": false,
+      "description": "Resolved model request configuration. The child supplies provider authentication.",
+      "properties": {
+        "api_max_retries": {
+          "default": 1,
+          "description": "Total logical attempts per model round.",
+          "minimum": 1,
+          "title": "Api Max Retries",
+          "type": "integer"
+        },
+        "base_url": {
+          "description": "Provider base URL without embedded credentials.",
+          "title": "Base Url",
+          "type": "string"
+        },
+        "max_iterations": {
+          "default": 500,
+          "description": "Effective iteration budget of the planning agent.",
+          "title": "Max Iterations",
+          "type": "integer"
+        },
+        "model": {
+          "title": "Model",
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "description": "JSON request options without credentials or transport headers.",
+          "title": "Params",
+          "type": "object"
+        },
+        "read_file_hints": {
+          "default": false,
+          "title": "Read File Hints",
+          "type": "boolean"
+        },
+        "stream": {
+          "title": "Stream",
+          "type": "boolean"
+        },
+        "system": {
+          "title": "System",
+          "type": "string"
+        },
+        "tools": {
+          "items": {
+            "additionalProperties": {
+              "$ref": "#/$defs/JsonValue"
+            },
+            "type": "object"
+          },
+          "title": "Tools",
+          "type": "array"
+        }
+      },
+      "required": [
+        "system",
+        "tools",
+        "model",
+        "base_url",
+        "params",
+        "stream"
+      ],
+      "title": "TurnPlan",
+      "type": "object"
+    },
+    "TurnStart": {
+      "additionalProperties": false,
+      "properties": {
+        "active_session_lease": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ActiveSessionLease"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "attached_images": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Attached Images"
+        },
+        "auth_user_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Auth User Id"
+        },
+        "cols": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cols"
+        },
+        "context_cwd_is_launch_artifact": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Context Cwd Is Launch Artifact"
+        },
+        "cwd": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cwd"
+        },
+        "display_kind": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Display Kind"
+        },
+        "display_metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Display Metadata"
+        },
+        "explicit_cwd": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Explicit Cwd"
+        },
+        "history": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/JsonValue"
+                },
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "History"
+        },
+        "history_version": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "History Version"
+        },
+        "messages": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/JsonValue"
+                },
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Messages"
+        },
+        "model_override": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model Override"
+        },
+        "pending_model_switch": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pending Model Switch"
+        },
+        "profile_home": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Profile Home"
+        },
+        "prompt": {
+          "$ref": "#/$defs/JsonValue",
+          "default": null
+        },
+        "queued_prompt_generation": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Queued Prompt Generation"
+        },
+        "reasoning_config_override": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reasoning Config Override"
+        },
+        "request_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Request Id"
+        },
+        "service_tier_override": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Service Tier Override"
+        },
+        "session_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Session Key"
+        },
+        "sid": {
+          "title": "Sid",
+          "type": "string"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source"
+        },
+        "terminal_backend": {
+          "anyOf": [
+            {
+              "const": "local",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Terminal Backend"
+        },
+        "text": {
+          "$ref": "#/$defs/JsonValue",
+          "default": null
+        },
+        "turn_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Turn Id"
+        },
+        "turn_plan": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TurnPlan"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "type": {
+          "const": "turn.start",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "sid"
+      ],
+      "title": "TurnStart",
+      "type": "object"
+    },
+    "TurnStarted": {
+      "additionalProperties": false,
+      "properties": {
+        "host_ns": {
+          "title": "Host Ns",
+          "type": "integer"
+        },
+        "request_id": {
+          "title": "Request Id",
+          "type": "string"
+        },
+        "sid": {
+          "title": "Sid",
+          "type": "string"
+        },
+        "started_ns": {
+          "title": "Started Ns",
+          "type": "integer"
+        },
+        "type": {
+          "const": "turn.started",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "host_ns",
+        "sid",
+        "request_id",
+        "type",
+        "started_ns"
+      ],
+      "title": "TurnStarted",
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "discriminator": {
+    "mapping": {
+      "context.preflight": "#/$defs/ContextPreflight",
+      "context.preflight.ack": "#/$defs/ContextPreflightAck",
+      "control": "#/$defs/Control",
+      "control.ack": "#/$defs/ControlAck",
+      "control.error": "#/$defs/ControlError",
+      "error": "#/$defs/Error",
+      "hb": "#/$defs/Heartbeat",
+      "hello": "#/$defs/Hello",
+      "interrupt": "#/$defs/Interrupt",
+      "interrupt.ack": "#/$defs/InterruptAck",
+      "iteration.summary": "#/$defs/IterationSummary",
+      "iteration.summary.ack": "#/$defs/IterationSummaryAck",
+      "model.retry": "#/$defs/ModelRetry",
+      "model.retry.ack": "#/$defs/ModelRetryAck",
+      "orphan": "#/$defs/Orphan",
+      "read_file.policy": {
+        "discriminator": {
+          "mapping": {
+            "authorize": "#/$defs/ReadFileAuthorize",
+            "hints": "#/$defs/ReadFileHints",
+            "redact": "#/$defs/ReadFileRedact"
+          },
+          "propertyName": "op"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/ReadFileAuthorize"
+          },
+          {
+            "$ref": "#/$defs/ReadFileRedact"
+          },
+          {
+            "$ref": "#/$defs/ReadFileHints"
+          }
+        ]
+      },
+      "read_file.policy.ack": {
+        "oneOf": [
+          {
+            "$ref": "#/$defs/ReadFileAuthorizeAck"
+          },
+          {
+            "$ref": "#/$defs/ReadFileRedactAck"
+          },
+          {
+            "$ref": "#/$defs/ReadFileHintsAck"
+          },
+          {
+            "$ref": "#/$defs/ReadFileDeniedAck"
+          }
+        ]
+      },
+      "reload_mcp": "#/$defs/ReloadMcp",
+      "reload_mcp.ack": "#/$defs/ReloadMcpAck",
+      "respond": "#/$defs/Respond",
+      "respond.ack": "#/$defs/RespondAck",
+      "respond.error": "#/$defs/RespondError",
+      "rpc": "#/$defs/Rpc",
+      "shutdown": "#/$defs/Shutdown",
+      "shutdown.ack": "#/$defs/ShutdownAck",
+      "turn.end": "#/$defs/TurnEnd",
+      "turn.error": "#/$defs/TurnError",
+      "turn.start": "#/$defs/TurnStart",
+      "turn.started": "#/$defs/TurnStarted"
+    },
+    "propertyName": "type"
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/TurnStart"
+    },
+    {
+      "$ref": "#/$defs/Interrupt"
+    },
+    {
+      "$ref": "#/$defs/Respond"
+    },
+    {
+      "$ref": "#/$defs/ReloadMcp"
+    },
+    {
+      "$ref": "#/$defs/Control"
+    },
+    {
+      "$ref": "#/$defs/Shutdown"
+    },
+    {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ReadFileAuthorizeAck"
+        },
+        {
+          "$ref": "#/$defs/ReadFileRedactAck"
+        },
+        {
+          "$ref": "#/$defs/ReadFileHintsAck"
+        },
+        {
+          "$ref": "#/$defs/ReadFileDeniedAck"
+        }
+      ]
+    },
+    {
+      "$ref": "#/$defs/IterationSummaryAck"
+    },
+    {
+      "$ref": "#/$defs/ContextPreflightAck"
+    },
+    {
+      "$ref": "#/$defs/ModelRetryAck"
+    },
+    {
+      "$ref": "#/$defs/Hello"
+    },
+    {
+      "$ref": "#/$defs/Heartbeat"
+    },
+    {
+      "$ref": "#/$defs/Orphan"
+    },
+    {
+      "$ref": "#/$defs/Rpc"
+    },
+    {
+      "$ref": "#/$defs/TurnStarted"
+    },
+    {
+      "$ref": "#/$defs/TurnEnd"
+    },
+    {
+      "$ref": "#/$defs/TurnError"
+    },
+    {
+      "$ref": "#/$defs/InterruptAck"
+    },
+    {
+      "$ref": "#/$defs/RespondAck"
+    },
+    {
+      "$ref": "#/$defs/RespondError"
+    },
+    {
+      "$ref": "#/$defs/ReloadMcpAck"
+    },
+    {
+      "$ref": "#/$defs/ControlAck"
+    },
+    {
+      "$ref": "#/$defs/ControlError"
+    },
+    {
+      "$ref": "#/$defs/ShutdownAck"
+    },
+    {
+      "$ref": "#/$defs/Error"
+    },
+    {
+      "discriminator": {
+        "mapping": {
+          "authorize": "#/$defs/ReadFileAuthorize",
+          "hints": "#/$defs/ReadFileHints",
+          "redact": "#/$defs/ReadFileRedact"
+        },
+        "propertyName": "op"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ReadFileAuthorize"
+        },
+        {
+          "$ref": "#/$defs/ReadFileRedact"
+        },
+        {
+          "$ref": "#/$defs/ReadFileHints"
+        }
+      ]
+    },
+    {
+      "$ref": "#/$defs/IterationSummary"
+    },
+    {
+      "$ref": "#/$defs/ContextPreflight"
+    },
+    {
+      "$ref": "#/$defs/ModelRetry"
+    }
+  ],
+  "title": "Hermes compute-host frames"
+}

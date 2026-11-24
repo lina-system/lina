@@ -994,6 +994,7 @@ DEFAULT_CONFIG = {
         # Process-isolation rollout controls. Read via the raw config loader, so tui_gateway.server
         # also owns explicit defaults.
         "turn_isolation": False,
+        "compute_host_impl": "python",
         "compute_host_heartbeat_secs": 15,
         "compute_host_respawn_max": 3,
         # Token/cost analytics surfaces are hidden by default: the numbers are a local LOWER-BOUND

@@ -847,6 +847,7 @@ def _load_dashboard_process_isolation_config(cfg: dict | None = None) -> dict[st
     dash = dash if isinstance(dash, dict) else {}
     return {
         "turn_isolation": is_truthy_value(dash.get("turn_isolation"), default=_DASHBOARD_TURN_ISOLATION_DEFAULT),
+        "compute_host_impl": "rust" if dash.get("compute_host_impl") == "rust" else "python",
         "compute_host_heartbeat_secs": _coerce_int_config_value(
             dash.get("compute_host_heartbeat_secs"), _DASHBOARD_COMPUTE_HOST_HEARTBEAT_SECS_DEFAULT, min_value=1),
         "compute_host_respawn_max": _coerce_int_config_value(
@@ -1451,7 +1452,7 @@ def _fast_tier_applies(agent, model: str, provider: str, *, route_known: bool, t
         return False
 
 
-def _session_info(agent, session: dict | None = None) -> dict:
+def _session_info(agent, session: dict | None = None, *, announce_agent_capabilities: bool = False) -> dict:
     if session is None:
         session = next((c for c in _sessions.values() if c.get("agent") is agent), None)
     agent = session_runtime_view(agent)
@@ -1516,7 +1517,7 @@ def _session_info(agent, session: dict | None = None) -> dict:
 
         info.update(version=get_version_info().base_version, release_date=__release_date__)
     live_agent = agent is not None and not sess.get("_compute_host_active")
-    if live_agent:
+    if agent is not None and (live_agent or announce_agent_capabilities):
         with contextlib.suppress(Exception):
             from model_tools import get_toolset_for_tool
             info["tools"] = {}

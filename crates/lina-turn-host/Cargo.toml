@@ -1,0 +1,23 @@
+[package]
+name = "lina-turn-host"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+eventsource-stream = "0.2.3"
+futures-util = "0.3.31"
+hyper = "1.12"
+reqwest = { version = "0.12.28", default-features = false, features = ["json", "rustls-tls", "stream"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = { version = "1.0.149", features = ["arbitrary_precision", "preserve_order"] }
+thiserror = "2.0.18"
+tokio = { version = "1.49.0", features = ["io-std", "io-util", "macros", "rt-multi-thread", "sync", "time"] }
+url = "2.5.8"
+uuid = { version = "1.20.0", features = ["v4"] }
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1.3", features = ["fs", "time"] }
+
+[dev-dependencies]
+jsonschema = { version = "0.33.0", default-features = false }

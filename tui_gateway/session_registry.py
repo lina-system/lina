@@ -186,11 +186,26 @@ def _announce_built_agent(sid: str, key: str, current: dict, agent) -> None:
         from agent.credits_tracker import seed_credits_at_session_start
         seed_credits_at_session_start(agent)
     _start_session_services(sid, key, current)
-    info = _session_info(agent, current)
-    if cfg_warn := _probe_config_health(_load_cfg()):
-        info["config_warning"] = cfg_warn
-        logger.warning(cfg_warn)
-    _emit("session.info", sid, info)
+    info = None
+    if current.get("_rust_host_preparing"):
+        # Each cold child announces readiness. A planner rebuilt for a
+        # replacement child still belongs to the same live parent session.
+        initial = {**current, "running": False, "inflight_turn": None, "_compute_host_active": False}
+        initial.pop("_metadata_mirror", None)
+        current["_rust_ready_info"] = _session_info(agent, initial)
+        if not current.get("_parent_agent_announced"):
+            info = _session_info(agent, {**current, "_compute_host_active": True},
+                                 announce_agent_capabilities=True)
+    else:
+        # The build announces its own capabilities even if an isolated child
+        # claimed execution while the parent's deferred build was in flight.
+        info = _session_info(agent, current, announce_agent_capabilities=True)
+    if info is not None:
+        if cfg_warn := _probe_config_health(_load_cfg()):
+            info["config_warning"] = cfg_warn
+            logger.warning(cfg_warn)
+        _emit("session.info", sid, info)
+        current["_parent_agent_announced"] = True
     _schedule_mcp_late_refresh(sid, agent)  # servers slower than the bounded discovery wait land here
 
 

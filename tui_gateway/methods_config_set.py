@@ -42,7 +42,13 @@ def _write_display_sections(*, sections=None, drop_sections=(), **display_fields
 def _emit_session_info(sid: str, session: dict) -> None:
     agent = session.get("agent")
     if agent is not None:
-        _emit("session.info", sid, _session_info(agent, session))
+        info = _session_info(agent, session)
+        if session.get("_rust_host_preparing"):
+            # Rust prepares the same model transition before dispatch. Release
+            # its snapshot at the equivalent point in the client event stream.
+            session["_rust_pre_model_info"] = info
+        else:
+            _emit("session.info", sid, info)
 
 
 def _emit_all_session_info() -> None:

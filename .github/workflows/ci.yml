@@ -38,6 +38,7 @@ jobs:
       uv_lock: ${{ steps.classify.outputs.uv_lock }}
       helper: ${{ steps.classify.outputs.helper }}
       macos: ${{ steps.classify.outputs.macos }}
+      rust: ${{ steps.classify.outputs.rust }}
       # A catalog-only diff turns `python` off and this lane on; without the
       # output here the catalog job below never starts (the `rust` lane shipped
       # dead exactly this way).
@@ -83,13 +84,28 @@ jobs:
       - name: Check the checkout is clean
         uses: ./.github/actions/check-clean-worktree
 
+  rust:
+    name: Rust turn host
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # v7.0.1
+      - name: Install the Rust toolchain
+        run: rustup toolchain install 1.100.0 --profile minimal --component rustfmt,clippy
+      - name: Check formatting
+        run: cargo +1.100.0 fmt --all -- --check
+      - name: Run Clippy
+        run: cargo +1.100.0 clippy --locked --workspace --all-targets --all-features -- -D warnings
+      - name: Run Rust tests
+        run: cargo +1.100.0 test --locked --workspace
+
   linux:
     # Upstream tests.yml ran the suite in two slices on 32-core runners. A GitHub-hosted
     # runner has 4 cores, so the same per-file runner is split into more slices; every slice
     # computes the same partition from the checkout (scripts/run_tests_parallel.py).
     name: Python tests (Linux ${{ matrix.slice }}/8)
     needs: detect
-    if: needs.detect.outputs.python == 'true'
+    if: needs.detect.outputs.python == 'true' || needs.detect.outputs.rust == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
@@ -98,6 +114,11 @@ jobs:
         slice: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # v7.0.1
+
+      - name: Build Rust turn host for compute-host parity and rollback tests
+        run: |
+          rustup toolchain install 1.100.0 --profile minimal
+          cargo +1.100.0 build --locked --package lina-turn-host
 
       - name: Set up locked Python and test dependencies
         uses: ./.github/actions/setup-pm
@@ -193,7 +214,7 @@ jobs:
       - name: Every Linux slice and catalog test passed or was not needed
         env:
           DETECT: ${{ needs.detect.result }}
-          PYTHON: ${{ needs.detect.outputs.python }}
+          PYTHON: ${{ needs.detect.outputs.python == 'true' || needs.detect.outputs.rust == 'true' }}
           RESULT: ${{ needs.linux.result }}
           CATALOG: ${{ needs.detect.outputs.catalog }}
           CATALOG_RESULT: ${{ needs.catalog.result }}
