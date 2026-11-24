@@ -106,8 +106,10 @@ class Lock:
             self.f.close()
 
     def __exit__(self, *a):
-        fcntl.flock(self.f, fcntl.LOCK_UN)
-        self.f.close()
+        # A failed re-entry leaves the handle closed when the outer context exits.
+        if not self.f.closed:
+            fcntl.flock(self.f, fcntl.LOCK_UN)
+            self.f.close()
 
     @contextmanager
     def released(self):

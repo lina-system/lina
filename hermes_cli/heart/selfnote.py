@@ -4,14 +4,20 @@ from __future__ import annotations
 
 import datetime as dt
 import difflib
+import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from pydantic import ValidationError
+
+from hermes_cli.active_sessions import _FileLock
 from hermes_cli.heart import journal, storage
 from hermes_cli.heart.evidence import MACHINE_PREFIXES
 from hermes_cli.heart.locale import protected_rule, text
 from hermes_cli.heart.models import Change
+from hermes_cli.heart.taste_context import normalized
+from utils import atomic_write_bytes
 
 SUFFIX = re.compile(r"\(\s*(\d{4}-\d{2}-\d{2})\s*,\s*(?:근거|evidence)\s+([^)]+)\)\s*$")
 DATED = re.compile(r"\(\s*(\d{4}-\d{2}-\d{2})\s*,[^)]*\)\s*$")
@@ -98,7 +104,16 @@ def next_backup() -> Path:
     return directory / f"{name}.md"
 
 
+def _note_lock(home: Path) -> _FileLock:
+    return _FileLock(storage.private_dir(home / "heart") / "self-note.lock")
+
+
 def apply(args) -> None:
+    with _note_lock(storage.home()):
+        _apply(args)
+
+
+def _apply(args) -> None:
     soul = storage.home() / "SOUL.self.md"
     changes = storage.home() / "heart/changes.jsonl"
     new = Path(args.file).read_text(encoding="utf-8-sig")
@@ -128,6 +143,11 @@ def backup_key(path: Path) -> tuple[float, int]:
 
 
 def undo(args) -> None:
+    with _note_lock(storage.home()):
+        _undo()
+
+
+def _undo() -> None:
     backups = sorted((storage.home() / "heart/self-backups").glob("*.md"), key=backup_key)
     if not backups:
         print(text("no_backup"))
@@ -136,3 +156,46 @@ def undo(args) -> None:
     storage.write_private(storage.home() / "SOUL.self.md", backup.read_text(encoding="utf-8-sig"))
     storage.append(storage.home() / "heart/changes.jsonl", Change(ts=storage.stamp(), undo=backup.name))
     print(text("undo", backup=backup.name))
+
+
+def scrub_taste(home: Path, target: re.Pattern[str]) -> None:
+    """Scrub matching lines from self-note copies and the self-edit audit.
+
+    Each replacement is durable on its own. If a write fails, the caller rolls
+    back its database transaction so a retry can find the taste and finish.
+    """
+    with _note_lock(home):
+        backups = sorted((home / "heart/self-backups").glob("*.md"))
+        changes = home / "heart/changes.jsonl"
+        for path in (*backups, changes, home / "SOUL.self.md"):
+            if not path.resolve().is_relative_to(home.resolve()):
+                raise storage.HeartError(text("forget_target_required"))
+            try:
+                original = path.read_bytes()
+            except FileNotFoundError:
+                continue
+            bom = b"\xef\xbb\xbf" if original.startswith(b"\xef\xbb\xbf") else b""
+            source = original.decode("utf-8-sig")
+            lines = source.splitlines(keepends=True)
+            if path == changes:
+                scrubbed = "".join(_scrub_change(line, target) for line in lines)
+            else:
+                scrubbed = "".join(line for line in lines if not target.search(normalized(line)))
+            if scrubbed != source:
+                atomic_write_bytes(path, bom + scrubbed.encode("utf-8"), mode=0o600, fsync_dir=True)
+
+
+def _scrub_change(line: str, target: re.Pattern[str]) -> str:
+    try:
+        change = Change.model_validate_json(line)
+    except ValidationError:
+        return line
+    updated = {
+        key: [value for value in values if not target.search(normalized(value))]
+        for key, values in (("added", change.added), ("removed", change.removed))
+        if any(target.search(normalized(value)) for value in values)
+    }
+    if not updated:
+        return line
+    ending = line[len(line.rstrip("\r\n")):]
+    return json.dumps({**json.loads(line), **updated}, ensure_ascii=False) + ending

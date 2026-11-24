@@ -1,0 +1,18 @@
+{
+  "active_pick": {
+    "target": "copper label cards",
+    "alternative": "linen label cards",
+    "history": "At rehearsal, the sample drawer used copper label cards.",
+    "lookup": "sample drawer",
+    "request": "그건 잊어",
+    "question": "For the exhibit, would you use copper label cards or linen label cards?"
+  },
+  "compacted_summary": {
+    "target": "spiral display racks",
+    "alternative": "flat display trays",
+    "history": "At rehearsal, the exhibit used spiral display racks.",
+    "lookup": "exhibit used",
+    "request": "spiral display racks 취향은 잊어",
+    "question": "What should we use to present the ceramics?"
+  }
+}

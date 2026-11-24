@@ -73,10 +73,11 @@ def database_present(database: os.PathLike | str) -> bool:
     return Path(database).exists() or store_identity(database) is not None
 
 
-def configured_store_backend() -> str:
+def configured_store_backend(hermes_home: str | os.PathLike | None = None) -> str:
     """LINA: ``lcm.store_backend`` from the profile's config.yaml (``sqlite`` when unset; lina#16)."""
     from .config import _load_hermes_config_yaml
-    section = _load_hermes_config_yaml().get("lcm")
+    config_path = Path(hermes_home) / "config.yaml" if hermes_home else None
+    section = _load_hermes_config_yaml(config_path).get("lcm")
     value = section.get("store_backend") if isinstance(section, dict) else None
     return str(value).strip().lower() if value else "sqlite"
 
