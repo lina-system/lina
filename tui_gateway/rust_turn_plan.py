@@ -18,8 +18,11 @@ import threading
 import time
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 from urllib.parse import urlsplit
+
+if TYPE_CHECKING:
+    from tui_gateway.contracts.compute_host import ContextPreflight
 
 
 _BODY_PARAMS = frozenset({
@@ -277,6 +280,7 @@ def prepare_rust_turn(sid: str, session: dict, frame: dict) -> tuple[dict, dict[
                 "request_id": frame.get("request_id"), "turn_id": frame.get("turn_id"),
                 "display_kind": frame.get("display_kind"),
                 "display_metadata": copy.deepcopy(frame.get("display_metadata")),
+                "context_system": plan["system"],
                 "wire_history": copy.deepcopy(wire[1:-1]),
                 "session_affinity": session_affinity,
             }
@@ -472,6 +476,85 @@ def _rust_terminal_status(frame: dict, rows: list[dict]) -> str:
     return status
 
 
+def prepare_context_preflight(session: dict, check: ContextPreflight) -> Literal["allow", "pressure", "unavailable"]:
+    """Apply Python's pressure policy to the native worker's next logical request."""
+    from agent.context_compressor import MAX_ITERATIONS_SUMMARY_REQUEST
+    from agent.conversation_compression import ensure_compression_feasibility_checked
+    from agent.conversation_loop import _midturn_request_pressure_tokens, _pressure_with_real_floor
+    from agent.model_metadata import estimate_messages_tokens_rough
+    from agent.turn_context import _agent_stale_thinking_on_wire
+    from agent.usage_anchor import anchored_context_tokens, capture_usage_anchor
+    from agent.usage_pricing import normalize_usage
+
+    with session["history_lock"]:
+        stage = session.get("_rust_turn_stage")
+        if not stage or stage["turn_id"] != check.turn_id or "rows" not in stage:
+            raise RustTurnConflict("context preflight has no admitted turn")
+        _rust_suffix(stage, {"messages": check.messages})
+        count = check.priced_prefix_count
+        expected_count = stage.get("context_message_count", len(stage["wire_history"]) + 1)
+        if (count != expected_count or count >= len(check.messages)
+                or check.messages[count].get("role") != "assistant"
+                or not check.messages[count].get("tool_calls")
+                or check.messages[-1].get("role") != "tool"):
+            raise RustTurnConflict("context preflight has no completed model and tool round")
+        system = stage["context_system"]
+        agent = session["agent"]
+        anchor = stage.get("context_anchor")
+        usage_omitted = stage.get("context_usage_omitted", False) or check.usage is None
+
+    if check.usage is not None:
+        usage = normalize_usage(check.usage, provider=agent.provider, api_mode=agent.api_mode)
+        initial = check.usage.get("initial_prompt_tokens")
+        prompt_tokens = initial if type(initial) is int and initial > 0 else usage.prompt_tokens
+        anchor = capture_usage_anchor(prompt_tokens, usage.output_tokens, check.messages[:count]) or anchor
+
+    messages = check.messages
+    if check.summary:
+        messages = [*messages, {"role": "user", "content": MAX_ITERATIONS_SUMMARY_REQUEST}]
+    compressor = agent.context_compressor
+    pressure = anchored_context_tokens(messages, anchor or getattr(agent, "_usage_anchor", None))
+    anchored = pressure is not None
+    if not anchored:
+        api_messages = [{"role": "system", "content": system}, *messages]
+        rough = estimate_messages_tokens_rough(api_messages, charge_stale_thinking=_agent_stale_thinking_on_wire(agent))
+        pressure = _pressure_with_real_floor(
+            compressor, _midturn_request_pressure_tokens(agent, api_messages, system, rough))
+    blocked = False
+    if agent.compression_enabled and getattr(agent, "max_compression_attempts", 3) > 0:
+        ensure_compression_feasibility_checked(agent, pressure)
+        defer = not anchored and not usage_omitted and compressor.should_defer_preflight_to_real_usage(pressure)
+        blocked = not defer and compressor.should_compress(pressure)
+
+    with session["history_lock"]:
+        if (session.get("_rust_turn_stage") is not stage or not session.get("running")
+                or session.get("_closing") or session.get("_turn_cancel_requested")):
+            return "unavailable"
+        stage["context_message_count"] = len(check.messages)
+        stage["context_anchor"] = anchor
+        stage["context_usage_omitted"] = usage_omitted
+    return "pressure" if blocked else "allow"
+
+
+def _stage_context_recovery(session: dict, stage: dict, history: list[dict]) -> None:
+    """Carry the provider's last priced boundary into the next Python turn."""
+    from agent.usage_anchor import capture_usage_anchor, set_usage_anchor
+    from tui_gateway import server
+
+    session["_rust_context_recovery_pending"] = True
+    anchor = stage.get("context_anchor")
+    if not anchor:
+        return
+    appended = anchor["base_count"] - len(stage["wire_history"]) - 1
+    if appended < 0:
+        return
+    priced_count = len(stage["history"]) + len(stage["rows"]) + appended
+    if priced_count <= len(history):
+        rebased = capture_usage_anchor(anchor["prompt_tokens"], anchor["completion_tokens"], history[:priced_count])
+        with server._session_profile_runtime_scope(session, hydrate_secrets=False):
+            set_usage_anchor(session["agent"], rebased)
+
+
 def prepare_iteration_summary(session: dict, frame: dict) -> dict:
     """Build the summary from the original stored history, using the Python send projection."""
     from agent.agent_runtime_helpers import repair_message_sequence
@@ -636,6 +719,10 @@ def persist_rust_turn(session: dict, frame: dict) -> dict | None:
             session["history"] = history
             session["history_version"] = stage["history_version"] + 1
             session["_rust_parent_history"] = True
+            if status == "error" and frame.get("context_failure") in {
+                "context_pressure", "context_preflight_unavailable",
+            }:
+                _stage_context_recovery(session, stage, history)
         session.pop("_submit_user_row", None)
         session.pop("_rust_turn_stage", None)
         return receipt

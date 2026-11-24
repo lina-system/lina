@@ -427,7 +427,7 @@ fn ascii_json(value: &Value) -> String {
     ascii
 }
 
-#[derive(Default, Deserialize)]
+#[derive(Default, Deserialize, serde::Serialize)]
 pub(crate) struct Usage {
     #[serde(default)]
     prompt_tokens: u64,
@@ -454,7 +454,7 @@ pub(crate) struct Usage {
     completion_tokens_details: Option<CompletionDetails>,
 }
 
-#[derive(Default, Deserialize)]
+#[derive(Default, Deserialize, serde::Serialize)]
 struct PromptDetails {
     #[serde(default)]
     cached_tokens: u64,
@@ -464,7 +464,7 @@ struct PromptDetails {
     cache_creation_input_tokens: u64,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, serde::Serialize)]
 struct CompletionDetails {
     #[serde(default)]
     reasoning_tokens: u64,
@@ -484,10 +484,14 @@ pub(crate) struct TurnUsage {
 }
 
 impl TurnUsage {
-    pub(crate) fn add(&mut self, usage: Usage, duration: Duration) {
+    pub(crate) fn add(&mut self, usage: &Usage, duration: Duration) {
         let prompt = first_nonzero([usage.prompt_tokens, usage.input_tokens]);
         let output = first_nonzero([usage.completion_tokens, usage.output_tokens]);
-        let details = usage.prompt_tokens_details.unwrap_or_default();
+        let default_details = PromptDetails::default();
+        let details = usage
+            .prompt_tokens_details
+            .as_ref()
+            .unwrap_or(&default_details);
         let cache_read = first_nonzero([
             details.cached_tokens,
             usage.cache_read_input_tokens,
@@ -517,9 +521,11 @@ impl TurnUsage {
         let reasoning = first_nonzero([
             usage
                 .output_tokens_details
+                .as_ref()
                 .map_or(0, |details| details.reasoning_tokens),
             usage
                 .completion_tokens_details
+                .as_ref()
                 .map_or(0, |details| details.reasoning_tokens),
         ]);
         self.reasoning = self.reasoning.saturating_add(reasoning);

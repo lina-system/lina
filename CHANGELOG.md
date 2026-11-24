@@ -20,6 +20,7 @@ Hermes Agent upstream changes are not listed here; see the upstream history on t
 
 - Dashboard session teardown handles a missing history lock when reclaiming gateway and desktop sessions.
 - Dashboard turns with an output transform or active goal use Python so the profile can rewrite replies, withhold streamed text, and continue its goal.
+- The Rust dashboard host checks context pressure after tool results and before its iteration summary. A blocked request keeps the completed tool results for the next Python turn.
 
 ### Changed
 

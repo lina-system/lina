@@ -123,7 +123,7 @@ impl Host {
     async fn write(&mut self, mut frame: Value) -> io::Result<()> {
         if !matches!(
             frame["type"].as_str(),
-            Some("read_file.policy" | "iteration.summary")
+            Some("read_file.policy" | "iteration.summary" | "context.preflight")
         ) {
             frame["host_ns"] = json!(now_ns());
         }
@@ -219,6 +219,9 @@ impl Host {
             }
             Command::IterationSummaryAck(route) => {
                 self.acknowledge(ParentRequestKind::IterationSummary, route, frame);
+            }
+            Command::ContextPreflightAck(route) => {
+                self.acknowledge(ParentRequestKind::ContextPreflight, route, frame);
             }
             Command::Shutdown { request_id } => {
                 self.write(json!({"type": "shutdown.ack", "request_id": request_id}))

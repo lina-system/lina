@@ -32,6 +32,8 @@ pub(crate) enum Command {
     ReadPolicyAck(Route),
     #[serde(rename = "iteration.summary.ack")]
     IterationSummaryAck(Route),
+    #[serde(rename = "context.preflight.ack")]
+    ContextPreflightAck(Route),
     #[serde(rename = "shutdown")]
     Shutdown {
         #[serde(default)]
@@ -178,6 +180,7 @@ mod tests {
 pub(crate) enum ParentRequestKind {
     ReadPolicy,
     IterationSummary,
+    ContextPreflight,
 }
 
 pub(crate) enum Update {

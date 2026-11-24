@@ -8,7 +8,9 @@ use serde_json::{Map, Value, json};
 use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 
-use crate::model::{self, Message, ModelClient, ModelError, RequestMode, ToolCall, TurnUsage};
+use crate::model::{
+    self, Message, ModelClient, ModelError, RequestMode, ToolCall, TurnUsage, Usage,
+};
 use crate::protocol::{Events, ParentRequestKind, Route, Start, Update, now_ns};
 use crate::read_file::ReadState;
 
@@ -27,8 +29,26 @@ enum TurnError {
     Model(#[from] ModelError),
     #[error("Model generated invalid tool call: {0}")]
     UnknownToolLimit(String),
+    #[error(
+        "Context pressure stopped this turn before the next model request. Completed tool results were kept. Continue in this session to use Python context recovery."
+    )]
+    ContextPressure,
+    #[error(
+        "Could not check context pressure before the next model request. Completed tool results were kept. Continue in this session to retry."
+    )]
+    ContextPreflightUnavailable,
     #[error("the turn was interrupted")]
     Interrupted,
+}
+
+impl TurnError {
+    fn context_failure(&self) -> Option<&'static str> {
+        match self {
+            Self::ContextPressure => Some("context_pressure"),
+            Self::ContextPreflightUnavailable => Some("context_preflight_unavailable"),
+            Self::Model(_) | Self::UnknownToolLimit(_) | Self::Interrupted => None,
+        }
+    }
 }
 
 enum TurnReply {
@@ -42,6 +62,8 @@ struct Transcript {
     messages: Vec<Map<String, Value>>,
     partial: String,
     usage: TurnUsage,
+    last_usage: Option<Usage>,
+    priced_prefix_count: usize,
     pending_tools: VecDeque<PendingTool>,
     reading_tool: bool,
 }
@@ -165,6 +187,10 @@ impl Worker {
             }
             _ => None,
         };
+        let context_failure = result
+            .as_ref()
+            .and_then(|result| result.as_ref().err())
+            .and_then(TurnError::context_failure);
         let usage = transcript.usage.payload(&start.turn_plan.model);
         let (status, mut completion, summary_outcome) = match result {
             Some(Ok(TurnReply::Model(answer))) => {
@@ -182,7 +208,8 @@ impl Worker {
             Some(Err(err)) => (
                 "error",
                 json!({"text": err.to_string(), "error": err.to_string(),
-                       "recoverable": matches!(err, TurnError::UnknownToolLimit(_))}),
+                       "recoverable": err.context_failure().is_some()
+                           || matches!(err, TurnError::UnknownToolLimit(_))}),
                 None,
             ),
             None => {
@@ -215,6 +242,9 @@ impl Worker {
         ]);
         if let Some(provider_error) = provider_error {
             end.insert("provider_error".into(), provider_error);
+        }
+        if let Some(context_failure) = context_failure {
+            end.insert("context_failure".into(), json!(context_failure));
         }
         if let Some(outcome) = summary_outcome {
             end.insert("max_iterations_reached".into(), json!(true));
@@ -322,9 +352,11 @@ impl TurnContext<'_> {
         if !events.end_request().await {
             return Err(ModelError::OutputClosed);
         }
-        if let Some(usage) = usage {
+        if let Some(usage) = &usage {
             transcript.usage.add(usage, elapsed);
         }
+        transcript.last_usage = usage;
+        transcript.priced_prefix_count = transcript.messages.len();
         Ok(answer)
     }
 
@@ -348,7 +380,12 @@ impl TurnContext<'_> {
             let mut answer = tokio::select! {
                 biased;
                 _ = &mut *cancel => return Err(TurnError::Interrupted),
-                answer = self.request_round(transcript, events) => answer?,
+                answer = async {
+                    if transcript.usage.calls > 0 {
+                        self.check_context_pressure(transcript, events.turn_id, false).await?;
+                    }
+                    Ok::<_, TurnError>(self.request_round(transcript, events).await?)
+                } => answer?,
             };
             if answer.tool_calls.iter().any(|call| !call.valid_function()) {
                 return Err(ModelError::InvalidResponse.into());
@@ -459,7 +496,35 @@ impl TurnContext<'_> {
         tokio::select! {
             biased;
             _ = cancel => Err(TurnError::Interrupted),
-            reply = self.summarize(&transcript.messages, events.turn_id) => Ok(reply),
+            reply = async {
+                self.check_context_pressure(transcript, events.turn_id, true).await?;
+                Ok(self.summarize(&transcript.messages, events.turn_id).await)
+            } => reply,
+        }
+    }
+
+    async fn check_context_pressure(
+        &self,
+        transcript: &Transcript,
+        turn_id: &str,
+        summary: bool,
+    ) -> Result<(), TurnError> {
+        let ack = self
+            .request_parent(
+                ParentRequestKind::ContextPreflight,
+                turn_id,
+                json!({
+                    "messages": transcript.messages,
+                    "usage": transcript.last_usage,
+                    "priced_prefix_count": transcript.priced_prefix_count,
+                    "summary": summary,
+                }),
+            )
+            .await;
+        match ack.as_ref().and_then(|ack| ack["decision"].as_str()) {
+            Some("allow") => Ok(()),
+            Some("pressure") => Err(TurnError::ContextPressure),
+            _ => Err(TurnError::ContextPreflightUnavailable),
         }
     }
 
@@ -557,6 +622,7 @@ impl TurnContext<'_> {
         let name = match kind {
             ParentRequestKind::ReadPolicy => "read_file.policy",
             ParentRequestKind::IterationSummary => "iteration.summary",
+            ParentRequestKind::ContextPreflight => "context.preflight",
         };
         fields.insert("type".into(), json!(name));
         fields.insert("sid".into(), json!(route.sid));
@@ -574,10 +640,12 @@ impl TurnContext<'_> {
             .await
             .ok()?;
         match kind {
-            ParentRequestKind::ReadPolicy => tokio::time::timeout(Duration::from_secs(5), receiver)
-                .await
-                .ok()?
-                .ok(),
+            ParentRequestKind::ReadPolicy | ParentRequestKind::ContextPreflight => {
+                tokio::time::timeout(Duration::from_secs(5), receiver)
+                    .await
+                    .ok()?
+                    .ok()
+            }
             ParentRequestKind::IterationSummary => receiver.await.ok(),
         }
     }

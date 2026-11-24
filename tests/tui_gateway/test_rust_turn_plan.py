@@ -490,6 +490,66 @@ def _tool_result_frame(frame):
     return terminal
 
 
+@pytest.mark.parametrize(
+    ("usage", "tool_text", "decision"),
+    [
+        ({"prompt_tokens": 9000, "initial_prompt_tokens": 400, "completion_tokens": 25},
+         "small result", "allow"),
+        ({"prompt_tokens": 9000, "initial_prompt_tokens": 4900, "completion_tokens": 150},
+         "small result", "pressure"),
+        (None, "large synthetic result " * 2000, "pressure"),
+    ],
+    ids=["first-hop-fits", "anchored-pressure", "usage-less-pressure"],
+)
+def test_native_continuation_uses_owned_python_pressure_policy(turn, monkeypatch, usage, tool_text, decision):
+    from contextlib import ExitStack
+
+    from agent.usage_anchor import anchored_context_tokens
+    from tui_gateway import server
+    from tui_gateway.rust_host_supervisor import select_host
+
+    session, frame, db = turn
+    agent = session["agent"]
+    cfg = {"compute_host_impl": "rust", "compute_host_heartbeat_secs": 15, "compute_host_respawn_max": 1}
+    replies = []
+    with ExitStack() as leases:
+        host = select_host("runtime", session, cfg, frame, leases)
+        assert host is not None
+        session.update(_compute_host_turn_host=host, _compute_host_turn_id=frame["turn_id"])
+        monkeypatch.setattr(host, "_send_frame", replies.append)
+        host._handle_host_frame({"type": "turn.started", "sid": "runtime", "request_id": frame["turn_id"]})
+        agent.context_compressor.threshold_tokens = 5000
+        terminal = _tool_result_frame(frame)
+        terminal["messages"][-1]["content"] = tool_text
+        check = {
+            "type": "context.preflight", "sid": "runtime", "turn_id": frame["turn_id"],
+            "request_id": "preflight", "priced_prefix_count": len(frame["history"]) + 1,
+            "usage": usage, "messages": terminal["messages"], "summary": False,
+        }
+        host._handle_host_frame({**check, "turn_id": "previous-turn", "request_id": "stale"})
+        host._handle_host_frame(check)
+        assert [(reply["request_id"], reply["decision"]) for reply in replies] == [
+            ("stale", "unavailable"), ("preflight", decision),
+        ]
+        if decision == "pressure":
+            terminal.update(type="turn.end", status="error", context_failure="context_pressure",
+                            error="Paused before the continuation.")
+            assert persist_rust_turn(session, terminal) is None
+
+    if decision == "pressure":
+        stored = db.get_messages_as_conversation("stored")
+        assert [row["role"] for row in stored] == ["user", "assistant", "tool", "assistant"]
+        assert stored[2]["content"] == tool_text
+        if usage is not None:
+            assert anchored_context_tokens(stored, agent._usage_anchor) >= 5000
+        with ExitStack() as leases:
+            assert select_host("runtime", session, cfg, {}, leases) is None
+        assert server._prepare_inline_after_compute_host(session)
+        assert session["history"][2]["content"] == tool_text
+    else:
+        host.shutdown()
+
+
 @pytest.mark.parametrize("empty_close", [False, True])
 def test_interrupted_tool_transcript_uses_the_shared_hidden_close(turn, empty_close):
     from agent.agent_runtime_helpers_placeholders import hidden_interrupt_placeholder_row

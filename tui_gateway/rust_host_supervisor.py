@@ -175,6 +175,10 @@ class RustHostSupervisor(HostSupervisor):
         with self.session["history_lock"]:
             payload = self._final_event or {}
         details = {key: payload[key] for key in ("text", "status", "error") if key in payload}
+        if payload.get("status") == "error" and frame.get("context_failure") in {
+            "context_pressure", "context_preflight_unavailable",
+        }:
+            return {**details, "failure_reason": frame["context_failure"], "failure_retryable": True}
         if payload.get("status") != "error" or frame.get("provider_error") is None:
             return details
         from agent.error_classifier import FailoverReason, classify_api_error
@@ -287,6 +291,9 @@ class RustHostSupervisor(HostSupervisor):
         if kind == "iteration.summary":
             self._prepare_iteration_summary(frame)
             return
+        if kind == "context.preflight":
+            self._prepare_context_preflight(frame)
+            return
         if kind != "read_file.policy":
             return super()._handle_host_frame(frame)
         from tui_gateway import server
@@ -355,6 +362,34 @@ class RustHostSupervisor(HostSupervisor):
                 reply["ok"] = False
         self._send_frame(reply)
 
+    def _prepare_context_preflight(self, frame):
+        from tui_gateway import server
+        from tui_gateway.contracts.compute_host import ContextPreflight
+        from tui_gateway.rust_turn_plan import RustTurnConflict, prepare_context_preflight
+
+        try:
+            check = ContextPreflight.model_validate(frame)
+        except ValidationError:
+            return  # An invalid request cannot authorize a model call.
+        decision = "unavailable"
+        with self.session["history_lock"]:
+            owns_turn = (check.sid == self.sid and self.session.get("running")
+                         and not self.session.get("_closing") and not self.session.get("_turn_cancel_requested")
+                         and self.session.get("_compute_host_turn_host") is self
+                         and self.session.get("_compute_host_turn_id") == check.turn_id
+                         and self._event_source == (threading.current_thread(), check.turn_id)
+                         and self._final_event is None)
+        if owns_turn:
+            try:
+                with server._session_profile_runtime_scope(self.session):
+                    decision = prepare_context_preflight(self.session, check)
+            except RustTurnConflict:
+                decision = "unavailable"
+        self._send_frame({
+            "type": "context.preflight.ack", "sid": self.sid, "request_id": check.request_id,
+            "turn_id": check.turn_id, "decision": decision,
+        })
+
     def shutdown(self):
         with self._lock:
             if self._retired:
@@ -373,6 +408,13 @@ def select_host(sid, session, cfg, frame, leases):
     from tui_gateway.rust_turn_plan import prepare_rust_turn, rust_turn_lease
 
     rust = cfg.get("compute_host_impl") == "rust"
+    if rust:
+        with session["history_lock"]:
+            recover_context = session.pop("_rust_context_recovery_pending", False)
+        if recover_context:
+            server._retire_session_rust_host(session)
+            return None  # Continue inline with the settled transcript and Python compaction.
+
     ready = not rust or not session.get("_compute_host_active") or server._restore_compute_host_history(session)
     if rust and ready and session.get("_compute_host_active"):
         frame.update(history=list(session["history"]), history_version=session.get("history_version", 0))
@@ -386,13 +428,13 @@ def select_host(sid, session, cfg, frame, leases):
             if prepared is None:
                 session.pop("_rust_pre_model_info", None)
                 session.pop("_rust_ready_info", None)
-    with session["history_lock"]:
-        host = session.get("_rust_host")
     if prepared is None:
         server._retire_session_rust_host(session)
         if session.get("_rust_parent_history"):
             return None  # A previous Python child may still cache a pre-Rust transcript.
         return server._get_compute_host_supervisor(cfg)
+    with session["history_lock"]:
+        host = session.get("_rust_host")
     plan, env = prepared
     leases.enter_context(rust_turn_lease(session, frame))
     home = str(session.get("profile_home") or get_hermes_home())

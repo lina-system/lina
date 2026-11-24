@@ -20,6 +20,127 @@
       "title": "ActiveSessionLease",
       "type": "object"
     },
+    "ContextPreflight": {
+      "additionalProperties": false,
+      "properties": {
+        "messages": {
+          "items": {
+            "additionalProperties": {
+              "$ref": "#/$defs/JsonValue"
+            },
+            "type": "object"
+          },
+          "title": "Messages",
+          "type": "array"
+        },
+        "priced_prefix_count": {
+          "minimum": 1,
+          "title": "Priced Prefix Count",
+          "type": "integer"
+        },
+        "request_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "title": "Request Id"
+        },
+        "sid": {
+          "title": "Sid",
+          "type": "string"
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "boolean"
+        },
+        "turn_id": {
+          "title": "Turn Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "context.preflight",
+          "title": "Type",
+          "type": "string"
+        },
+        "usage": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Usage"
+        }
+      },
+      "required": [
+        "sid",
+        "turn_id",
+        "request_id",
+        "type",
+        "messages",
+        "usage",
+        "priced_prefix_count",
+        "summary"
+      ],
+      "title": "ContextPreflight",
+      "type": "object"
+    },
+    "ContextPreflightAck": {
+      "additionalProperties": false,
+      "properties": {
+        "decision": {
+          "enum": [
+            "allow",
+            "pressure",
+            "unavailable"
+          ],
+          "title": "Decision",
+          "type": "string"
+        },
+        "request_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "title": "Request Id"
+        },
+        "sid": {
+          "title": "Sid",
+          "type": "string"
+        },
+        "turn_id": {
+          "title": "Turn Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "context.preflight.ack",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sid",
+        "turn_id",
+        "request_id",
+        "type",
+        "decision"
+      ],
+      "title": "ContextPreflightAck",
+      "type": "object"
+    },
     "Control": {
       "additionalProperties": false,
       "properties": {
@@ -1544,6 +1665,22 @@
     "TurnEnd": {
       "additionalProperties": false,
       "properties": {
+        "context_failure": {
+          "anyOf": [
+            {
+              "enum": [
+                "context_pressure",
+                "context_preflight_unavailable"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Context Failure"
+        },
         "ended_ns": {
           "title": "Ended Ns",
           "type": "integer"
@@ -2221,6 +2358,8 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "discriminator": {
     "mapping": {
+      "context.preflight": "#/$defs/ContextPreflight",
+      "context.preflight.ack": "#/$defs/ContextPreflightAck",
       "control": "#/$defs/Control",
       "control.ack": "#/$defs/ControlAck",
       "control.error": "#/$defs/ControlError",
@@ -2313,6 +2452,9 @@
       "$ref": "#/$defs/IterationSummaryAck"
     },
     {
+      "$ref": "#/$defs/ContextPreflightAck"
+    },
+    {
       "$ref": "#/$defs/Hello"
     },
     {
@@ -2376,6 +2518,9 @@
     },
     {
       "$ref": "#/$defs/IterationSummary"
+    },
+    {
+      "$ref": "#/$defs/ContextPreflight"
     }
   ],
   "title": "Hermes compute-host frames"

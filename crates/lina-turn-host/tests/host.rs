@@ -1,8 +1,8 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::OnceLock;
 use std::sync::mpsc::{self, Receiver};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use serde_json::{Value, json};
@@ -29,12 +29,16 @@ fn host_frame_schema() -> &'static jsonschema::Validator {
 
 struct Host {
     child: Child,
-    input: ChildStdin,
+    input: Arc<Mutex<ChildStdin>>,
     lines: Receiver<Value>,
 }
 
 impl Host {
     fn spawn() -> Self {
+        Self::spawn_with_preflight(true)
+    }
+
+    fn spawn_with_preflight(auto_allow: bool) -> Self {
         let mut child = Command::new(env!("CARGO_BIN_EXE_lina-turn-host"))
             .env_clear()
             .env("OPENAI_API_KEY", KEY)
@@ -43,7 +47,8 @@ impl Host {
             .stdout(Stdio::piped())
             .spawn()
             .expect("start turn host");
-        let input = child.stdin.take().unwrap();
+        let input = Arc::new(Mutex::new(child.stdin.take().unwrap()));
+        let callback_input = Arc::clone(&input);
         let stdout = child.stdout.take().unwrap();
         let (sender, lines) = mpsc::channel();
         std::thread::spawn(move || {
@@ -53,6 +58,12 @@ impl Host {
                 let frame: Value = serde_json::from_str(&line).unwrap();
                 if let Err(error) = host_frame_schema().validate(&frame) {
                     panic!("host frame does not match the shared schema: {error}");
+                }
+                if auto_allow && frame["type"] == "context.preflight" {
+                    let mut input = callback_input.lock().unwrap();
+                    writeln!(input, "{}", preflight_ack(&frame, "allow")).unwrap();
+                    input.flush().unwrap();
+                    continue;
                 }
                 if sender.send(frame).is_err() {
                     break;
@@ -88,8 +99,9 @@ impl Host {
     }
 
     fn send(&mut self, body: &Value) {
-        writeln!(self.input, "{body}").unwrap();
-        self.input.flush().unwrap();
+        let mut input = self.input.lock().unwrap();
+        writeln!(input, "{body}").unwrap();
+        input.flush().unwrap();
     }
 
     fn begin(&mut self, request_id: &str, base_url: &str, stream: bool) {
@@ -155,6 +167,14 @@ impl Host {
         );
         assert!(self.child.wait().unwrap().success());
     }
+}
+
+fn preflight_ack(frame: &Value, decision: &str) -> Value {
+    json!({
+        "type": "context.preflight.ack", "sid": frame["sid"],
+        "request_id": frame["request_id"], "turn_id": frame["turn_id"],
+        "decision": decision,
+    })
 }
 
 impl Drop for Host {
@@ -343,6 +363,49 @@ fn interrupt_cancels_the_inflight_unknown_tool_continuation() {
 }
 
 const TOOL_COMPLETION: &str = r#"{"choices":[{"message":{"tool_calls":[{"id":"call","type":"function","function":{"name":"other","arguments":"{}"}}]}}]}"#;
+
+#[test]
+fn context_pressure_blocks_later_model_requests_and_preserves_tool_transcript() {
+    for limit in [None, Some(1)] {
+        let (listener, base_url) = model();
+        let mut host = Host::spawn_with_preflight(false);
+        host.begin_with_limit("pressure", &base_url, false, limit);
+        let (socket, _) = request(&listener);
+        let mut response: Value = serde_json::from_str(TOOL_COMPLETION).unwrap();
+        response["usage"] = json!({"prompt_tokens": 1200, "completion_tokens": 12});
+        reply(socket, "application/json", &response.to_string());
+
+        let check = host.next();
+        assert_eq!(
+            check["type"], "context.preflight",
+            "the model continuation or forced summary must first check context pressure"
+        );
+        assert_eq!(check["priced_prefix_count"], 2);
+        assert_eq!(check["usage"]["prompt_tokens"], 1200);
+        assert_eq!(check["usage"]["completion_tokens"], 12);
+        assert_eq!(check["messages"][3]["tool_call_id"], "call");
+        let mut stale = preflight_ack(&check, "allow");
+        stale["turn_id"] = json!("previous-turn");
+        host.send(&stale);
+        host.send(&preflight_ack(&check, "pressure"));
+
+        let completion = host.next();
+        assert_eq!(event(&completion)["payload"]["status"], "error");
+        assert_eq!(event(&completion)["payload"]["recoverable"], true);
+        assert_eq!(event(&completion)["payload"]["usage"]["calls"], 1);
+        let end = host.next();
+        assert_eq!(end["type"], "turn.end");
+        assert_eq!(end["context_failure"], "context_pressure");
+        assert_eq!(end["messages"], check["messages"]);
+        host.close();
+        listener.set_nonblocking(true).unwrap();
+        assert_eq!(
+            listener.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock,
+            "no second HTTP request may reach the model"
+        );
+    }
+}
 
 #[test]
 fn exhausted_turn_retries_empty_summary_with_the_parent_body() {

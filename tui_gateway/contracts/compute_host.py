@@ -175,6 +175,19 @@ class IterationSummaryAck(_PolicyFrame):
     body: JsonObject | None = Field(default=None, repr=False)
 
 
+class ContextPreflight(_PolicyFrame):
+    type: Literal["context.preflight"]
+    messages: list[JsonObject] = Field(repr=False)
+    usage: JsonObject | None = Field(repr=False)
+    priced_prefix_count: int = Field(ge=1)
+    summary: bool
+
+
+class ContextPreflightAck(_PolicyFrame):
+    type: Literal["context.preflight.ack"]
+    decision: Literal["allow", "pressure", "unavailable"]
+
+
 class ReadFileAuthorizeAck(_PolicyFrame):
     type: Literal["read_file.policy.ack"]
     ok: Literal[True]
@@ -223,7 +236,8 @@ ReadFilePolicyAck = Annotated[
 
 
 ComputeHostRequest = Annotated[
-    TurnStart | Interrupt | Respond | ReloadMcp | Control | Shutdown | ReadFilePolicyAck | IterationSummaryAck,
+    TurnStart | Interrupt | Respond | ReloadMcp | Control | Shutdown | ReadFilePolicyAck
+    | IterationSummaryAck | ContextPreflightAck,
     Field(discriminator="type"),
 ]
 
@@ -296,6 +310,7 @@ class TurnEnd(_SessionReply, _HistoryMetadata):
     messages: list[JsonObject] | None = None
     new_messages: list[JsonObject] | None = None
     provider_error: ProviderError | None = None
+    context_failure: Literal["context_pressure", "context_preflight_unavailable"] | None = None
     max_iterations_reached: Literal[True] | None = None
     summary_outcome: Literal["success", "empty", "error"] | None = None
 
@@ -360,7 +375,7 @@ class Error(_ChildFrame):
 ComputeHostResponse = Annotated[
     Hello | Heartbeat | Orphan | Rpc | TurnStarted | TurnEnd | TurnError | InterruptAck
     | RespondAck | RespondError | ReloadMcpAck | ControlAck | ControlError | ShutdownAck | Error
-    | ReadFilePolicy | IterationSummary,
+    | ReadFilePolicy | IterationSummary | ContextPreflight,
     Field(discriminator="type"),
 ]
 
