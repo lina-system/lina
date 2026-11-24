@@ -238,7 +238,13 @@ class TestRequestToolApproval:
         assert res["approved"] is False
         assert "unattended platform" in res["message"].lower()
 
-    def test_plugin_queue_binds_modified_tool_args_without_disclosing_them(self, monkeypatch):
+    @pytest.mark.parametrize(("args", "canonical"), [
+        ({"z": 2, "body": "old body"},
+         '{"args":{"body":"synthetic-private-body","z":2},"name":"send_sample"}'),
+        ({"meta": {"tag": "café", "format": "text"}, "body": "old body"},
+         '{"args":{"body":"synthetic-private-body","meta":{"format":"text","tag":"café"}},"name":"send_sample"}'),
+    ], ids=["flat", "nested-utf8"])
+    def test_plugin_queue_binds_modified_tool_args_without_disclosing_them(self, monkeypatch, args, canonical):
         from hermes_cli import lifecycle, plugins
 
         monkeypatch.setattr(approval, "_presence", lambda callback: (callback, False, True, False))
@@ -248,8 +254,7 @@ class TestRequestToolApproval:
             {"action": "modify", "args": {"body": "synthetic-private-body"}},
             {"action": "approve", "message": "Confirm delivery"},
         ])
-        encoded = b'{"args":{"body":"synthetic-private-body","z":2},"name":"send_sample"}'
-        version = hashlib.sha256(encoded).hexdigest()
+        version = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
         observed = {}
 
         def notify(data):
@@ -265,12 +270,12 @@ class TestRequestToolApproval:
 
         approval.register_gateway_notify("test-session", notify)
         try:
-            block, modified = plugins._dispatch_pre_tool_call_hooks("send_sample", {"z": 2, "body": "old body"})
+            block, modified = plugins._dispatch_pre_tool_call_hooks("send_sample", args)
         finally:
             approval.unregister_gateway_notify("test-session")
 
         assert block is None
-        assert modified == {"z": 2, "body": "synthetic-private-body"}
+        assert modified == {**args, "body": "synthetic-private-body"}
         assert observed["count"] == 1
         row = observed["row"]
         assert row["content_version"] == version
