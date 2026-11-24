@@ -545,7 +545,9 @@ async def test_dashboard_approvals_survive_session_stream_disconnect(
             self.thread_id = threading.get_ident()
 
             def run_plugin(tool_name, args) -> None:
-                if plugins.resolve_pre_tool_block(tool_name, args) is None:
+                if plugins.resolve_pre_tool_block(
+                    tool_name, args, tool_call_id=f"call-{tool_name}", turn_id=f"turn-{tool_name}",
+                ) is None:
                     executions.append(tool_name)
 
             def run_shell() -> None:
