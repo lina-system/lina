@@ -223,7 +223,7 @@ def isolated_environment(monkeypatch):
     for key in tuple(os.environ):
         if key.startswith("LCM_") or key == "SILICONFLOW_API_KEY":
             monkeypatch.delenv(key)
-    monkeypatch.setattr(config, "_load_hermes_config_yaml", lambda: {})
+    monkeypatch.setattr(config, "_load_hermes_config_yaml", lambda cfg_path=None: {})
     monkeypatch.setattr(config, "_host_message_uid_mode_warned", False)
     monkeypatch.setattr(config, "_sqlite_mmap_size_warned", False)
 

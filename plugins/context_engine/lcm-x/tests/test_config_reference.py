@@ -283,7 +283,7 @@ def test_doctor_context_threshold_reproduction(monkeypatch, tmp_path, threshold)
     from tests.harness import engine_context, pin_char_counter
 
     pin_char_counter(monkeypatch)
-    monkeypatch.setattr(config, "_load_hermes_config_yaml", lambda: {})
+    monkeypatch.setattr(config, "_load_hermes_config_yaml", lambda cfg_path=None: {})
     monkeypatch.setenv("LCM_CONTEXT_THRESHOLD", str(threshold))
     cfg = config.LCMConfig.from_env()
     with engine_context(tmp_path, context_threshold=cfg.context_threshold,

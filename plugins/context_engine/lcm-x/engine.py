@@ -969,6 +969,7 @@ def summarize_leaf_chunk_with_rescue(
     deadline: Optional[float] = None,
     route_key_prefix: str = "",
     admit_rescue: Optional[Callable[[list], bool]] = None,
+    hermes_home: str = "",
 ) -> LeafSummaryResult:
     """#787 D-2: the leaf summariser with its adaptive rescue (#751), every input explicit, the provenance and the
     level 3 flags returned. The foreground passes its live values; a background preparation passes a snapshot,
@@ -978,6 +979,9 @@ def summarize_leaf_chunk_with_rescue(
     attempt_number = 0
     clip_budget = config.leaf_chunk_tokens
     floor = min(clip_budget, _LEAF_RESCUE_FLOOR_TOKENS)
+    from .taste_forget import taste_instructions
+
+    instructions = taste_instructions(hermes_home, config.custom_instructions)
 
     while attempt_chunk and attempt_number < max_attempts:
         attempt_number += 1
@@ -1032,7 +1036,7 @@ def summarize_leaf_chunk_with_rescue(
                 l2_budget_ratio=config.l2_budget_ratio,
                 l3_truncate_tokens=config.l3_truncate_tokens,
                 focus_topic=focus_topic or "",
-                custom_instructions=config.custom_instructions,
+                custom_instructions=instructions,
                 prompt_version=getattr(config, "summary_prompt_version", 1),
                 provenance=provenance,
                 **({"budget": budget} if budget is not None else
@@ -1643,7 +1647,7 @@ class LCMEngine(
         self._query_views = None
         self._adaptive_retrieval = None
         self._assertion_extractor = None
-        route_to_host_store(db_path, configured_store_backend(), hermes_home)  # LINA (lina#16)
+        route_to_host_store(db_path, configured_store_backend(hermes_home), hermes_home)  # LINA (lina#16)
         # LINA (lina#704): the host store keeps one embedding model, 1024 wide, configured as the home's `embedding:`
         # and written by `lina store reembed`, so the default local model (384 wide) can neither store a vector there
         # nor query the store's. Only an explicit LCM_EMBEDDINGS_ENABLED keeps LCM's own semantic arm on the store.
@@ -3221,6 +3225,7 @@ class LCMEngine(
             budget=self._foreground_call_budget(),
             deadline=deadline,
             admit_rescue=getattr(self, "_leaf_rescue_admit", None),
+            hermes_home=self._hermes_home,
         )
         self._last_leaf_summary_model = result.model
         self._last_leaf_content_filter_error = result.content_filter_error
@@ -3267,6 +3272,9 @@ class LCMEngine(
             spend_guard = self._rollup_spend_guard
 
             def maintain() -> None:
+                from .taste_forget import taste_instructions
+
+                config.custom_instructions = taste_instructions(hermes_home, config.custom_instructions)
                 private_dag = SummaryDAG(database_path)
                 try:
                     run_rollup_maintenance(
@@ -3279,6 +3287,7 @@ class LCMEngine(
                 finally:
                     private_dag.close()
 
+            hermes_home = self._hermes_home
             _ROLLUP_MAINTENANCE_SCHEDULER.schedule(
                 key,
                 profile_bound(maintain),
@@ -9074,6 +9083,8 @@ class LCMEngine(
                 raise SweepBudgetExhausted("threshold full sweep time budget exhausted")
             timeout_seconds = min(timeout_seconds, remaining_seconds)
         provenance: dict[str, str] = {}
+        from .taste_forget import taste_instructions
+
         summary_text, level = summarize_with_escalation(
             text=combined_text,
             source_tokens=source_tokens,
@@ -9088,7 +9099,7 @@ class LCMEngine(
             l2_budget_ratio=self._config.l2_budget_ratio,
             l3_truncate_tokens=self._config.l3_truncate_tokens,
             focus_topic=focus_topic or "",
-            custom_instructions=self._config.custom_instructions,
+            custom_instructions=taste_instructions(self._hermes_home, self._config.custom_instructions),
             prompt_version=getattr(self._config, "summary_prompt_version", 1),
             provenance=provenance,
             **({"budget": budget} if budget is not None else

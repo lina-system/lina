@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from copy import copy
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from enum import Enum
@@ -2041,6 +2042,12 @@ def _rollups_rebuild_text(tokens: list[str], engine) -> str:
             "week": rollup_builder.build_week,
             "month": rollup_builder.build_month,
         }
+        from .taste_forget import taste_instructions
+
+        build_config = copy(engine._config)
+        build_config.custom_instructions = taste_instructions(
+            engine._hermes_home, build_config.custom_instructions,
+        )
         for index, (period_kind, period_start) in enumerate(targets):
             period_key = period_start.isoformat()
             if index >= limit:
@@ -2059,7 +2066,7 @@ def _rollups_rebuild_text(tokens: list[str], engine) -> str:
             result = builders[period_kind](
                 store,
                 engine._dag,
-                engine._config,
+                build_config,
                 scope,
                 period_start,
                 circuit_breaker=engine._summary_circuit_breaker,

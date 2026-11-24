@@ -203,6 +203,45 @@ def _merge(gh, lines):
     return merge.merge_pr(gh, REPO, 7, out=lines.append, sleep=lambda _s: None, poll_s=60, queue_timeout_s=600)
 
 
+def test_landing_an_already_merged_branch_finishes_issues_once(tmp_path):
+    from hermes_cli.delivery.land import land
+    from hermes_cli.worker.hub_store import Store
+
+    Store(tmp_path / "worker").save({"id": "OT-1", "repo": REPO})
+    snap = snapshot(review_comments=[finding("P2", HEAD)])
+    gh = _github(snap, queue=True)
+    pull_path = f"repos/{REPO}/pulls"
+    pull = {**gh.json(f"{pull_path}/7"), "state": "closed", "merged_at": "2026-11-02T11:00:00Z"}
+    gh.routes[pull_path] = [{"number": 7, "head": pull["head"], "state": "closed", "merged_at": pull["merged_at"]}]
+    gh.routes[f"{pull_path}/7"] = {**pull, "merged": True}
+
+    def rerun():
+        return land(gh, snap["head_ref"], "OT-1", "title", 12, base=tmp_path)
+
+    assert rerun() == rules.PASS
+    issues = f"repos/{REPO}/issues"
+    patch, create = gh.writes
+    assert patch[:2] == ("PATCH", f"{issues}/12")
+    assert patch[2]["state"] == "closed" and rules.done_when(patch[2]["body"]) == (2, 2)
+    assert create[:2] == ("POST", issues)
+    assert "P2 Guard the empty case" in create[2]["body"]
+
+    # Serve the resulting GitHub state on the second invocation.
+    gh.routes[f"{issues}/12"].update(patch[2])
+    gh.routes[issues].append({"number": 900, **create[2]})
+    assert rerun() == rules.PASS
+    assert gh.writes == [patch, create]
+    assert gh.commands == [] and not any("enqueuePullRequest" in q for q, _ in gh.queries)
+
+
+@pytest.mark.parametrize("queue", [False, True])
+def test_report_only_leaves_a_green_open_pr_and_its_issues_untouched(queue):
+    gh = _github(snapshot(review_comments=[finding("P2", HEAD)]), queue=queue)
+    assert merge.report_only(gh, REPO, 7) == rules.PASS
+    assert gh.commands == [] and gh.writes == []
+    assert not any("enqueuePullRequest" in q for q, _ in gh.queries)
+
+
 @pytest.mark.parametrize("creator,state,expected", [
     ("a-user", "success", rules.WAIT),
     ("other-ci[bot]", "success", rules.WAIT),

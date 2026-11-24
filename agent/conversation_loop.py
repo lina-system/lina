@@ -36,7 +36,7 @@ from agent.runtime_cwd import resolve_agent_cwd
 from agent.surface_switch import (
     identity_line_value, note_inert_pinned_tools, runtime_host_value, stage_surface_switch_note,
 )
-from agent.turn_context import PRE_LLM_BLOCK_EXIT_REASON, PreflightCompressionTimedOut, build_turn_context
+from agent.turn_context import OWNER_TASTE_FORGET_EXIT_REASON, PRE_LLM_BLOCK_EXIT_REASON, PreflightCompressionTimedOut, build_turn_context
 from hermes_cli.observability.shared_metrics_efficiency import record_cache_break, record_prompt_rebuild
 from hermes_cli.plugins_dispatch import held_stream_transforms
 from agent.turn_retry_state import TurnRetryState
@@ -1613,13 +1613,16 @@ def _finalize_from_state(agent: Any, s: _LoopState) -> dict[str, Any]:
     })
 
 
-def _turn_without_loop(agent: Any, s: _LoopState, block_message: str) -> Optional[dict[str, Any]]:
+def _turn_without_loop(agent: Any, s: _LoopState, block_message: str, local_reply: str) -> Optional[dict[str, Any]]:
     """The turn's result when it never enters the generic loop, else None. A ``pre_llm_call``
     veto finalizes with no inference request (the block message closes the transcript pair);
     the opt-in codex app-server runtime runs the whole turn in its subprocess
     (agent/transports/codex_app_server_session.py)."""
     if block_message:
         s.final_response, s._turn_exit_reason = block_message, PRE_LLM_BLOCK_EXIT_REASON
+        return _finalize_from_state(agent, s)
+    if local_reply:
+        s.final_response, s._turn_exit_reason = local_reply, OWNER_TASTE_FORGET_EXIT_REASON
         return _finalize_from_state(agent, s)
     return _codex_app_server_turn(agent, s) if agent.api_mode == "codex_app_server" else None
 
@@ -1744,7 +1747,7 @@ def _run_conversation_turn(
         max_compression_attempts=getattr(agent, "max_compression_attempts", 3),
         **{f.name: getattr(_ctx, f.name.lstrip("_")) for f in fields(_LoopState) if f.name in _CTX_FIELDS},
     )
-    if (early_result := _turn_without_loop(agent, s, _ctx.plugin_block_message)) is not None:
+    if (early_result := _turn_without_loop(agent, s, _ctx.plugin_block_message, _ctx.local_reply)) is not None:
         return early_result
 
     _prelude_action, _prelude_result = play_prelude(agent, s, prelude)

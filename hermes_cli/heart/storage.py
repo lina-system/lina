@@ -9,7 +9,7 @@ import re
 import tempfile
 import time
 from pathlib import Path
-from typing import TypeVar
+from typing import TYPE_CHECKING, TypeVar
 
 from pydantic import ValidationError
 
@@ -18,6 +18,9 @@ from hermes_cli.heart.models import Record, Settings
 from hermes_cli.work.env import current
 from hermes_constants import get_hermes_home
 from hermes_time import get_timezone
+
+if TYPE_CHECKING:
+    from psycopg import Cursor
 
 T = TypeVar("T", bound=Record)
 
@@ -68,6 +71,13 @@ def midnight(day: dt.date) -> dt.datetime:
 
 def profile_date(instant: dt.datetime) -> dt.date:
     return instant.astimezone(get_timezone()).date()
+
+
+def use_profile_calendar(cursor: Cursor) -> None:
+    """Use the profile's calendar for database date constraints in this transaction."""
+    zone = get_timezone()
+    db_zone = zone.key if zone else f"INTERVAL '{time.localtime().tm_gmtoff} seconds'"
+    cursor.execute("SELECT set_config('TimeZone', %s, true)", (db_zone,))
 
 
 def review_day(value: str | None) -> dt.date:

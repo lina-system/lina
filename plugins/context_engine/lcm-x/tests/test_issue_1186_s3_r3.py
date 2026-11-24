@@ -139,7 +139,8 @@ def test_explicit_enable_values_still_win(monkeypatch, provider, flag, expected)
 def test_ignored_yaml_doctor_names_honoured_key(tmp_path, monkeypatch):
     from tests.harness import engine_context
 
-    monkeypatch.setattr(config_module, "_load_hermes_config_yaml", lambda: {"lcm": {"embeddings_enabled": False}})
+    monkeypatch.setattr(config_module, "_load_hermes_config_yaml",
+                        lambda cfg_path=None: {"lcm": {"embeddings_enabled": False}})
     with engine_context(tmp_path, window=40_000, temporal_rollups_enabled=False) as engine:
         engine._config = LCMConfig.from_env()
         payload = json.loads(tools.lcm_doctor({}, engine=engine))
