@@ -688,6 +688,8 @@ async def _exercise_dashboard_approvals(
     assert executions == []
 
     by_version = {item["content_version"]: item for item in items}
+    assert "Review synthetic send_mail" in by_version[hashes["mail"]]["action_summary"]
+    assert "Review synthetic create_purchase" in by_version[hashes["purchase"]]["action_summary"]
     mail_id = by_version[hashes["mail"]]["request_id"]
     purchase_id = by_version[hashes["purchase"]]["request_id"]
     mail_route = f"{route}/{mail_id}"

@@ -1420,12 +1420,15 @@ async def _handle_list_approvals(self, request: web.Request, *, _api_server) -> 
         for entry in entries:
             if not entry.get("content_version") or entry["expires_at"] <= now:
                 continue
+            summary = entry.get("action_summary")
+            if not summary and entry.get("pattern_key", "").startswith("plugin_rule:"):
+                summary = entry.get("description")
             approvals.append({
                 "request_id": entry["request_id"],
                 "run_id": run_id,
                 "target": redact_approval_display(entry.get("target") or status.get("session_id"), force=True),
                 "action_summary": redact_approval_display(
-                    entry.get("action_summary") or entry.get("command") or entry.get("description"), force=True),
+                    summary or entry.get("command") or entry.get("description"), force=True),
                 "content_version": entry["content_version"],
                 "expires_at": entry["expires_at"],
                 "state": "pending",
