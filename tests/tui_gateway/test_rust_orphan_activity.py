@@ -6,18 +6,20 @@ import json
 import logging
 import os
 import shutil
+import socket
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from queue import Queue
-from threading import Event
+from threading import Event, Thread, Timer
 
 import pytest
-from starlette.applications import Starlette
-from starlette.routing import WebSocketRoute
-from starlette.testclient import TestClient, WebSocketTestSession
-from starlette.websockets import WebSocket
+import uvicorn
+from websockets.sync.client import ClientConnection, connect
 
 from hermes_constants import get_hermes_home
+from hermes_cli import web_server
 from tests._fixtures.memory_store import PROCESS_STORE
 from tests.tui_gateway._turn_host_parity_support import (
     MODEL,
@@ -31,15 +33,32 @@ from tests.tui_gateway._turn_host_parity_support import (
 from tests.waiting import wait_until
 from tui_gateway import server
 from tui_gateway.rust_host_supervisor import RustHostSupervisor
-from tui_gateway.ws import handle_ws
 
 pytestmark = pytest.mark.platforms("linux")
 _log = logging.getLogger(__name__)
 
 
-def _rpc(socket: WebSocketTestSession, method: str, **params: str) -> dict:
-    socket.send_json({"jsonrpc": "2.0", "id": method, "method": method, "params": params})
-    while (frame := socket.receive_json()).get("id") != method:
+@contextmanager
+def _dashboard_socket() -> Iterator[str]:
+    """Serve the dashboard app on a private loopback WebSocket."""
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
+        dashboard = uvicorn.Server(uvicorn.Config(web_server.app, lifespan="off", log_level="warning"))
+        worker = Thread(target=dashboard.run, kwargs={"sockets": [listener]}, daemon=True)
+        worker.start()
+        try:
+            wait_until(lambda: dashboard.started, what="dashboard listener")
+            yield f"ws://127.0.0.1:{port}/api/ws?token={web_server._SESSION_TOKEN}"
+        finally:
+            dashboard.should_exit = True
+            worker.join(timeout=10)
+            assert not worker.is_alive(), "dashboard listener did not stop"
+
+
+def _rpc(ws: ClientConnection, method: str, **params: str) -> dict:
+    ws.send(json.dumps({"jsonrpc": "2.0", "id": method, "method": method, "params": params}))
+    while (frame := json.loads(ws.recv(timeout=15))).get("id") != method:
         assert frame.get("method") != "compute_host.activity"
     assert "error" not in frame, frame
     return frame["result"]
@@ -55,9 +74,10 @@ def test_detached_rust_turn_keeps_running_past_orphan_grace(
     monkeypatch.setenv("LINA_STORE_DSN", PROCESS_STORE.app_dsn())
     monkeypatch.setattr(server, "_WS_ORPHAN_REAP_GRACE_S", 3.0)
     monkeypatch.setattr(server, "_WS_ORPHAN_ACTIVITY_STALE_S", 12.0)
+    monkeypatch.setattr(web_server, "_DASHBOARD_EMBEDDED_CHAT_ENABLED", True)
     home = Path(get_hermes_home())
     monkeypatch.setattr(server, "_hermes_home", str(home))
-    after_disconnect, finish_stream, disconnected = Event(), Event(), Event()
+    after_disconnect, finish_stream = Event(), Event()
     frames: Queue[dict] = Queue()
 
     class StreamingHandler(ModelHandler):
@@ -94,13 +114,8 @@ def test_detached_rust_turn_keeps_running_past_orphan_grace(
             if isinstance(stamp := sample["activity_ns"], int) and stamp >= since:
                 return sample
 
-    async def endpoint(socket: WebSocket) -> None:
-        await handle_ws(socket)
-        disconnected.set()
-
     monkeypatch.setattr(RustHostSupervisor, "_handle_host_frame", observe_host_frame)
-    app = Starlette(routes=[WebSocketRoute("/ws", endpoint)])
-    with loopback_model((Reply(),)) as model:
+    with loopback_model((Reply(),)) as model, _dashboard_socket() as url:
         model.RequestHandlerClass = StreamingHandler
         (home / "config.yaml").write_text(json.dumps({
             "dashboard": {"turn_isolation": True, "compute_host_impl": "rust"},
@@ -113,9 +128,10 @@ def test_detached_rust_turn_keeps_running_past_orphan_grace(
         }), encoding="utf-8")
         sid = ""
         try:
-            with TestClient(app).websocket_connect("/ws") as socket:
-                sid = _rpc(socket, "session.create", cwd=str(tmp_path), source="desktop")["session_id"]
-                result = _rpc(socket, "prompt.submit", session_id=sid, text="Stream a response.")
+            with connect(url) as ws:
+                created = _rpc(ws, "session.create", cwd=str(tmp_path), source="web")
+                sid = created["session_id"]
+                result = _rpc(ws, "prompt.submit", session_id=sid, text="Stream a response.")
                 assert result.get("turn_isolation") is True, result
                 before = wait_for_activity()
                 session = server._sessions[sid]
@@ -124,22 +140,32 @@ def test_detached_rust_turn_keeps_running_past_orphan_grace(
                 assert before["session_id"] == sid
                 assert before["turn_id"] == session["_compute_host_turn_id"]
                 _log.info("Rust child pid=%s executable=%s emitted correlated activity before WebSocket close", pid, binary)
-                socket.close()
-                assert disconnected.wait(10), "WebSocket disconnect did not finish"
 
+            def armed_orphan_timer() -> Timer | None:
+                timer = server._pending_ws_reaps.get(sid)
+                return timer if timer is not None and timer.is_alive() else None
+
+            timer = wait_until(armed_orphan_timer, what="dashboard WebSocket orphan timer")
             assert server._ws_session_is_detached(session)
-            timer = server._pending_ws_reaps[sid]
             detached_at = time.perf_counter_ns()
             after_disconnect.set()
             sample = wait_for_activity(since=detached_at)
             assert (sample["session_id"], sample["turn_id"]) == (sid, before["turn_id"])
-            _log.info("Rust child emitted newer activity for the same turn after WebSocket disconnect")
+            with session["history_lock"]:
+                accepted_stamp = session.get("_compute_host_activity_ns")
+                assert accepted_stamp is not None and accepted_stamp >= sample["activity_ns"], (
+                    "Dashboard session did not record the Rust activity sample emitted after disconnect"
+                )
+            _log.info("Dashboard recorded Rust activity after disconnect, sample=%s recorded=%s",
+                      sample["activity_ns"], accepted_stamp)
 
             timer.join(timeout=10)
             assert not timer.is_alive(), "The original orphan grace timer did not fire"
             interrupt_requested = bool(session.get("_client_gone_interrupt_requested"))
-            _log.info("Original %.1fs orphan grace expired, interrupt requested=%s",
-                      timer.interval, interrupt_requested)
+            terminal_sample = session.get("_compute_host_activity_ns")
+            age = (time.perf_counter_ns() - terminal_sample) / 1e9 if terminal_sample is not None else None
+            _log.info("Dashboard orphan grace %.1fs expired, last activity age=%s, interrupt requested=%s",
+                      timer.interval, age, interrupt_requested)
             assert not interrupt_requested, "Orphan deadline interrupted a detached turn with fresh Rust activity"
             assert server._sessions[sid] is session and session["running"]
             assert server._pending_ws_reaps[sid] is not timer
@@ -149,7 +175,11 @@ def test_detached_rust_turn_keeps_running_past_orphan_grace(
                 pass
             assert terminal["type"] == "turn.end" and terminal["interrupted"] is False
             wait_until(lambda: not session["running"], what="detached Rust turn settlement")
-            _log.info("Detached Rust turn completed normally after the original orphan deadline")
+            with connect(url) as ws:
+                resumed = _rpc(ws, "session.resume", session_id=created["stored_session_id"], source="web")
+                assert any(message["role"] == "assistant" and "Model chunk after disconnect." in message["text"]
+                           for message in resumed["messages"])
+            _log.info("Dashboard reattached after the orphan deadline and read the completed Rust response")
         finally:
             after_disconnect.set()
             finish_stream.set()
