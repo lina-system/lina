@@ -18,6 +18,8 @@ Hermes Agent upstream changes are not listed here; see the upstream history on t
 - An open app screen follows the connected Hermes board's cards (`board.hermes`): the change stream `GET /api/lina/events` sends `{source: kanban, id: hermes:<card>}` when a board pass finds a card changed since the last good pass (`added`, `changed`, `removed`; at most 50 a pass, none on a reader's first pass) and when the board lines writer stores a changed line of such a card (`line`), from the new `board/cards.jsonl` journal, cut to `cards.jsonl.1` past 1 MiB (a socket reading it when it is cut resyncs once). Those cards' comments and state changes used to reach no stream, so the app kept the first read until a reload. The cursor format is `c6.`; a `c5.` cursor gets one resync.
 - A card's `now` line no longer names who does the work: the writer's prompt says to write what is being done, not who, and `check_now` refuses a line whose first word is an agent's name (bare or with any particle) or that carries one with a subject or dative particle (the agents' ids and display names of the work record and of the Hermes board's old record, less the owner's), so a stored line like that is asked again once. `리나` before `웹`, `서버`, `코어` or `허브` is the product and passes.
 
+- Dashboard session teardown handles a missing history lock when reclaiming gateway and desktop sessions.
+
 ### Changed
 
 - `lina work merge --branch` opens or updates the pull request and stops by default. Exit 0 on an open PR means the gates passed and it awaits review. Rerun the command after the PR merges to complete the linked issues and file review follow-ups. Set `work.land_merge: true` to merge after landing. `lina work merge <repo> <pr>` is unchanged.

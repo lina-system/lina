@@ -258,7 +258,8 @@ def _relay_compute_host_rpc(message: dict) -> bool:
 
 
 def _history_lock(session: dict):
-    return session.get("history_lock", threading.Lock())
+    """Use the live session's lock when the record has one."""
+    return session.get("history_lock") or contextlib.nullcontext()
 
 
 def _open_request_matches(session: dict, request_id) -> bool:
