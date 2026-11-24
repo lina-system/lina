@@ -142,6 +142,13 @@ _SCHEMA_OVERRIDES: dict[str, dict[str, Any]] = {
     "display.resume_display": _select("How resumed sessions display history", "minimal", "full", "off"),
     "display.busy_input_mode": _select("Input behavior while agent is running", "interrupt", "queue", "steer"),
     "approvals.mode": _select("Dangerous command approval mode", "manual", "smart", "off"),
+    "approvals.biometric": {
+        "type": "boolean",
+        "description": (
+            "Prefer Touch ID / Face ID / passkey confirmation (off by default). "
+            "The app button still approves. WebAuthn is tracked in #880."
+        ),
+    },
     "context.engine": _select("Context management engine", "default", "custom"),
     "human_delay.mode": _select("Simulated typing delay mode", "off", "typing", "fixed"),
     "logging.level": _select("Log level for agent.log", "DEBUG", "INFO", "WARNING", "ERROR"),

@@ -285,6 +285,7 @@ def _http_routes(self) -> list[tuple[str, str, Any]]:
     return [
         ("POST", "/v1/runs", self._handle_runs), ("GET", "/v1/runs/{run_id}", self._handle_get_run),
         ("GET", "/v1/runs/{run_id}/events", self._handle_run_events),
+        ("GET", "/v1/approvals", self._handle_list_approvals),
         ("POST", "/v1/runs/{run_id}/approval", self._handle_run_approval),
         ("POST", "/v1/runs/{run_id}/clarify", self._handle_run_clarify),
         ("POST", "/v1/runs/{run_id}/steer", self._handle_steer_run),
@@ -1001,7 +1002,9 @@ def _make_approval_notify(self, run: _RunLaunch, *, _api_server) -> Callable[[di
     def _approval_notify(approval_data: dict[str, Any]) -> None:
         # Clients must never receive the raw flagged command (#48456): the shared builder redacts.
         event = _api_server._approval_request_event(run_id, approval_data)
-        self._set_run_status(run_id, "waiting_for_approval", last_event="approval.request", approval=event)
+        # Idempotent runs persist this status. Keep the prior approval shape on disk.
+        status_approval = {key: value for key, value in event.items() if key not in {"content_version", "expires_at"}}
+        self._set_run_status(run_id, "waiting_for_approval", last_event="approval.request", approval=status_approval)
         with suppress(Exception):
             loop.call_soon_threadsafe(q.put_nowait, event)
 
@@ -1350,7 +1353,87 @@ def _mark_run_event(self, run_id: str, name: str, **fields: Any) -> None:
             q.put_nowait(_run_event(run_id, name, **fields))
 
 
+async def _drain_session_stream_task_on_disconnect(
+    self, run_id: str, task: asyncio.Task, queue: asyncio.Queue[tuple[str, dict[str, Any]] | None],
+    *, interrupt_message: str, shield_wait: bool,
+) -> None:
+    """Preserve live run control refs until the executor-backed turn actually exits."""
+    from tools.approval import list_gateway_approvals
+
+    agent = self._active_run_agents.get(run_id)
+    if agent is not None and not task.done() and list_gateway_approvals(run_id):
+        # The approval waiter owns its timeout. Discard SSE frames through the run's final sentinel.
+        async def _discard_events() -> None:
+            while await queue.get() is not None:
+                continue
+
+        self._track_background_task(asyncio.create_task(_discard_events()))
+        logger.info("Session SSE disconnected with a pending approval for run %s", run_id)
+        return
+    if agent is None:
+        if not task.done():
+            task.cancel()
+            with suppress(Exception):
+                await task
+        return
+    with suppress(Exception):
+        agent.interrupt(interrupt_message)
+    logger.info("%s; interrupted session run %s", interrupt_message, run_id)
+    if not task.done():
+        with suppress(Exception):
+            await (asyncio.shield(task) if shield_wait else task)
+
+
 _APPROVAL_CHOICE_ALIASES = {"approve": "once", "approved": "once", "allow": "once"}
+
+
+async def _handle_list_approvals(self, request: web.Request, *, _api_server) -> web.Response:
+    """GET /v1/approvals — list pending approvals belonging to the caller's runs."""
+    from agent.redact import redact_approval_display
+    from tools.approval import list_all_gateway_approvals
+
+    auth_err = self._check_run_auth(request, permission="status")
+    if auth_err is not None:
+        return auth_err
+    if getattr(self.gateway_runner, "session_authority", None) is not None:
+        return _json_error(
+            _api_server._openai_error, "Listing approvals for managed runs is unsupported.",
+            code="approval_list_unsupported", status=501)
+
+    pending = list_all_gateway_approvals()
+    now = time.time()
+    approvals = []
+    # Reuse the single-run authorization with the same GET request and grant scope.
+    # The temporary route parameter is read and removed without yielding to the loop.
+    for run_id, session_key in self._run_approval_sessions.items():
+        entries = pending.get(session_key)
+        if not entries:
+            continue
+        request.match_info["run_id"] = run_id
+        try:
+            _, status, _, _, err = _load_owned_run(
+                self, request, _api_server=_api_server, permission="status", active_fallback=False)
+        finally:
+            del request.match_info["run_id"]
+        if err is not None:
+            continue
+        for entry in entries:
+            if not entry.get("content_version") or entry["expires_at"] <= now:
+                continue
+            summary = entry.get("action_summary")
+            if not summary and entry.get("pattern_key", "").startswith("plugin_rule:"):
+                summary = entry.get("description")
+            approvals.append({
+                "request_id": entry["request_id"],
+                "run_id": run_id,
+                "target": redact_approval_display(entry.get("target") or status.get("session_id"), force=True),
+                "action_summary": redact_approval_display(
+                    summary or entry.get("command") or entry.get("description"), force=True),
+                "content_version": entry["content_version"],
+                "expires_at": entry["expires_at"],
+                "state": "pending",
+            })
+    return web.json_response({"approvals": approvals})
 
 
 async def _handle_run_approval(self, request: web.Request, *, _api_server) -> web.Response:
@@ -1364,18 +1447,40 @@ async def _handle_run_approval(self, request: web.Request, *, _api_server) -> we
         body = await request.json()
     except Exception:
         return _json_error(_openai_error, "Invalid JSON", status=400)
-    if getattr(self.gateway_runner, 'session_authority', None) is not None:
-        if self._room_grant_token(request) and body.get('choice') not in {'once', 'deny'}:
+    if not isinstance(body, dict):
+        return _json_error(_openai_error, "Invalid JSON", status=400)
+    room_scoped = bool(self._room_grant_token(request))
+    managed = getattr(self.gateway_runner, "session_authority", None) is not None
+    button_audit = "button_subject" in body or "check_method" in body
+    if button_audit and (room_scoped or managed):
+        return _json_error(
+            _openai_error, "Button audit metadata requires an unmanaged API-key run.",
+            code="invalid_approval_button_metadata", status=400)
+    if managed:
+        if room_scoped and body.get('choice') not in {'once', 'deny'}:
             return _json_error(_openai_error, 'Room approvals require once or deny', status=400)
         return await _respond_authority_run(self, run_id, body, kind='approval', _api_server=_api_server)
     raw_choice = str(body.get("choice", "")).strip().lower()
     choice = _APPROVAL_CHOICE_ALIASES.get(raw_choice, raw_choice)
-    room_scoped = bool(self._room_grant_token(request))
     raw_request_id = body.get("request_id")
     request_id = raw_request_id.strip() if isinstance(raw_request_id, str) else ""
+    content_version = body.get("content_version")
+    versioned = "content_version" in body
     # Room grants may resolve exactly one request and never widen to session/always.
     allowed = {"once", "deny"} if room_scoped else {"once", "session", "always", "deny"}
     resolve_all = any(_api_server._coerce_request_bool(body.get(k), default=False) for k in ("all", "resolve_all"))
+    button_subject = body.get("button_subject")
+    if button_audit and (
+        body.get("check_method") != "button"
+        or body.get("choice") not in ("once", "deny")
+        or not isinstance(button_subject, str)
+        or not 0 < len(button_subject) <= 256
+        or not button_subject.isprintable()
+        or button_subject != button_subject.strip()
+        or not versioned
+    ):
+        return _json_error(
+            _openai_error, "Invalid button approval metadata.", code="invalid_approval_button_metadata", status=400)
     approval_session_key = self._run_approval_sessions.get(run_id)
     for failed, message, code, status in (
         (raw_request_id is not None and (not request_id or len(request_id) > 256),
@@ -1387,6 +1492,12 @@ async def _handle_run_approval(self, request: web.Request, *, _api_server) -> we
          "Room approvals can resolve only one exact request", "invalid_approval_scope", 400),
         (room_scoped and not request_id,
          "Room approvals require the exact request_id.", "approval_request_required", 400),
+        (versioned and (
+            not isinstance(content_version, str) or len(content_version) != 64
+            or any(char not in "0123456789abcdef" for char in content_version)
+         ), "Approval content_version must be a SHA-256 hex digest.", "invalid_approval_content_version", 400),
+        (versioned and (not request_id or request_id != raw_request_id or not request_id.isprintable() or resolve_all),
+         "Versioned approvals require one exact request_id.", "invalid_approval_scope", 400),
         (not approval_session_key,
          f"Run has no active approval session: {run_id}", "approval_not_active", 409)):
         if failed:
@@ -1394,13 +1505,23 @@ async def _handle_run_approval(self, request: web.Request, *, _api_server) -> we
     try:
         from tools.approval import resolve_gateway_approval
         resolved = resolve_gateway_approval(
-            approval_session_key, choice, resolve_all=resolve_all, request_id=request_id or None)
+            approval_session_key, choice, resolve_all=resolve_all, request_id=request_id or None,
+            **({"content_version": content_version} if versioned else {}))
     except Exception as exc:
         logger.exception("[api_server] approval resolution failed for run %s", run_id)
         return _json_error(_openai_error, str(exc), status=500)
     if resolved <= 0:
         return _json_error(
             _openai_error, f"Run has no pending approval: {run_id}", code="approval_not_pending", status=409)
+    if button_audit:
+        logger.info("approval.button %s", json.dumps({
+            "timestamp": time.time(),
+            "subject": button_subject,
+            "request_id": request_id,
+            "content_version": content_version,
+            "decision": "approve" if choice == "once" else "reject",
+            "check_method": "button",
+        }))
     request_id_field = {"request_id": request_id} if request_id else {}
     _mark_run_event(self, run_id, "approval.responded", choice=choice, **request_id_field, resolved=resolved)
     return web.json_response({

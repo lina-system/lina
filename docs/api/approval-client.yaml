@@ -1,0 +1,110 @@
+openapi: 3.0.3
+info:
+  title: LINA app approvals
+  version: 0.1.0
+  description: >
+    Both operations require a signed-in dashboard session. Pending approvals live in the agent's
+    gateway memory and can be listed after the chat stream closes. The approvals.biometric preference
+    defaults to false. The app button still approves and the gateway records check_method button. WebAuthn is tracked in #880.
+servers:
+  - url: /api/lina
+paths:
+  /approvals:
+    get:
+      operationId: listPendingApprovals
+      summary: List pending requests from configured agents with supported gateways.
+      responses:
+        "200":
+          description: Pending requests visible at the time of the lookup.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [approvals, biometric]
+                properties:
+                  biometric: {type: boolean, description: Stored preference for optional biometric confirmation.}
+                  approvals:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Approval"
+        "401":
+          description: A signed-in dashboard session is required.
+        "501":
+          description: All configured gateways use an unsupported approval authority.
+        "502":
+          description: A gateway could not provide its queue.
+        "503":
+          description: The agent configuration is unavailable.
+  /approvals/{request_id}:
+    post:
+      operationId: resolvePendingApproval
+      summary: Approve once or reject the exact content shown to the owner.
+      parameters:
+        - name: request_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [decision, content_version]
+              properties:
+                decision:
+                  type: string
+                  enum: [approve, reject]
+                content_version:
+                  $ref: "#/components/schemas/ContentVersion"
+      responses:
+        "200":
+          description: The gateway accepted the decision for one pending request.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [request_id, run_id, choice, resolved]
+                properties:
+                  request_id: {type: string}
+                  run_id: {type: string}
+                  choice: {type: string, enum: [once, deny]}
+                  resolved: {type: integer, enum: [1]}
+        "401":
+          description: A signed-in dashboard session is required.
+        "404":
+          description: The request is no longer listed.
+        "409":
+          description: The request is ambiguous, changed, expired or already settled.
+        "410":
+          description: The gateway refused an expired request.
+        "422":
+          description: Invalid decision or content version.
+        "501":
+          description: The gateway does not support app approvals.
+        "502":
+          description: Lookup or confirmation failed. Refresh the list before trying again.
+        "503":
+          description: The agent configuration is unavailable.
+components:
+  schemas:
+    ContentVersion:
+      type: string
+      pattern: "^[0-9a-f]{64}$"
+      description: SHA-256 of the original command or canonical tool input. Return this value unchanged.
+    Approval:
+      type: object
+      required: [agent, request_id, target, action_summary, content_version, expires_at, state]
+      properties:
+        agent: {type: string}
+        request_id: {type: string}
+        target: {type: string}
+        action_summary: {type: string}
+        content_version:
+          $ref: "#/components/schemas/ContentVersion"
+        expires_at:
+          type: number
+          description: Absolute deadline in Unix epoch seconds.
+        state: {type: string, enum: [pending]}
