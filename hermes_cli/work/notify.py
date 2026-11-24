@@ -81,15 +81,22 @@ def alert_line(r: dict, c: dict, agent: str) -> str:
              cmd=next_command(r, c, agent))
 
 
-def _pending_alerts(items_alert, nst: dict, at: int, *, full_check: bool) -> dict[str, list]:
+def _owner_time(at: int) -> datetime.datetime:
+    tz = current().section("work").get("timezone")
+    if tz:
+        return datetime.datetime.fromtimestamp(at, ZoneInfo(str(tz)))
+    return datetime.datetime.fromtimestamp(at).astimezone()
+
+
+def _pending_alerts(items_alert, nst: dict, at: int) -> dict[str, list]:
     by_agent: dict[str, list] = {}
+    today = _owner_time(at).date()
     for r, c in items_alert:
         # a due reminder has its own key (id:due), so it and the item's other reminder never reset each other's gap
         last = nst["items"].get(c.get("key", r["id"]), {})
         sig = c["status"] + "|" + (c["reasons"][0] if c["reasons"] else "")
         if c["status"] in DUE_STATUSES:
-            # A full digest includes items already sent by a partial check this morning.
-            if not full_check and "at" in last and _seoul_date(last["at"]) == _seoul_date(at):
+            if "at" in last and _owner_time(last["at"]).date() == today:
                 continue
         elif at - last.get("at", 0) < ITEM_GAP and last.get("sig", "").split("|")[0] == c["status"]:
             continue
@@ -98,23 +105,18 @@ def _pending_alerts(items_alert, nst: dict, at: int, *, full_check: bool) -> dic
     return by_agent
 
 
-def _seoul_date(at: int) -> datetime.date:
-    return datetime.datetime.fromtimestamp(at, ZoneInfo("Asia/Seoul")).date()
-
-
-def notify(items_alert, *, full_check: bool, dry: bool = False) -> list[str]:
+def notify(items_alert, *, dry: bool = False) -> list[str]:
     """items_alert: [(rec, computed)] already filtered.
 
-    Only a full check consumes the agent's due digest for the Seoul date.
+    Group the day's unsent due reminders by agent on every check.
     Other reminders: agent 30 min, item 6 h, at most 6 lines in the message.
     """
     nst = load_json(paths()["notify"], {"bots": {}, "items": {}})
     at, sent = now(), []
-    pending = _pending_alerts(items_alert, nst, at, full_check=full_check)
-    due_bots = nst.setdefault("due_bots", {})
+    pending = _pending_alerts(items_alert, nst, at)
     for agent, lst in pending.items():
         due = [(r, c, sig) for r, c, sig in lst if c["status"] in DUE_STATUSES]
-        if not due or (agent in due_bots and _seoul_date(due_bots[agent]) == _seoul_date(at)):
+        if not due:
             continue
         msg = t("[대시보드] 맡은 항목 {n}건 — 다음 할 일", n=len(due)) + "\n" + \
             "\n".join("- " + alert_line(r, c, agent) for r, c, _ in due)
@@ -124,8 +126,6 @@ def notify(items_alert, *, full_check: bool, dry: bool = False) -> list[str]:
             tell(agent, msg)
         for r, c, sig in due:
             nst["items"][c.get("key", r["id"])] = {"at": at, "sig": sig}
-        if full_check:
-            due_bots[agent] = at
         sent.append(f"{agent}:due:{len(due)}")
     for agent, lst in pending.items():
         other = [(r, c, sig) for r, c, sig in lst if c["status"] not in DUE_STATUSES]
@@ -169,23 +169,16 @@ def notify_tidy(goals, dry: bool = False) -> list[str]:
     return sent
 
 
-def _today():
-    tz = current().section("work").get("timezone")
-    if tz:
-        return datetime.datetime.fromtimestamp(now(), ZoneInfo(str(tz)))
-    return datetime.datetime.fromtimestamp(now()).astimezone()
-
-
 def owner_today() -> datetime.date:
     """Today on the owner's calendar (``work.timezone``, default the host's): the day due dates are read against."""
-    return _today().date()
+    return _owner_time(now()).date()
 
 
 def due_alerts(items) -> list[tuple[dict, dict]]:
     """[(rec, computed)] for open goals and to-dos past their due date or due today, only in the morning window.
     A due date is a day on the owner's calendar (``work.timezone``, default the host's)."""
-    kt = _today()
-    today, morning = kt.strftime("%Y-%m-%d"), DUE_MORNING[0] <= kt.hour < DUE_MORNING[1]
+    local = _owner_time(now())
+    today, morning = local.date().isoformat(), DUE_MORNING[0] <= local.hour < DUE_MORNING[1]
     out = []
     for r in items:
         d = r.get("due") or ""

@@ -10,6 +10,7 @@ Hermes Agent upstream changes are not listed here; see the upstream history on t
 
 ### Fixed
 
+- Due-date reminders reach an agent at most once per item per owner day, read in `work.timezone` (lina#869): the morning digest leaves out items a partial check already sent, and an item that becomes due after the digest is sent at the next morning check.
 - `lina work run accept` and `submit` now exit with code 75 when a freeze prevents them from reacquiring the record lock. Retrying keeps one acceptance note and evidence entry and one submission link per run.
 - `lina work run accept` exits unsuccessfully if writing evidence or the acceptance note fails, including after `work run review`. Retrying writes only the missing entries. Standalone `lina worker accept` reports a failed to-do command and still records the verdict.
 - A work card stopped by an untyped block whose text asks the owner nothing (a status word such as `initial_status`, a note of what it waits for, a recorded instruction) no longer reads as the owner's wait (lina#795): `waitingOn` is null and `ask` is null, with reason `feedback`, so the app reads it as waiting on something else. An untyped block still waits on the owner when its text is an owner-inbox line, ends with a question mark, or is the goal loop's gate or budget stop; typed blocks are unchanged.
