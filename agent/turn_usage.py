@@ -11,13 +11,15 @@ model/provider. Logger name stays ``agent.conversation_loop`` for caplog parity.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
+from functools import partial
 from typing import Any, Dict, List
 
 from agent.image_token_cost import calibrate_from_usage
 from agent.usage_anchor import capture_usage_anchor, set_usage_anchor
-from agent.usage_pricing import estimate_usage_cost, normalize_usage, with_served_service_tier
+from agent.usage_pricing import CanonicalUsage, estimate_usage_cost, normalize_usage, with_served_service_tier
 
 logger = logging.getLogger("agent.conversation_loop")
 
@@ -73,10 +75,12 @@ def _fold_moa_usage(agent, canonical_usage):
 def record_response_usage(
     agent: Any, response: Any, *, messages: list[dict[str, Any]], api_call_count: int,
     api_duration: float, compression_attempts: int, max_compression_attempts: int,
+    deferred_costs: list[Callable[[], None]] | None = None,
 ) -> ResponseUsageOutcome:
     """Fold ``response.usage`` into compressor, anchors, session counters, state.db
     and the API-call log line (see module docstring). No-usage responses only
-    consume a pending compaction verdict. Returns the loop-visible outcome."""
+    consume a pending compaction verdict. Native callers may defer pricing and
+    persistence until they are clear of the provider continuation deadline."""
     rearmed = False
     compressor = agent.context_compressor
     # Count every completed provider attempt, including providers that omit usage.
@@ -109,11 +113,16 @@ def record_response_usage(
     total_tokens = canonical_usage.total_tokens
     # Gemini long decode sums every hop's re-sent prefix into prompt_tokens (billing, session totals);
     # the context actually in the window is the first hop's prompt: compaction and the meter read that.
-    _initial_prompt = getattr(response.usage, "initial_prompt_tokens", None)
+    raw_usage = response.usage
+    if isinstance(raw_usage, dict):
+        _initial_prompt = raw_usage.get("initial_prompt_tokens")
+        _initial_cached = raw_usage.get("initial_cached_tokens", 0)
+    else:
+        _initial_prompt = getattr(raw_usage, "initial_prompt_tokens", None)
+        _initial_cached = getattr(raw_usage, "initial_cached_tokens", 0)
     context_prompt_tokens = _initial_prompt if isinstance(_initial_prompt, int) and _initial_prompt > 0 else None
     # The canonical buckets follow the same split, so engines reading them never see cache_read > prompt.
-    _initial_cached = getattr(response.usage, "initial_cached_tokens", 0) if context_prompt_tokens else None
-    context_cache_read = _initial_cached if isinstance(_initial_cached, int) else None
+    context_cache_read = _initial_cached if context_prompt_tokens and isinstance(_initial_cached, int) else None
     # Canonical token + cache buckets for context engines; legacy keys stay for back-compat.
     usage_dict = {
         "prompt_tokens": context_prompt_tokens or prompt_tokens,
@@ -221,6 +230,34 @@ def record_response_usage(
             from agent.nous_wire import maybe_switch_wire_after_first_response
             maybe_switch_wire_after_first_response(agent, response, agent.session_api_calls)
 
+    cost_args = (agent, aggregator_usage, canonical_usage, _moa_client, _moa_ref_cost)
+    if deferred_costs is None:
+        _record_response_cost(*cost_args)
+    else:
+        deferred_costs.append(partial(_record_response_cost, *cost_args))
+
+    if agent.verbose_logging:
+        logging.debug(f"Token usage: prompt={usage_dict['prompt_tokens']:,}, completion={usage_dict['completion_tokens']:,}, total={usage_dict['total_tokens']:,}")
+
+    # Report cache stats for any provider that returns ``prompt_tokens_details.cached_tokens``,
+    # not only when we inject cache_control markers.
+    cached = canonical_usage.cache_read_tokens
+    written = canonical_usage.cache_write_tokens
+    prompt = usage_dict["prompt_tokens"]
+    if (cached or written) and not agent.quiet_mode:
+        hit_pct = (cached / prompt * 100) if prompt > 0 else 0
+        agent._vprint(
+            f"{agent.log_prefix}   💾 Cache: "
+            f"{cached:,}/{prompt:,} tokens "
+            f"({hit_pct:.0f}% hit, {written:,} written)"
+        )
+    return ResponseUsageOutcome(compression_attempts=compression_attempts, rearmed=rearmed)
+
+
+def _record_response_cost(
+    agent: Any, aggregator_usage: CanonicalUsage, canonical_usage: CanonicalUsage,
+    _moa_client: Any, _moa_ref_cost: Any,
+) -> None:
     # MoA: agent.model/provider are the virtual preset/"moa" with no pricing entry, silently
     # dropping aggregator spend. Price at the REAL model/provider from the aggregator slot.
     _agg_cost_model, _agg_cost_provider, _agg_cost_base_url = agent.model, agent.provider, agent.base_url
@@ -283,22 +320,5 @@ def record_response_usage(
         except Exception as e:  # silent loss here undercounts analytics
             logger.debug(
                 "Token persistence failed (session=%s, tokens=%d): %s",
-                agent.session_id, total_tokens, e,
+                agent.session_id, canonical_usage.total_tokens, e,
             )
-
-    if agent.verbose_logging:
-        logging.debug(f"Token usage: prompt={usage_dict['prompt_tokens']:,}, completion={usage_dict['completion_tokens']:,}, total={usage_dict['total_tokens']:,}")
-
-    # Report cache stats for any provider that returns ``prompt_tokens_details.cached_tokens``,
-    # not only when we inject cache_control markers.
-    cached = canonical_usage.cache_read_tokens
-    written = canonical_usage.cache_write_tokens
-    prompt = usage_dict["prompt_tokens"]
-    if (cached or written) and not agent.quiet_mode:
-        hit_pct = (cached / prompt * 100) if prompt > 0 else 0
-        agent._vprint(
-            f"{agent.log_prefix}   💾 Cache: "
-            f"{cached:,}/{prompt:,} tokens "
-            f"({hit_pct:.0f}% hit, {written:,} written)"
-        )
-    return ResponseUsageOutcome(compression_attempts=compression_attempts, rearmed=rearmed)

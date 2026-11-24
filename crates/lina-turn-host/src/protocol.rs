@@ -108,6 +108,8 @@ pub(crate) struct TurnPlan {
     pub(crate) base_url: String,
     pub(crate) params: Map<String, Value>,
     pub(crate) stream: bool,
+    #[serde(default)]
+    pub(crate) read_file_hints: bool,
     #[serde(
         default = "default_max_iterations",
         deserialize_with = "deserialize_max_iterations"

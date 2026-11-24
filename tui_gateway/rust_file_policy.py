@@ -17,6 +17,7 @@ from tools.file_tools import (
 from tools.file_tools_paths import _expand_tilde
 from tools.terminal_scope import get_terminal_scope, terminal_env
 from tools.tool_output_limits import get_tool_output_limits
+from tui_gateway.contracts.compute_host import ReadFileHintArgs
 from tui_gateway.session_workdir import _session_cwd
 
 
@@ -87,7 +88,7 @@ def _missing_result(target: Path, before: list[tuple[int, int, int]] | None) -> 
 def _decision(session: dict, frame: dict) -> dict:
     from hermes_constants import get_hermes_home
 
-    if not session or not isinstance(frame.get("path"), str):
+    if not session:
         return {"error": "Invalid read_file policy request."}
     if session.get("profile_home") and (
         get_terminal_scope() is None
@@ -101,11 +102,17 @@ def _decision(session: dict, frame: dict) -> dict:
 
         if load_config_readonly().get("terminal", {}).get("backend", "local") != "local":
             return {"error": "Rust read_file requires a local terminal backend."}
-    op, raw = frame.get("op"), frame["path"]
-    fields = {"type", "sid", "turn_id", "request_id", "op", "path"}
+    op = frame.get("op")
+    fields = {"type", "sid", "turn_id", "request_id", "op"}
+    if op == "hints":
+        if frame.keys() - (fields | {"hint_args"}) or "hint_args" not in frame:
+            return {"error": "Invalid read_file policy request."}
+        return {"ok": True, "hints": _completion_hints(session, frame)}
+    raw = frame.get("path")
+    fields.add("path")
     if op == "redact":
-        fields.update(("identity", "resolved", "content"))
-    if op not in {"authorize", "redact"} or frame.keys() - fields:
+        fields.update(("identity", "resolved", "content", "hint_args"))
+    if op not in {"authorize", "redact"} or frame.keys() - fields or not isinstance(raw, str):
         return {"error": "Invalid read_file policy operation."}
     if error := get_nt_namespace_error(raw, verb="Read"):
         return {"error": error}
@@ -147,12 +154,21 @@ def _decision(session: dict, frame: dict) -> dict:
     if (frame.get("resolved") != str(target) or frame.get("identity") != identity
             or not isinstance(content, str) or len(content) > max_chars):
         return {"error": "Read no longer matches its file authorization."}
-    return {"ok": True, "content": redact_sensitive_text(
+    reply = {"ok": True, "content": redact_sensitive_text(
         content, file_read=True, secret_file=_is_secret_file_arg(str(target)))}
+    if frame.get("hint_args") is not None:
+        reply["hints"] = _completion_hints(session, frame)
+    return reply
+
+
+def _completion_hints(session: dict, frame: dict) -> str:
+    args = ReadFileHintArgs.model_validate(frame["hint_args"]).model_dump(exclude_none=True)
+    tracker = getattr(session.get("agent"), "_subdirectory_hints", None)
+    return (tracker.check_tool_call("read_file", args) or "") if tracker is not None else ""
 
 
 def handle_file_policy(session: dict, frame: dict) -> dict:
-    """Only accept authorization and redaction. Never echo a frame in an error or log."""
+    """Handle private read policy without echoing a frame in an error or log."""
     route = {key: frame.get(key) for key in ("sid", "turn_id", "request_id")}
     ack = {"type": "read_file.policy.ack", **route, "ok": False}
     try:

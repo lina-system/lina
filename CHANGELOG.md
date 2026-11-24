@@ -24,7 +24,10 @@ Hermes Agent upstream changes are not listed here; see the upstream history on t
 - Local file reads reuse package manifest metadata across environment lookups and detect edits and replacements.
 - Rust turns update the parent compressor after each provider response, including responses without usage, so continuations and resumed Python turns use current pressure information.
 - A failed context check stops the next Rust model request and leaves the dashboard reader available to settle the turn.
+- Rust file reads attach the session's subdirectory instructions to the next model request, including after a missing-file result.
 - Dashboard turns use Python when the native host cannot prove it was built from the parent's revision. Git-free builds can supply the revision through `LINA_TURN_HOST_BUILD_SHA`.
+- Rust dashboard turns now record token counts, estimated cost and billing route in the served profile's session database using the Python pricing path.
+- Rust dashboard turns retry empty and reasoning-only replies, preserve completed tool results during recovery, and show the Python no-reply notice when retries are exhausted.
 
 ### Changed
 

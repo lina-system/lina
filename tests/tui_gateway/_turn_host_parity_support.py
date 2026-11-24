@@ -60,6 +60,7 @@ class Reply:
     calls: tuple[Json, ...] = ()
     status: int = 200
     gate: threading.Event | None = None
+    usage: Json | None = None
 
 
 class ModelServer(ThreadingHTTPServer):
@@ -125,7 +126,9 @@ class ModelHandler(BaseHTTPRequestHandler):
         message = {"role": "assistant", "content": reply.text}
         if reply.calls:
             message["tool_calls"] = list(reply.calls)
-        usage = {"prompt_tokens": 20, "completion_tokens": 7, "total_tokens": 27}
+        usage = reply.usage if reply.usage is not None else {
+            "prompt_tokens": 20, "completion_tokens": 7, "total_tokens": 27,
+        }
         if request.get("stream"):
             envelope["object"] = "chat.completion.chunk"
             if reply.calls:

@@ -11,6 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from agent.agent_init import _init_usage_state
 from agent.context_compressor import ContextCompressor
 from tests.tui_gateway._turn_host_parity_support import MODEL, MODEL_KEY, ROOT, Reply, loopback_model
 from tui_gateway import server
@@ -18,11 +19,14 @@ from tui_gateway.rust_host_supervisor import RustHostSupervisor, select_host
 
 
 @pytest.mark.platforms("linux")
-@pytest.mark.parametrize(("threshold", "failure"), [
-    (25, "context_pressure"), (5000, None), (5000, "context_preflight_unavailable"),
+@pytest.mark.parametrize(("threshold", "failure", "broken_preparation"), [
+    (25, "context_pressure", False), (5000, None, False),
+    (5000, "context_preflight_unavailable", False), (5000, "context_preflight_unavailable", True),
 ])
 @pytest.mark.usefixtures("real_build_revision")
-def test_gateway_supervisor_enforces_pressure_before_native_continuation(tmp_path, threshold, failure, monkeypatch, caplog):
+def test_gateway_supervisor_enforces_pressure_before_native_continuation(
+    tmp_path, threshold, failure, broken_preparation, monkeypatch, caplog,
+):
     binary = Path(shutil.which("lina-turn-host") or ROOT / "target/debug/lina-turn-host").resolve()
     assert binary.is_file(), f"Build lina-turn-host first or put it on PATH: {binary}"
     compressor = ContextCompressor(model=MODEL, config_context_length=100000)
@@ -31,11 +35,17 @@ def test_gateway_supervisor_enforces_pressure_before_native_continuation(tmp_pat
         def broken_pressure_check(_tokens):
             raise RuntimeError("private provider diagnostic")
 
-        monkeypatch.setattr(compressor, "should_compress", broken_pressure_check)
+        if broken_preparation:
+            monkeypatch.setattr(RustHostSupervisor, "_prepare_context_preflight", staticmethod(broken_pressure_check))
+        else:
+            monkeypatch.setattr(compressor, "should_compress", broken_pressure_check)
     agent = SimpleNamespace(
         model=MODEL, provider="custom", api_mode="chat_completions", tools=[],
         context_compressor=compressor, compression_enabled=True,
+        quiet_mode=True, verbose_logging=False, skip_context_files=True,
+        max_compression_attempts=3, _session_db=None,
     )
+    _init_usage_state(agent)
     user = {"role": "user", "content": "Read the example file."}
     stage = {
         "turn_id": "pressure-turn", "context_system": "Synthetic system", "wire_history": [],
@@ -52,6 +62,7 @@ def test_gateway_supervisor_enforces_pressure_before_native_continuation(tmp_pat
     terminal = Queue()
     cfg = {"compute_host_heartbeat_secs": 15, "compute_host_respawn_max": 1}
     with loopback_model(replies) as model:
+        agent.base_url, agent.api_key = model.url, MODEL_KEY
         host = RustHostSupervisor(
             "pressure", session, home=str(tmp_path), credentials={"OPENAI_API_KEY": MODEL_KEY},
             endpoint=model.url, cfg=cfg,
@@ -75,6 +86,7 @@ def test_gateway_supervisor_enforces_pressure_before_native_continuation(tmp_pat
     assert end["new_messages"][2]["tool_call_id"] == "read-1"
     assert "read_file arguments must be a JSON object" in end["new_messages"][2]["content"]
     assert model.errors == []
+    assert agent.session_api_calls == (0 if broken_preparation else 1)
     if failure:
         assert len(model.requests) == 1
         assert details["status"] == "error"

@@ -23,6 +23,36 @@
     "ContextPreflight": {
       "additionalProperties": false,
       "properties": {
+        "api_duration_s": {
+          "default": 0.0,
+          "minimum": 0.0,
+          "title": "Api Duration S",
+          "type": "number"
+        },
+        "empty_attempt": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EmptyAttempt"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "empty_retry": {
+          "anyOf": [
+            {
+              "const": true,
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Empty Retry"
+        },
         "messages": {
           "items": {
             "additionalProperties": {
@@ -48,6 +78,19 @@
             }
           ],
           "title": "Request Id"
+        },
+        "response_index": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Response Index"
         },
         "sid": {
           "title": "Sid",
@@ -117,6 +160,20 @@
           ],
           "title": "Request Id"
         },
+        "retry_delay_s": {
+          "anyOf": [
+            {
+              "maximum": 90,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Retry Delay S"
+        },
         "sid": {
           "title": "Sid",
           "type": "string"
@@ -144,10 +201,29 @@
     "ContextResponseUsage": {
       "additionalProperties": false,
       "properties": {
+        "api_duration_s": {
+          "default": 0.0,
+          "minimum": 0.0,
+          "title": "Api Duration S",
+          "type": "number"
+        },
         "priced_prefix_count": {
           "minimum": 1,
           "title": "Priced Prefix Count",
           "type": "integer"
+        },
+        "response_index": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Response Index"
         },
         "usage": {
           "anyOf": [
@@ -416,6 +492,32 @@
         "message"
       ],
       "title": "ControlError",
+      "type": "object"
+    },
+    "EmptyAttempt": {
+      "additionalProperties": false,
+      "properties": {
+        "finish_reason": {
+          "title": "Finish Reason",
+          "type": "string"
+        },
+        "observed_generation": {
+          "title": "Observed Generation",
+          "type": "boolean"
+        },
+        "retry_count": {
+          "maximum": 3,
+          "minimum": 0,
+          "title": "Retry Count",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "finish_reason",
+        "retry_count",
+        "observed_generation"
+      ],
+      "title": "EmptyAttempt",
       "type": "object"
     },
     "Error": {
@@ -1039,12 +1141,161 @@
       "title": "ReadFileDeniedAck",
       "type": "object"
     },
+    "ReadFileHintArgs": {
+      "additionalProperties": false,
+      "properties": {
+        "file_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "File Path"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Path"
+        },
+        "workdir": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Workdir"
+        }
+      },
+      "title": "ReadFileHintArgs",
+      "type": "object"
+    },
+    "ReadFileHints": {
+      "additionalProperties": false,
+      "properties": {
+        "hint_args": {
+          "$ref": "#/$defs/ReadFileHintArgs"
+        },
+        "op": {
+          "const": "hints",
+          "title": "Op",
+          "type": "string"
+        },
+        "request_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "title": "Request Id"
+        },
+        "sid": {
+          "title": "Sid",
+          "type": "string"
+        },
+        "turn_id": {
+          "title": "Turn Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "read_file.policy",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sid",
+        "turn_id",
+        "request_id",
+        "type",
+        "op",
+        "hint_args"
+      ],
+      "title": "ReadFileHints",
+      "type": "object"
+    },
+    "ReadFileHintsAck": {
+      "additionalProperties": false,
+      "properties": {
+        "hints": {
+          "title": "Hints",
+          "type": "string"
+        },
+        "ok": {
+          "const": true,
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "request_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "title": "Request Id"
+        },
+        "sid": {
+          "title": "Sid",
+          "type": "string"
+        },
+        "turn_id": {
+          "title": "Turn Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "read_file.policy.ack",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sid",
+        "turn_id",
+        "request_id",
+        "type",
+        "ok",
+        "hints"
+      ],
+      "title": "ReadFileHintsAck",
+      "type": "object"
+    },
     "ReadFileRedact": {
       "additionalProperties": false,
       "properties": {
         "content": {
           "title": "Content",
           "type": "string"
+        },
+        "hint_args": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReadFileHintArgs"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "identity": {
           "$ref": "#/$defs/FileIdentity"
@@ -1107,6 +1358,18 @@
         "content": {
           "title": "Content",
           "type": "string"
+        },
+        "hints": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Hints"
         },
         "ok": {
           "const": true,
@@ -1722,6 +1985,22 @@
           ],
           "default": null
         },
+        "empty_response_exhausted": {
+          "anyOf": [
+            {
+              "enum": [
+                "empty",
+                "reasoning"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Empty Response Exhausted"
+        },
         "ended_ns": {
           "title": "Ended Ns",
           "type": "integer"
@@ -1984,6 +2263,11 @@
           "description": "JSON request options without credentials or transport headers.",
           "title": "Params",
           "type": "object"
+        },
+        "read_file_hints": {
+          "default": false,
+          "title": "Read File Hints",
+          "type": "boolean"
         },
         "stream": {
           "title": "Stream",
@@ -2416,6 +2700,7 @@
         "discriminator": {
           "mapping": {
             "authorize": "#/$defs/ReadFileAuthorize",
+            "hints": "#/$defs/ReadFileHints",
             "redact": "#/$defs/ReadFileRedact"
           },
           "propertyName": "op"
@@ -2426,6 +2711,9 @@
           },
           {
             "$ref": "#/$defs/ReadFileRedact"
+          },
+          {
+            "$ref": "#/$defs/ReadFileHints"
           }
         ]
       },
@@ -2436,6 +2724,9 @@
           },
           {
             "$ref": "#/$defs/ReadFileRedactAck"
+          },
+          {
+            "$ref": "#/$defs/ReadFileHintsAck"
           },
           {
             "$ref": "#/$defs/ReadFileDeniedAck"
@@ -2483,6 +2774,9 @@
         },
         {
           "$ref": "#/$defs/ReadFileRedactAck"
+        },
+        {
+          "$ref": "#/$defs/ReadFileHintsAck"
         },
         {
           "$ref": "#/$defs/ReadFileDeniedAck"
@@ -2544,6 +2838,7 @@
       "discriminator": {
         "mapping": {
           "authorize": "#/$defs/ReadFileAuthorize",
+          "hints": "#/$defs/ReadFileHints",
           "redact": "#/$defs/ReadFileRedact"
         },
         "propertyName": "op"
@@ -2554,6 +2849,9 @@
         },
         {
           "$ref": "#/$defs/ReadFileRedact"
+        },
+        {
+          "$ref": "#/$defs/ReadFileHints"
         }
       ]
     },

@@ -79,7 +79,12 @@ fn positive(value: &Value, default: u64) -> u64 {
 }
 
 impl ReadState {
-    pub(crate) async fn read<F, Fut>(&mut self, args: &Value, mut policy: F) -> Value
+    pub(crate) async fn read<F, Fut>(
+        &mut self,
+        args: &Value,
+        subdirectory_hints: &mut Option<String>,
+        mut policy: F,
+    ) -> Value
     where
         F: FnMut(Value) -> Fut,
         Fut: Future<Output = Option<Value>>,
@@ -130,7 +135,8 @@ impl ReadState {
         request["content"] = result["content"].take();
         match decision(policy(request).await) {
             Ok(mut reply) if reply["content"].is_string() => {
-                result["content"] = reply["content"].take()
+                result["content"] = reply["content"].take();
+                *subdirectory_hints = reply["hints"].as_str().map(str::to_owned);
             }
             Ok(_) => return unavailable(),
             Err(result) => return result,

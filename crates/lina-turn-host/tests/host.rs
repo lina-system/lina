@@ -460,9 +460,12 @@ fn exhausted_turn_retries_empty_summary_with_the_parent_body() {
     assert_eq!(end["max_iterations_reached"], true);
     assert_eq!(end["summary_outcome"], "success");
     assert_eq!(end["messages"], summary["messages"]);
+    let sample = &end["context_response"];
+    let duration = sample["api_duration_s"].as_f64().unwrap();
+    assert!(duration > 0.0);
     assert_eq!(
-        end["context_response"],
-        json!({"priced_prefix_count": 2, "usage": null})
+        sample,
+        &json!({"priced_prefix_count": 2, "usage": null, "api_duration_s": duration})
     );
     host.close();
     server.join().unwrap();

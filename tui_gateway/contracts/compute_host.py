@@ -44,6 +44,7 @@ class TurnPlan(_WireModel):
     params: JsonObject = Field(description="JSON request options without credentials or transport headers.")
     stream: bool
     max_iterations: int = Field(default=500, description="Effective iteration budget of the planning agent.")
+    read_file_hints: bool = False
 
     @field_validator("base_url")
     @classmethod
@@ -154,14 +155,27 @@ class ReadFileAuthorize(_PolicyRequest):
     op: Literal["authorize"]
 
 
+class ReadFileHintArgs(_WireModel):
+    path: str | None = Field(default=None, repr=False)
+    file_path: str | None = Field(default=None, repr=False)
+    workdir: str | None = Field(default=None, repr=False)
+
+
 class ReadFileRedact(_PolicyRequest):
     op: Literal["redact"]
     resolved: str = Field(repr=False)
     identity: FileIdentity
     content: str = Field(repr=False)
+    hint_args: ReadFileHintArgs | None = Field(default=None, repr=False)
 
 
-ReadFilePolicy = Annotated[ReadFileAuthorize | ReadFileRedact, Field(discriminator="op")]
+class ReadFileHints(_PolicyFrame):
+    type: Literal["read_file.policy"]
+    op: Literal["hints"]
+    hint_args: ReadFileHintArgs = Field(repr=False)
+
+
+ReadFilePolicy = Annotated[ReadFileAuthorize | ReadFileRedact | ReadFileHints, Field(discriminator="op")]
 
 
 class IterationSummary(_PolicyFrame):
@@ -177,18 +191,29 @@ class IterationSummaryAck(_PolicyFrame):
 
 class ContextResponseUsage(_WireModel):
     usage: JsonObject | None = Field(repr=False)
+    api_duration_s: float = Field(default=0.0, ge=0.0, allow_inf_nan=False)
     priced_prefix_count: int = Field(ge=1)
+    response_index: int | None = Field(default=None, ge=1)
+
+
+class EmptyAttempt(_WireModel):
+    finish_reason: str
+    retry_count: int = Field(ge=0, le=3)
+    observed_generation: bool
 
 
 class ContextPreflight(_PolicyFrame, ContextResponseUsage):
     type: Literal["context.preflight"]
     messages: list[JsonObject] = Field(repr=False)
     summary: bool
+    empty_retry: Literal[True] | None = None
+    empty_attempt: EmptyAttempt | None = None
 
 
 class ContextPreflightAck(_PolicyFrame):
     type: Literal["context.preflight.ack"]
     decision: Literal["allow", "pressure", "unavailable"]
+    retry_delay_s: float | None = Field(default=None, ge=0, le=90, allow_inf_nan=False)
 
 
 class ReadFileAuthorizeAck(_PolicyFrame):
@@ -206,6 +231,13 @@ class ReadFileRedactAck(_PolicyFrame):
     type: Literal["read_file.policy.ack"]
     ok: Literal[True]
     content: str = Field(repr=False)
+    hints: str | None = Field(default=None, repr=False)
+
+
+class ReadFileHintsAck(_PolicyFrame):
+    type: Literal["read_file.policy.ack"]
+    ok: Literal[True]
+    hints: str = Field(repr=False)
 
 
 class ReadFileDeniedAck(_PolicyFrame):
@@ -220,19 +252,24 @@ class ReadFileDeniedAck(_PolicyFrame):
 
 
 def _policy_ack_kind(frame: JsonObject | _PolicyFrame) -> str:
-    """The reply omits the operation tag. A successful authorization carries a resolved path."""
+    """Distinguish successful replies by the payload of the operation."""
     if isinstance(frame, dict):
         if frame.get("ok") is False:
             return "denied"
-        return "authorize" if "resolved" in frame else "redact"
+        if "resolved" in frame:
+            return "authorize"
+        return "redact" if "content" in frame else "hints"
     if isinstance(frame, ReadFileDeniedAck):
         return "denied"
-    return "authorize" if isinstance(frame, ReadFileAuthorizeAck) else "redact"
+    if isinstance(frame, ReadFileAuthorizeAck):
+        return "authorize"
+    return "redact" if isinstance(frame, ReadFileRedactAck) else "hints"
 
 
 ReadFilePolicyAck = Annotated[
     Annotated[ReadFileAuthorizeAck, Tag("authorize")]
     | Annotated[ReadFileRedactAck, Tag("redact")]
+    | Annotated[ReadFileHintsAck, Tag("hints")]
     | Annotated[ReadFileDeniedAck, Tag("denied")],
     Discriminator(_policy_ack_kind),
 ]
@@ -317,6 +354,7 @@ class TurnEnd(_SessionReply, _HistoryMetadata):
     context_failure: Literal["context_pressure", "context_preflight_unavailable"] | None = None
     max_iterations_reached: Literal[True] | None = None
     summary_outcome: Literal["success", "empty", "error"] | None = None
+    empty_response_exhausted: Literal["empty", "reasoning"] | None = None
 
 
 class TurnError(_SessionReply):

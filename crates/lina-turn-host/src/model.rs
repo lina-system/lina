@@ -436,6 +436,8 @@ pub(crate) struct Usage {
     #[serde(default)]
     initial_prompt_tokens: u64,
     #[serde(default)]
+    initial_cached_tokens: u64,
+    #[serde(default)]
     completion_tokens: u64,
     #[serde(default)]
     output_tokens: u64,
@@ -452,6 +454,8 @@ pub(crate) struct Usage {
     cache_write_tokens: u64,
     output_tokens_details: Option<CompletionDetails>,
     completion_tokens_details: Option<CompletionDetails>,
+    speed: Option<String>,
+    service_tier: Option<String>,
 }
 
 #[derive(Default, Deserialize, serde::Serialize)]
@@ -579,6 +583,7 @@ struct Completion {
     #[serde(default)]
     choices: Vec<Choice>,
     usage: Option<Usage>,
+    service_tier: Option<String>,
     error: Option<Value>,
 }
 
@@ -593,6 +598,8 @@ struct Choice {
 pub(crate) struct Message {
     pub(crate) content: Option<String>,
     pub(crate) reasoning_content: Option<String>,
+    reasoning: Option<String>,
+    pub(crate) reasoning_details: Option<Vec<Value>>,
     #[serde(default)]
     pub(crate) tool_calls: Vec<ToolCall>,
     #[serde(skip)]
@@ -622,8 +629,9 @@ pub(crate) struct Function {
 #[derive(Deserialize)]
 struct Delta {
     content: Option<String>,
-    #[serde(alias = "reasoning")]
     reasoning_content: Option<String>,
+    reasoning: Option<String>,
+    reasoning_details: Option<Vec<Value>>,
     tool_calls: Option<Vec<ToolDelta>>,
 }
 
@@ -657,8 +665,17 @@ pub(crate) async fn nonstream(response: Response) -> Result<(Message, Option<Usa
         .ok_or(ModelError::InvalidResponse)?;
     let mut message = choice.message.ok_or(ModelError::InvalidResponse)?;
     message.finish_reason = choice.finish_reason;
-    Ok((message, reply.usage))
+    if message.reasoning_content.is_none() {
+        message.reasoning_content = message.reasoning.take();
+    }
+    let usage = reply.usage.map(|mut usage| {
+        if let Some(tier) = reply.service_tier.filter(|tier| !tier.trim().is_empty()) {
+            usage.service_tier = Some(tier.trim().to_ascii_lowercase());
+        }
+        usage
+    });
+    Ok((message, usage))
 }
 
 mod streaming;
-pub(crate) use streaming::stream;
+pub(crate) use streaming::{inline_reasoning, stream, visible_text};

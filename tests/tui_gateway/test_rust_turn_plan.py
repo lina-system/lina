@@ -97,6 +97,7 @@ def turn(tmp_path, monkeypatch):
         agent._context_engine = None
 
     monkeypatch.setattr(agent_init, "_build_context_engine", context_engine)
+    monkeypatch.setattr("agent.usage_pricing.fetch_endpoint_model_metadata", lambda *args, **kwargs: {})
     agent = AIAgent(
         model="test-model", provider="custom", api_mode="chat_completions",
         api_key="scoped-test-key", base_url="https://model.example/v1",
@@ -554,12 +555,11 @@ def test_native_continuation_uses_owned_python_pressure_policy(turn, monkeypatch
             terminal["context_response"] = {"priced_prefix_count": len(check["messages"]), "usage": None}
             terminal["messages"].append({"role": "assistant", "content": terminal["text"]})
             persist_rust_turn(session, terminal)
-            before = getattr(agent, "session_api_calls", 0)
-            server._apply_rust_turn_usage(session, agent, {"calls": 2, "context_used": 400})
-            assert agent.session_api_calls == before + 2
+            assert agent.session_api_calls == 2
             assert not agent.context_compressor.should_defer_preflight_to_real_usage(5050)
 
     if decision == "pressure":
+        assert agent.session_api_calls == 1
         stored = db.get_messages_as_conversation("stored")
         assert [row["role"] for row in stored] == ["user", "assistant", "tool", "assistant"]
         assert stored[2]["content"] == tool_text

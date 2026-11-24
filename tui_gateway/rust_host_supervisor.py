@@ -180,6 +180,22 @@ class RustHostSupervisor(HostSupervisor):
         with self.session["history_lock"]:
             payload = self._final_event or {}
         details = {key: payload[key] for key in ("text", "status", "error") if key in payload}
+        if payload.get("status") == "complete" and (exhausted := frame.get("empty_response_exhausted")) in {
+            "empty", "reasoning",
+        }:
+            from agent.turn_finalizer import _explain_abnormal_exit
+            from tui_gateway import server
+
+            with server._session_profile_runtime_scope(self.session, hydrate_secrets=False):
+                text = _explain_abnormal_exit(
+                    self.session["agent"], "(empty)", "empty_response_exhausted", False, logger)
+            payload["text"] = text
+            self._failure_status = (
+                "⚠️ Model produced reasoning but no visible response after all retries. Returning empty."
+                if exhausted == "reasoning"
+                else "❌ Model returned no content after all retries. No fallback providers configured."
+            )
+            return {**details, "text": text}
         if payload.get("status") == "error" and frame.get("context_failure") in {
             "context_pressure", "context_preflight_unavailable",
         }:
@@ -246,9 +262,8 @@ class RustHostSupervisor(HostSupervisor):
                 payload["text"] = None
             if handoff is not None:
                 payload["text"] = handoff["final_response"]
-            if (agent := self.session.get("agent")) is not None and isinstance(usage := payload.get("usage"), dict):
-                server._apply_rust_turn_usage(self.session, agent, usage)
-                payload["usage"] = server._compute_host_usage(self.session, agent)
+            if (agent := self.session.get("agent")) is not None and isinstance(payload.get("usage"), dict):
+                payload["usage"] = server._get_usage(agent)
             if isinstance(payload.get("text"), str) and (
                     rendered := render_message(payload["text"], self.session.get("cols", 80))):
                 payload["rendered"] = rendered
@@ -297,7 +312,7 @@ class RustHostSupervisor(HostSupervisor):
             self._prepare_iteration_summary(frame)
             return
         if kind == "context.preflight":
-            self._prepare_context_preflight(frame)
+            self._answer_context_preflight(frame)
             return
         if kind != "read_file.policy":
             return super()._handle_host_frame(frame)
@@ -322,12 +337,12 @@ class RustHostSupervisor(HostSupervisor):
             if op == "redact":
                 permitted = owns_read and self._read_grant == (
                     frame.get("turn_id"), path, frame.get("resolved"), frame.get("identity"))
-                if permitted:
-                    self._read_grant = None
             else:
-                permitted = owns_read and op == "authorize" and not self.session.get("_turn_cancel_requested")
-                if permitted:
-                    self._read_grant = None
+                permitted = owns_read and (
+                    op == "hints" or (op == "authorize" and not self.session.get("_turn_cancel_requested"))
+                )
+            if permitted:
+                self._read_grant = None
         if permitted:
             try:
                 with server._session_profile_runtime_scope(self.session):
@@ -367,16 +382,34 @@ class RustHostSupervisor(HostSupervisor):
                 reply["ok"] = False
         self._send_frame(reply)
 
-    def _prepare_context_preflight(self, frame):
-        from tui_gateway import server
+    def _answer_context_preflight(self, frame):
         from tui_gateway.contracts.compute_host import ContextPreflight
-        from tui_gateway.rust_turn_plan import RustTurnConflict, prepare_context_preflight
+        from tui_gateway.rust_turn_plan import RustTurnConflict
 
         try:
             check = ContextPreflight.model_validate(frame)
         except ValidationError:
             return  # An invalid request cannot authorize a model call.
-        decision = "unavailable"
+        try:
+            decision, retry_delay_s = self._prepare_context_preflight(check)
+        except RustTurnConflict:
+            decision, retry_delay_s = "unavailable", None
+        except Exception as exc:
+            # Keep the reader alive without exposing private provider diagnostics.
+            logger.warning("Rust context preflight failed (%s)", type(exc).__name__)
+            decision, retry_delay_s = "unavailable", None
+        ack = {
+            "type": "context.preflight.ack", "sid": self.sid, "request_id": check.request_id,
+            "turn_id": check.turn_id, "decision": decision,
+        }
+        if retry_delay_s is not None:
+            ack["retry_delay_s"] = retry_delay_s
+        self._send_frame(ack)
+
+    def _prepare_context_preflight(self, check):
+        from tui_gateway import server
+        from tui_gateway.rust_turn_plan import prepare_context_preflight, prepare_empty_retry
+
         with self.session["history_lock"]:
             owns_turn = (check.sid == self.sid and self.session.get("running")
                          and not self.session.get("_closing") and not self.session.get("_turn_cancel_requested")
@@ -384,19 +417,12 @@ class RustHostSupervisor(HostSupervisor):
                          and self.session.get("_compute_host_turn_id") == check.turn_id
                          and self._event_source == (threading.current_thread(), check.turn_id)
                          and self._final_event is None)
-        if owns_turn:
-            try:
-                with server._session_profile_runtime_scope(self.session):
-                    decision = prepare_context_preflight(self.session, check)
-            except RustTurnConflict:
-                decision = "unavailable"
-            except Exception as exc:
-                # Provider diagnostics can contain transcript text or credentials.
-                logging.getLogger(__name__).warning("Rust context preflight failed (%s)", type(exc).__name__)
-        self._send_frame({
-            "type": "context.preflight.ack", "sid": self.sid, "request_id": check.request_id,
-            "turn_id": check.turn_id, "decision": decision,
-        })
+        if not owns_turn:
+            return "unavailable", None
+        with self.settlement_lock, server._session_profile_runtime_scope(self.session):
+            if check.empty_retry:
+                return "allow", prepare_empty_retry(self.session, check)
+            return prepare_context_preflight(self.session, check), None
 
     def shutdown(self):
         with self._lock:

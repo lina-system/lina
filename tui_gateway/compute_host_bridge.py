@@ -171,31 +171,7 @@ def _metadata_mirror(session: dict | None) -> dict:
 
 
 def _compute_host_session_info(session: dict) -> dict:
-    agent = session.get("agent")
-    info = _session_info(agent, session)
-    if agent is not None and "_rust_usage_timings" in session:
-        info["usage"] = _compute_host_usage(session, agent)
-    return info
-
-
-def _compute_host_usage(session: dict, agent) -> dict:
-    return {**_get_usage(agent), **session.get("_rust_usage_timings", {})}
-
-
-def _apply_rust_turn_usage(session: dict, agent, usage: dict) -> None:
-    """Fold provider totals into the parent after per-response context accounting."""
-    fields = {
-        "input": "session_input_tokens", "output": "session_output_tokens",
-        "reasoning": "session_reasoning_tokens", "prompt": "session_prompt_tokens",
-        "completion": "session_completion_tokens", "total": "session_total_tokens",
-        "calls": "session_api_calls", "cache_read": "session_cache_read_tokens",
-        "cache_write": "session_cache_write_tokens",
-    }
-    for key, attr in fields.items():
-        count = usage.get(key)
-        if isinstance(count, int) and count >= 0:
-            setattr(agent, attr, (getattr(agent, attr, 0) or 0) + count)
-    session["_rust_usage_timings"] = {key: usage[key] for key in ("avg_latency_s", "avg_tps") if key in usage}
+    return _session_info(session.get("agent"), session)
 
 
 def _compute_host_adopt_frame_meta(session: dict, frame: dict) -> None:
@@ -463,6 +439,8 @@ def _submit_prompt_to_compute_host(
                             settlement = {**{key: value for key, value in done.items() if key != "provider_error"},
                                           **details}
                             receipt = persist_rust_turn(session, settlement)
+                            if (db := getattr(session.get("agent"), "_session_db", None)) is not None:
+                                db.flush_token_counts()
                             if settlement.get("max_iterations_reached"):
                                 handoff = {"completed": False, "failed": False, "interrupted": False,
                                            "turn_exit_reason": settlement["turn_exit_reason"],

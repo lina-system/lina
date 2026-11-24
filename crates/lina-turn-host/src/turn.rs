@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -16,6 +17,7 @@ use crate::read_file::ReadState;
 
 const MAX_UNKNOWN_TOOL_ROUNDS: usize = 3;
 const READ_FILE: &str = "read_file";
+const EMPTY_TOOL_NUDGE: &str = "You just executed tool calls but returned an empty response. Please process the tool results above and continue with the task.";
 
 pub(crate) struct Worker {
     pub(crate) model: Arc<ModelClient>,
@@ -53,6 +55,10 @@ impl TurnError {
 
 enum TurnReply {
     Model(Message),
+    Empty {
+        reasoning: Option<String>,
+        prefilled: bool,
+    },
     Summary(Option<String>),
     SummaryError,
 }
@@ -63,7 +69,10 @@ struct Transcript {
     partial: String,
     usage: TurnUsage,
     last_usage: Option<Usage>,
+    last_api_duration: Duration,
     priced_prefix_count: usize,
+    empty_recovery_used: bool,
+    empty_nudges: Vec<(usize, [Map<String, Value>; 2])>,
     pending_tools: VecDeque<PendingTool>,
     reading_tool: bool,
 }
@@ -99,12 +108,18 @@ impl PendingTool {
         events.emit("tool.start", start).await
     }
 
-    fn complete(self, result: &Value, messages: &mut Vec<Map<String, Value>>) -> Value {
-        let content = if let Some(text) = result.as_str() {
+    fn complete(
+        self,
+        result: &Value,
+        hints: &str,
+        messages: &mut Vec<Map<String, Value>>,
+    ) -> Value {
+        let mut content = if let Some(text) = result.as_str() {
             text.to_owned()
         } else {
             python_json(result)
         };
+        content.push_str(hints);
         messages.push(tool_result(&self.id, READ_FILE, content));
         json!({
             "tool_id": self.id, "name": READ_FILE, "args": self.args,
@@ -114,6 +129,21 @@ impl PendingTool {
 }
 
 impl Transcript {
+    fn request_messages(&self) -> Cow<'_, [Map<String, Value>]> {
+        if self.empty_nudges.is_empty() {
+            return Cow::Borrowed(&self.messages);
+        }
+        let mut messages = Vec::with_capacity(self.messages.len() + 2 * self.empty_nudges.len());
+        let mut cursor = 0;
+        for (position, nudge) in &self.empty_nudges {
+            messages.extend_from_slice(&self.messages[cursor..*position]);
+            messages.extend_from_slice(nudge);
+            cursor = *position;
+        }
+        messages.extend_from_slice(&self.messages[cursor..]);
+        Cow::Owned(messages)
+    }
+
     async fn close_interrupted(&mut self, events: &Events<'_>) -> bool {
         while let Some(tool) = self.pending_tools.pop_front() {
             let result = if std::mem::take(&mut self.reading_tool) {
@@ -121,7 +151,7 @@ impl Transcript {
             } else {
                 "[Tool execution skipped — read_file was not started. Turn interrupted]"
             };
-            let payload = tool.complete(&json!(result), &mut self.messages);
+            let payload = tool.complete(&json!(result), "", &mut self.messages);
             if !events.emit("tool.complete", payload).await {
                 return false;
             }
@@ -192,10 +222,24 @@ impl Worker {
             .and_then(|result| result.as_ref().err())
             .and_then(TurnError::context_failure);
         let usage = transcript.usage.payload(&start.turn_plan.model);
+        let empty_outcome = match &result {
+            Some(Ok(TurnReply::Empty {
+                prefilled: true, ..
+            })) => Some("reasoning"),
+            Some(Ok(TurnReply::Empty { .. })) => Some("empty"),
+            _ => None,
+        };
         let (status, mut completion, summary_outcome) = match result {
             Some(Ok(TurnReply::Model(answer))) => {
                 let mut payload = json!({"text": answer.content.unwrap_or_default()});
                 if let Some(reasoning) = answer.reasoning_content {
+                    payload["reasoning"] = json!(reasoning);
+                }
+                ("complete", payload, None)
+            }
+            Some(Ok(TurnReply::Empty { reasoning, .. })) => {
+                let mut payload = json!({"text": "(empty)"});
+                if let Some(reasoning) = reasoning {
                     payload["reasoning"] = json!(reasoning);
                 }
                 ("complete", payload, None)
@@ -244,13 +288,15 @@ impl Worker {
             end.insert("provider_error".into(), provider_error);
         }
         if transcript.priced_prefix_count > 0 {
-            end.insert(
-                "context_response".into(),
-                json!({
-                    "usage": transcript.last_usage,
-                    "priced_prefix_count": transcript.priced_prefix_count,
-                }),
-            );
+            let mut sample = json!({
+                "usage": transcript.last_usage,
+                "api_duration_s": transcript.last_api_duration.as_secs_f64(),
+                "priced_prefix_count": transcript.priced_prefix_count,
+            });
+            if transcript.empty_recovery_used {
+                sample["response_index"] = json!(transcript.usage.calls);
+            }
+            end.insert("context_response".into(), sample);
         }
         if let Some(context_failure) = context_failure {
             end.insert("context_failure".into(), json!(context_failure));
@@ -258,6 +304,9 @@ impl Worker {
         if let Some(outcome) = summary_outcome {
             end.insert("max_iterations_reached".into(), json!(true));
             end.insert("summary_outcome".into(), json!(outcome));
+        }
+        if let Some(outcome) = empty_outcome {
+            end.insert("empty_response_exhausted".into(), json!(outcome));
         }
         let frames = vec![
             events.frame("message.complete", completion),
@@ -288,6 +337,115 @@ struct TurnContext<'a> {
     worker: &'a Worker,
 }
 
+#[derive(Default)]
+struct EmptyRecovery {
+    prefills: usize,
+    reasoning: Option<String>,
+    retries: usize,
+    nudged_after_tool: bool,
+}
+
+impl EmptyRecovery {
+    fn tool_round(&mut self) {
+        self.nudged_after_tool = false;
+        if self.prefills > 0 {
+            *self = Self::default();
+        }
+    }
+
+    async fn recover(
+        &mut self,
+        context: &TurnContext<'_>,
+        transcript: &mut Transcript,
+        turn_id: &str,
+        cancel: &mut oneshot::Receiver<()>,
+        answer: Message,
+        inline_reasoning: bool,
+    ) -> Result<Option<TurnReply>, TurnError> {
+        let new_nudge = !self.nudged_after_tool
+            && !inline_reasoning
+            && transcript
+                .request_messages()
+                .iter()
+                .rev()
+                .take(5)
+                .any(|row| row["role"] == "tool");
+        let details = answer.reasoning_details.unwrap_or_default();
+        let reasoning = answer.reasoning_content.filter(|text| !text.is_empty());
+        let has_reasoning = reasoning.is_some() || inline_reasoning || !details.is_empty();
+        let new_prefill = !new_nudge && has_reasoning && self.prefills < 2;
+        let attempt = (!new_nudge && !new_prefill).then(|| {
+            json!({
+                "finish_reason": answer.finish_reason.as_deref().unwrap_or("stop"),
+                "retry_count": self.retries,
+                "observed_generation": has_reasoning,
+            })
+        });
+        transcript.partial.clear();
+        transcript.empty_recovery_used = true;
+        let delay = tokio::select! {
+            biased;
+            _ = &mut *cancel => return Err(TurnError::Interrupted),
+            delay = context.record_empty_attempt(transcript, turn_id, attempt) => delay?,
+        };
+        if new_nudge {
+            self.nudged_after_tool = true;
+            transcript.empty_nudges.push((
+                transcript.messages.len(),
+                [
+                    message("assistant", json!("(empty)")),
+                    message("user", json!(EMPTY_TOOL_NUDGE)),
+                ],
+            ));
+            return Ok(None);
+        }
+        if new_prefill {
+            self.prefills += 1;
+            let mut parts: Vec<&str> = reasoning.as_deref().into_iter().collect();
+            for detail in &details {
+                if let Some(text) = ["summary", "thinking", "content", "text"]
+                    .into_iter()
+                    .find_map(|key| detail[key].as_str().filter(|text| !text.is_empty()))
+                    && !parts.contains(&text)
+                {
+                    parts.push(text);
+                }
+            }
+            let reasoning = if parts.is_empty() && inline_reasoning {
+                answer.content.as_deref().and_then(model::inline_reasoning)
+            } else {
+                (!parts.is_empty()).then(|| parts.join("\n\n"))
+            };
+            if reasoning.is_some() {
+                self.reasoning = reasoning;
+            }
+            // Python's request assembly removes thinking prefill rows, even
+            // though they count toward the turn's recovery budget.
+            return Ok(None);
+        }
+        if let Some(delay) = delay {
+            self.retries += 1;
+            tokio::select! {
+                biased;
+                _ = &mut *cancel => return Err(TurnError::Interrupted),
+                _ = tokio::time::sleep(delay) => {}
+            }
+            return Ok(None);
+        }
+        // Python drops the synthetic terminal sentinel. Its finalizer only
+        // writes a new closing row if the tail is not a prefill.
+        if self.prefills == 0 {
+            transcript
+                .messages
+                .push(message("assistant", json!("(empty)")));
+        }
+        Ok(Some(TurnReply::Empty {
+            reasoning: self.reasoning.take(),
+            prefilled: self.prefills > 0,
+        }))
+    }
+}
+
 impl TurnContext<'_> {
     async fn request_round(
         &self,
@@ -306,8 +464,9 @@ impl TurnContext<'_> {
         };
         let model = &self.worker.model;
         let secret = self.worker.secret.as_deref();
+        let request_messages = transcript.request_messages();
         let response = model
-            .request(self.endpoint, plan, &transcript.messages, mode, secret)
+            .request(self.endpoint, plan, &request_messages, mode, secret)
             .await;
         let (answer, usage) = match response {
             Ok(response) if plan.stream => {
@@ -327,7 +486,7 @@ impl TurnContext<'_> {
                     .request(
                         self.endpoint,
                         plan,
-                        &transcript.messages,
+                        &request_messages,
                         RequestMode::Probe,
                         secret,
                     )
@@ -336,13 +495,14 @@ impl TurnContext<'_> {
                     Ok(response) => {
                         let (answer, usage) =
                             model::nonstream(response).await.map_err(|_| original)?;
-                        if let Some(text) = &answer.content
-                            && !text.is_empty()
-                        {
-                            if !events.first_output().await || !events.delta(text).await {
+                        if let Some(text) = &answer.content {
+                            let (visible, _) = model::visible_text(text);
+                            if !visible.is_empty()
+                                && (!events.first_output().await || !events.delta(&visible).await)
+                            {
                                 return Err(ModelError::OutputClosed);
                             }
-                            transcript.partial.push_str(text);
+                            transcript.partial.push_str(&visible);
                         }
                         (answer, usage)
                     }
@@ -365,6 +525,7 @@ impl TurnContext<'_> {
             transcript.usage.add(usage, elapsed);
         }
         transcript.last_usage = usage;
+        transcript.last_api_duration = elapsed;
         transcript.priced_prefix_count = transcript.messages.len();
         Ok(answer)
     }
@@ -378,6 +539,7 @@ impl TurnContext<'_> {
     ) -> Result<TurnReply, TurnError> {
         let plan = &self.start.turn_plan;
         let mut unknown_rounds = 0;
+        let mut empty_recovery = EmptyRecovery::default();
         let mut tool_ids: HashSet<String> = transcript
             .messages
             .iter()
@@ -390,7 +552,9 @@ impl TurnContext<'_> {
                 biased;
                 _ = &mut *cancel => return Err(TurnError::Interrupted),
                 answer = async {
-                    if transcript.usage.calls > 0 {
+                    if transcript.priced_prefix_count > 0
+                        && transcript.priced_prefix_count < transcript.messages.len()
+                    {
                         self.check_context_pressure(transcript, events.turn_id, false).await?;
                     }
                     Ok::<_, TurnError>(self.request_round(transcript, events).await?)
@@ -399,10 +563,28 @@ impl TurnContext<'_> {
             if answer.tool_calls.iter().any(|call| !call.valid_function()) {
                 return Err(ModelError::InvalidResponse.into());
             }
-            let mut assistant = message(
-                "assistant",
-                json!(answer.content.as_deref().unwrap_or_default().trim()),
-            );
+            let content = answer.content.as_deref().unwrap_or_default();
+            let (visible, inline_reasoning) = model::visible_text(content);
+            if answer.tool_calls.is_empty() && visible.trim().is_empty() {
+                if let Some(reply) = empty_recovery
+                    .recover(
+                        self,
+                        transcript,
+                        events.turn_id,
+                        cancel,
+                        answer,
+                        inline_reasoning,
+                    )
+                    .await?
+                {
+                    return Ok(reply);
+                }
+                continue;
+            }
+            if visible != content {
+                answer.content = Some(visible.trim().to_owned());
+            }
+            let mut assistant = message("assistant", json!(visible.trim()));
             if let Some(reason) = &answer.finish_reason {
                 assistant.insert("finish_reason".into(), json!(reason));
             }
@@ -415,6 +597,7 @@ impl TurnContext<'_> {
                 return Ok(TurnReply::Model(answer));
             }
 
+            empty_recovery.tool_round();
             let has_reads = answer
                 .tool_calls
                 .iter()
@@ -486,13 +669,13 @@ impl TurnContext<'_> {
             }
             while let Some(call) = transcript.pending_tools.front() {
                 transcript.reading_tool = true;
-                let (result, interrupted) =
+                let ((result, hints), interrupted) =
                     self.read_tool(call, state, events.turn_id, cancel).await?;
                 let Some(call) = transcript.pending_tools.pop_front() else {
                     break;
                 };
                 transcript.reading_tool = false;
-                let payload = call.complete(&result, &mut transcript.messages);
+                let payload = call.complete(&result, &hints, &mut transcript.messages);
                 if !events.emit("tool.complete", payload).await {
                     return Err(ModelError::OutputClosed.into());
                 }
@@ -506,10 +689,42 @@ impl TurnContext<'_> {
             biased;
             _ = cancel => Err(TurnError::Interrupted),
             reply = async {
-                self.check_context_pressure(transcript, events.turn_id, true).await?;
+                if transcript.priced_prefix_count < transcript.messages.len() {
+                    self.check_context_pressure(transcript, events.turn_id, true).await?;
+                }
                 Ok(self.summarize(&transcript.messages, events.turn_id).await)
             } => reply,
         }
+    }
+
+    async fn record_empty_attempt(
+        &self,
+        transcript: &Transcript,
+        turn_id: &str,
+        attempt: Option<Value>,
+    ) -> Result<Option<Duration>, TurnError> {
+        let ack = self
+            .request_parent(
+                ParentRequestKind::ContextPreflight,
+                turn_id,
+                json!({
+                    "messages": transcript.messages,
+                    "usage": transcript.last_usage,
+                    "api_duration_s": transcript.last_api_duration.as_secs_f64(),
+                    "priced_prefix_count": transcript.priced_prefix_count,
+                    "response_index": transcript.usage.calls,
+                    "summary": false,
+                    "empty_retry": true,
+                    "empty_attempt": attempt,
+                }),
+            )
+            .await;
+        let ack = ack
+            .filter(|ack| ack["decision"] == "allow")
+            .ok_or(TurnError::ContextPreflightUnavailable)?;
+        Ok(ack["retry_delay_s"]
+            .as_f64()
+            .and_then(|seconds| Duration::try_from_secs_f64(seconds).ok()))
     }
 
     async fn check_context_pressure(
@@ -525,6 +740,7 @@ impl TurnContext<'_> {
                 json!({
                     "messages": transcript.messages,
                     "usage": transcript.last_usage,
+                    "api_duration_s": transcript.last_api_duration.as_secs_f64(),
                     "priced_prefix_count": transcript.priced_prefix_count,
                     "summary": summary,
                 }),
@@ -575,17 +791,53 @@ impl TurnContext<'_> {
         state: &mut ReadState,
         turn_id: &str,
         cancel: &mut oneshot::Receiver<()>,
-    ) -> Result<(Value, bool), TurnError> {
+    ) -> Result<((Value, String), bool), TurnError> {
         if !call.valid_args {
             return Ok((
-                json!({"error": "read_file arguments must be a JSON object"}),
+                (
+                    json!({"error": "read_file arguments must be a JSON object"}),
+                    String::new(),
+                ),
                 false,
             ));
         }
         let authorized = AtomicBool::new(false);
-        let read = state.read(&call.args, |payload| {
-            self.read_policy(turn_id, payload, &authorized)
-        });
+        let hint_args = if self.start.turn_plan.read_file_hints {
+            ["path", "file_path", "workdir"]
+                .into_iter()
+                .filter_map(|key| {
+                    call.args[key]
+                        .as_str()
+                        .map(|path| (key.into(), json!(path)))
+                })
+                .collect::<Map<String, Value>>()
+        } else {
+            Map::new()
+        };
+        let read = async {
+            let mut hints = None;
+            let result = state
+                .read(&call.args, &mut hints, |mut payload| {
+                    if payload["op"] == "redact" && !hint_args.is_empty() {
+                        payload["hint_args"] = json!(hint_args);
+                    }
+                    self.read_policy(turn_id, payload, &authorized)
+                })
+                .await;
+            // A successful redaction also completes hint discovery. Cached reads and
+            // failures can finish without redaction but still visit the directory.
+            if hints.is_none() && !hint_args.is_empty() {
+                hints = self
+                    .read_policy(
+                        turn_id,
+                        json!({"op":"hints","hint_args":hint_args}),
+                        &authorized,
+                    )
+                    .await
+                    .and_then(|reply| reply["hints"].as_str().map(str::to_owned));
+            }
+            (result, hints.unwrap_or_default())
+        };
         tokio::pin!(read);
         tokio::select! {
             biased;

@@ -18,6 +18,7 @@ import threading
 import time
 from collections.abc import Iterator
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Literal
 from urllib.parse import urlsplit
 
@@ -66,6 +67,7 @@ def _compatible_agent(agent) -> bool:
     """Require the actual OpenAI transport and the complete read-only tool set."""
     from openai import OpenAI
     from agent.context_compressor import ContextCompressor
+    from agent.reasoning_promotion import answer_in_reasoning_capability
     from hermes_cli.plugins import has_hook, has_middleware
     from hermes_cli.plugins_dispatch import stream_held
     from run_agent import AIAgent
@@ -79,6 +81,8 @@ def _compatible_agent(agent) -> bool:
                 for t in agent.tools)
         and not getattr(agent, "_persist_disabled", False)
         and not getattr(agent, "credential_pool", None)
+        and not getattr(agent, "_fallback_chain", None)
+        and not answer_in_reasoning_capability(agent)
         and not getattr(agent, "prefill_messages", None)
         and not getattr(agent, "_memory_manager", None)
         and type(agent.context_compressor) is ContextCompressor
@@ -212,15 +216,18 @@ def prepare_rust_turn(sid: str, session: dict, frame: dict) -> tuple[dict, dict[
                 return None
             agent._current_turn_timestamp = time.time()
             user = {"role": "user", "content": run_message}
-            messages = [*history, user]
+            messages = [*copy.deepcopy(history), user]
             stage_skills_index_note(agent, agent._cached_system_prompt, messages)
             stage_date_note(agent, messages)
             plugin_context = _merge_gateway_notes(agent, messages, len(history), "")
             user_api_content = compose_user_api_content(run_message, "", plugin_context)
             if user_api_content is None and run_message != prompt:
                 user_api_content = run_message
+            # Python repairs adjacent user rows before substituting historical
+            # api_content. Work on the request copy to preserve the lease snapshot.
+            agent._repair_message_sequence(messages)
             assembled = assemble_api_request(
-                agent, messages=messages, current_turn_user_idx=len(history),
+                agent, messages=messages, current_turn_user_idx=len(messages) - 1,
                 _ext_prefetch_cache="", _plugin_user_context=plugin_context,
                 moa_config=None, active_system_prompt=agent._cached_system_prompt,
                 original_user_message=frame["text"], pending_moa_prepared_request=None,
@@ -260,6 +267,7 @@ def prepare_rust_turn(sid: str, session: dict, frame: dict) -> tuple[dict, dict[
             "system": wire[0]["content"], "tools": tools, "model": model,
             "base_url": str(agent.base_url), "params": kwargs, "stream": bool(stream),
             "max_iterations": agent.max_iterations,
+            "read_file_hints": agent._subdirectory_hints.enabled,
         }
         # Reject non-JSON provider extensions before anything crosses the pipe.
         try:
@@ -468,6 +476,10 @@ def _rust_terminal_status(frame: dict, rows: list[dict]) -> str:
     if status not in {"complete", "error", "interrupted"}:
         raise RustTurnConflict("invalid Rust terminal status")
     if status == "complete":
+        if frame.get("empty_response_exhausted") == "reasoning" and rows[-1].get("role") in {
+            "user", "tool",
+        }:
+            return status
         if rows[-1].get("role") != "assistant" or rows[-1].get("tool_calls"):
             raise RustTurnConflict("successful Rust turn has no final assistant row")
         return status
@@ -476,21 +488,53 @@ def _rust_terminal_status(frame: dict, rows: list[dict]) -> str:
     return status
 
 
-def _apply_context_response_usage(agent, raw_usage: JsonObject | None) -> tuple[int, int]:
-    """Update the compressor once for a completed native model response."""
-    from agent.usage_pricing import normalize_usage
+def _record_context_response_usage(
+    agent, stage: dict, sample: ContextResponseUsage, messages: list[JsonObject],
+) -> tuple[int, int]:
+    """Settle a validated response through the same accounting as an inline turn."""
+    from agent.turn_usage import record_response_usage
 
-    compressor = agent.context_compressor
-    if raw_usage is None:
-        if compressor.awaiting_real_usage_after_compression:
-            compressor.update_from_response({})
-        compressor.note_usage_less_response()
+    api_call_count = stage.get("context_api_calls", 0) + 1
+    stage["context_api_calls"] = api_call_count
+    stage["context_response_count"] = sample.priced_prefix_count
+    record_response_usage(
+        agent, SimpleNamespace(usage=sample.usage), messages=messages[:sample.priced_prefix_count],
+        api_call_count=api_call_count, api_duration=sample.api_duration_s,
+        compression_attempts=0, max_compression_attempts=getattr(agent, "max_compression_attempts", 3),
+        deferred_costs=stage.setdefault("pending_usage_costs", []),
+    )
+    if not sample.usage:
         return 0, 0
-    usage = normalize_usage(raw_usage, provider=agent.provider, api_mode=agent.api_mode)
-    initial = raw_usage.get("initial_prompt_tokens")
-    prompt_tokens = initial if type(initial) is int and initial > 0 else usage.prompt_tokens
-    compressor.update_from_response({"prompt_tokens": prompt_tokens, "completion_tokens": usage.output_tokens})
-    return prompt_tokens, usage.output_tokens
+    usage = agent._last_turn_usage
+    return usage["prompt_tokens"], usage["completion_tokens"]
+
+
+def prepare_empty_retry(session: dict, check: ContextPreflight) -> float | None:
+    """Account for another response on the existing prefix and apply Python's retry guard."""
+    from agent.empty_response_guard import deterministic_empty, empty_retry_budget, record_empty_attempt
+    from agent.retry_utils import jittered_backoff
+
+    with session["history_lock"]:
+        stage = session.get("_rust_turn_stage")
+        if not stage or stage["turn_id"] != check.turn_id or "rows" not in stage:
+            raise RustTurnConflict("empty response has no admitted turn")
+        _rust_suffix(stage, {"messages": check.messages})
+        count = stage.get("context_message_count", len(stage["wire_history"]) + 1)
+        if (check.summary or check.priced_prefix_count != count or len(check.messages) != count
+                or check.response_index != stage.get("context_api_calls", 0) + 1):
+            raise RustTurnConflict("empty response has an invalid priced prefix or attempt index")
+        agent = session["agent"]
+
+    _record_context_response_usage(agent, stage, check, check.messages)
+    if (attempt := check.empty_attempt) is None:
+        return 0.0
+    response = SimpleNamespace(usage=check.usage)
+    agent._empty_content_retries = attempt.retry_count
+    record_empty_attempt(agent, finish_reason=attempt.finish_reason, response=response,
+                         observed_generation=attempt.observed_generation)
+    if attempt.retry_count < empty_retry_budget(agent, response) and not deterministic_empty(agent):
+        return jittered_backoff(attempt.retry_count + 1, base_delay=5.0, max_delay=60.0)
+    return None
 
 
 def prepare_context_preflight(session: dict, check: ContextPreflight) -> Literal["allow", "pressure", "unavailable"]:
@@ -511,18 +555,21 @@ def prepare_context_preflight(session: dict, check: ContextPreflight) -> Literal
         _rust_suffix(stage, {"messages": check.messages})
         count = check.priced_prefix_count
         expected_count = stage.get("context_message_count", len(stage["wire_history"]) + 1)
-        if (count != expected_count or count >= len(check.messages)
+        if ((check.response_index is not None and check.response_index != stage.get("context_api_calls", 0) + 1)
+                or count != expected_count or count >= len(check.messages)
                 or check.messages[count].get("role") != "assistant"
                 or not check.messages[count].get("tool_calls")
                 or check.messages[-1].get("role") != "tool"):
             raise RustTurnConflict("context preflight has no completed model and tool round")
         system = stage["context_system"]
         agent = session["agent"]
-        prompt_tokens, completion_tokens = _apply_context_response_usage(agent, check.usage)
+        stage["context_message_count"] = len(check.messages)
+
+    # The supervisor serializes this sample with terminal settlement.
+    prompt_tokens, completion_tokens = _record_context_response_usage(agent, stage, check, check.messages)
+    with session["history_lock"]:
         anchor = (capture_usage_anchor(prompt_tokens, completion_tokens, check.messages[:count])
                   or stage.get("context_anchor"))
-        stage["context_message_count"] = len(check.messages)
-        stage["context_response_count"] = count
         stage["context_anchor"] = anchor
 
     messages = check.messages
@@ -559,7 +606,13 @@ def _pending_context_response(stage: dict, frame: dict) -> ContextResponseUsage 
     count = response.priced_prefix_count
     if count > len(frame.get("messages") or ()):
         raise RustTurnConflict("terminal context response has an invalid priced prefix")
-    if count == stage.get("context_response_count"):
+    if response.response_index is not None:
+        recorded = stage.get("context_api_calls", 0)
+        if response.response_index == recorded and count == stage.get("context_response_count"):
+            return None
+        if response.response_index != recorded + 1:
+            raise RustTurnConflict("terminal context response has an invalid attempt index")
+    elif count == stage.get("context_response_count"):
         return None
     if count != stage.get("context_message_count", len(stage["wire_history"]) + 1):
         raise RustTurnConflict("terminal context response has an invalid priced prefix")
@@ -719,6 +772,7 @@ def persist_rust_turn(session: dict, frame: dict) -> dict | None:
         if "rows" not in stage:
             raise RustTurnConflict("Rust turn was not durably admitted")
         rows = _rust_suffix(stage, frame)
+        agent = session["agent"]
         context_response = _pending_context_response(stage, frame)
         if frame.get("max_iterations_reached") or frame.get("summary_outcome") is not None:
             _finish_iteration_summary(session, stage, frame, rows)
@@ -729,9 +783,6 @@ def persist_rust_turn(session: dict, frame: dict) -> dict | None:
         _append_rust_rows(session, stage, actual)
         _close_rust_outcome(session, frame, rows, status)
         _append_rust_rows(session, stage, rows)
-        if context_response is not None:
-            with server._session_profile_runtime_scope(session, hydrate_secrets=False):
-                _apply_context_response_usage(session["agent"], context_response.usage)
         history = [*stage["history"], *rows]
         _adopt_rust_snapshot(session, history)
         receipt_state = server._TurnRun(
@@ -759,4 +810,9 @@ def persist_rust_turn(session: dict, frame: dict) -> dict | None:
                 _stage_context_recovery(session, stage, history)
         session.pop("_submit_user_row", None)
         session.pop("_rust_turn_stage", None)
-        return receipt
+    with server._session_profile_runtime_scope(session, hydrate_secrets=False):
+        if context_response is not None:
+            _record_context_response_usage(agent, stage, context_response, frame["messages"])
+        for settle_cost in stage.pop("pending_usage_costs", ()):
+            settle_cost()
+    return receipt
