@@ -375,6 +375,20 @@ def _on_compute_host_turn_done(
         _drain_queued_prompt(rid, sid, session)
 
 
+def _rust_goal_completion(settlement: dict) -> tuple[dict | None, str | None]:
+    if settlement["type"] != "turn.end" or settlement.get("interrupted"):
+        return None, None
+    if settlement.get("max_iterations_reached"):
+        text = settlement["text"]
+        handoff = {"completed": False, "failed": False, "interrupted": False,
+                   "turn_exit_reason": settlement["turn_exit_reason"], "final_response": text}
+        return handoff, text
+    # Exhaustion uses a visible completion notice, but it has no reply for the judge.
+    if settlement.get("status") == "complete" and not settlement.get("empty_response_exhausted"):
+        return None, settlement.get("text")
+    return None, None
+
+
 def _submit_prompt_to_compute_host(
     rid: str, sid: str, session: dict, text: Any, image_paths: list[str] | None = None,
     queued_prompt_generation: int | None = None, display_kind: str | None = None,
@@ -417,6 +431,7 @@ def _submit_prompt_to_compute_host(
                     persisted = False
                     receipt = None
                     handoff = None
+                    goal_reply = None
                     if done.get("type") == "turn.error" and done.get("reason") == "crash":
                         # Settlement may retire the planner on lease exit. Capture
                         # its route now using the projection for an absent child.
@@ -441,10 +456,7 @@ def _submit_prompt_to_compute_host(
                             receipt = persist_rust_turn(session, settlement)
                             if (db := getattr(session.get("agent"), "_session_db", None)) is not None:
                                 db.flush_token_counts()
-                            if settlement.get("max_iterations_reached"):
-                                handoff = {"completed": False, "failed": False, "interrupted": False,
-                                           "turn_exit_reason": settlement["turn_exit_reason"],
-                                           "final_response": settlement["text"]}
+                            handoff, goal_reply = _rust_goal_completion(settlement)
                             if details.get("status") == "error":
                                 terminal.update(details)
                             persisted = True
@@ -461,10 +473,11 @@ def _submit_prompt_to_compute_host(
                                 rust_host.finish_events(
                                     persisted=persisted and done.get("type") == "turn.end"
                                     and not session.get("_closing"), receipt=receipt, handoff=handoff)
-                                if persisted and handoff is not None and not session.get("_closing"):
+                                if persisted and goal_reply is not None and not session.get("_closing"):
                                     goal_followup = _goal_followup_after_turn(
-                                        sid, session, handoff, "complete", handoff["final_response"])
-                                    _publish_session_control_snapshot(sid, session, only_if_present=True)
+                                        sid, session, handoff, "complete", goal_reply)
+                                    _publish_session_control_snapshot(
+                                        sid, session, only_if_present=True, only_if_changed=handoff is None)
                         finally:
                             leases.close()
         finally:
