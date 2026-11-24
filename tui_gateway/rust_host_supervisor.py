@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import random
 import re
@@ -385,6 +386,9 @@ class RustHostSupervisor(HostSupervisor):
                     decision = prepare_context_preflight(self.session, check)
             except RustTurnConflict:
                 decision = "unavailable"
+            except Exception as exc:
+                # Provider diagnostics can contain transcript text or credentials.
+                logging.getLogger(__name__).warning("Rust context preflight failed (%s)", type(exc).__name__)
         self._send_frame({
             "type": "context.preflight.ack", "sid": self.sid, "request_id": check.request_id,
             "turn_id": check.turn_id, "decision": decision,

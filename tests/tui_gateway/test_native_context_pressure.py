@@ -18,12 +18,19 @@ from tui_gateway.rust_host_supervisor import RustHostSupervisor, select_host
 
 
 @pytest.mark.platforms("linux")
-@pytest.mark.parametrize(("threshold", "blocked"), [(25, True), (5000, False)])
-def test_gateway_supervisor_enforces_pressure_before_native_continuation(tmp_path, threshold, blocked):
+@pytest.mark.parametrize(("threshold", "failure"), [
+    (25, "context_pressure"), (5000, None), (5000, "context_preflight_unavailable"),
+])
+def test_gateway_supervisor_enforces_pressure_before_native_continuation(tmp_path, threshold, failure, monkeypatch, caplog):
     binary = Path(shutil.which("lina-turn-host") or ROOT / "target/debug/lina-turn-host").resolve()
     assert binary.is_file(), f"Build lina-turn-host first or put it on PATH: {binary}"
     compressor = ContextCompressor(model=MODEL, config_context_length=100000)
     compressor.threshold_tokens = threshold
+    if failure == "context_preflight_unavailable":
+        def broken_pressure_check(_tokens):
+            raise RuntimeError("private provider diagnostic")
+
+        monkeypatch.setattr(compressor, "should_compress", broken_pressure_check)
     agent = SimpleNamespace(
         model=MODEL, provider="custom", api_mode="chat_completions", tools=[],
         context_compressor=compressor, compression_enabled=True,
@@ -40,7 +47,7 @@ def test_gateway_supervisor_enforces_pressure_before_native_continuation(tmp_pat
     call = {
         "id": "read-1", "type": "function", "function": {"name": "read_file", "arguments": "[]"},
     }
-    replies = (Reply(calls=(call,)),) if blocked else (Reply(calls=(call,)), Reply(text="Finished."))
+    replies = (Reply(calls=(call,)),) if failure else (Reply(calls=(call,)), Reply(text="Finished."))
     terminal = Queue()
     cfg = {"compute_host_heartbeat_secs": 15, "compute_host_respawn_max": 1}
     with loopback_model(replies) as model:
@@ -67,11 +74,14 @@ def test_gateway_supervisor_enforces_pressure_before_native_continuation(tmp_pat
     assert end["new_messages"][2]["tool_call_id"] == "read-1"
     assert "read_file arguments must be a JSON object" in end["new_messages"][2]["content"]
     assert model.errors == []
-    if blocked:
+    if failure:
         assert len(model.requests) == 1
         assert details["status"] == "error"
-        assert details["failure_reason"] == "context_pressure"
+        assert details["failure_reason"] == failure
         assert details["failure_retryable"] is True
+        if failure == "context_preflight_unavailable":
+            assert "context preflight failed" in caplog.text
+            assert "private provider diagnostic" not in caplog.text
     else:
         assert len(model.requests) == 2
         assert details["status"] == "complete"
