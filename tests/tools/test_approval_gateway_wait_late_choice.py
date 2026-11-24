@@ -5,6 +5,12 @@ commit a choice between the poll giving up and the entry leaving the queue. The 
 choice committed under the approval lock — the client was acked ``ok`` for it — never "timeout".
 """
 
+import hashlib
+import time
+from types import SimpleNamespace
+
+import pytest
+
 from tools import approval as mod
 from tools import approval_gateway_wait as wait_mod
 
@@ -16,6 +22,56 @@ APPROVAL = {"command": "rm -rf build", "description": "d", "pattern_key": "dange
 def _clear():
     mod._gateway_queues.clear()
     mod._gateway_notify_cbs.clear()
+
+
+@pytest.mark.parametrize("attempt", ["match", "mismatch", "expired", "missing_id"])
+def test_guard_queues_raw_utf8_version_and_checks_guarded_resolution(monkeypatch, attempt):
+    command = "rm" + " " * 24 + "-rf ./approval-\u00e9-fixture"
+    raw_digest = hashlib.sha256(command.encode("utf-8")).hexdigest()
+    timeout = 60
+    started_at = 1_800_000_000
+    monkeypatch.setattr(wait_mod, "time", SimpleNamespace(time=lambda: started_at, monotonic=time.monotonic))
+    monkeypatch.setattr(mod, "get_current_session_key", lambda: SESSION_KEY)
+    monkeypatch.setattr(mod, "_presence", lambda callback: (callback, False, True, False))
+    monkeypatch.setattr(mod, "_yolo_active", lambda: False)
+    monkeypatch.setattr(mod, "is_approved", lambda *args: False)
+    monkeypatch.setattr(wait_mod._ctx, "_get_approval_config", lambda: {"mode": "manual", "timeout": timeout})
+    monkeypatch.setattr(wait_mod._ctx, "_fire_approval_hook", lambda *args, **kwargs: None)
+    monkeypatch.setattr(wait_mod._ctx, "_get_approval_transport_config", lambda: ("builtin", "deny"))
+    observed = {}
+
+    def notify(data):
+        request_id = data["request_id"]
+        observed["row"] = row = mod.list_all_gateway_approvals()[SESSION_KEY][0]
+        expires_at = row["expires_at"]
+        monkeypatch.setattr(mod, "time", lambda: expires_at if attempt == "expired" else expires_at - 1)
+        observed["count"] = mod.resolve_gateway_approval(
+            SESSION_KEY, "once",
+            request_id=None if attempt == "missing_id" else request_id,
+            content_version="0" * 64 if attempt == "mismatch" else raw_digest,
+        )
+        if not observed["count"]:
+            # A rejected attempt leaves the request available to its original approval surface.
+            observed["cleanup"] = mod.resolve_gateway_approval(SESSION_KEY, "deny", request_id=request_id)
+
+    mod.register_gateway_notify(SESSION_KEY, notify)
+    try:
+        result = mod.check_all_command_guards(command, "local")
+    finally:
+        mod.unregister_gateway_notify(SESSION_KEY)
+
+    row = observed["row"]
+    assert row["content_version"] == raw_digest
+    assert hashlib.sha256(row["command"].encode("utf-8")).hexdigest() != raw_digest
+    assert row["expires_at"] == started_at + timeout
+    assert observed["count"] == int(attempt == "match")
+    assert result["approved"] is (attempt == "match")
+    if attempt != "match":
+        assert observed["cleanup"] == 1
+    assert mod.resolve_gateway_approval(
+        SESSION_KEY, "once", request_id=row["request_id"], content_version=raw_digest,
+    ) == 0
+    assert SESSION_KEY not in mod.list_all_gateway_approvals()
 
 
 def test_choice_landing_after_the_deadline_check_is_resolved(monkeypatch):

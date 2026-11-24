@@ -17,6 +17,7 @@ import importlib
 import logging
 import os
 import threading
+from time import time
 from typing import Optional
 
 from utils import env_var_enabled, is_truthy_value
@@ -142,20 +143,29 @@ def unregister_gateway_notify(session_key: str) -> None:
 def resolve_gateway_approval(session_key: str, choice: str,
                              resolve_all: bool = False,
                              reason: Optional[str] = None,
-                             request_id: Optional[str] = None) -> int:
+                             request_id: Optional[str] = None,
+                             *,
+                             content_version: str | None = None) -> int:
     """Unblock waiting agent thread(s) from the gateway's /approve or /deny handler.
 
     *resolve_all* resolves every pending approval (``/approve all``); otherwise the oldest
     (FIFO) or the one matching *request_id*. *reason* is the ``/deny <reason>`` free text,
-    relayed to the agent in the BLOCKED message. Returns the number resolved.
+    relayed to the agent in the BLOCKED message. A supplied *content_version*
+    requires an exact, unexpired request. Returns the number resolved.
     """
     with _lock:
         queue = _gateway_queues.get(session_key)
-        if not queue:
+        if not queue or (content_version is not None and not request_id):
             return 0
         if request_id:
             targets = [entry for entry in queue if entry.data.get("request_id") == request_id]
             if not targets:
+                return 0
+            if content_version is not None and (
+                len(targets) != 1
+                or targets[0].data.get("content_version") != content_version
+                or time() >= targets[0].data.get("expires_at", 0)
+            ):
                 return 0
             queue[:] = [entry for entry in queue if entry not in targets]
         elif resolve_all:
@@ -197,6 +207,17 @@ def list_gateway_approvals(session_key: str) -> list[dict]:
     """Return replay-safe snapshots of unresolved approvals for one session."""
     with _lock:
         return [dict(entry.data) for entry in _gateway_queues.get(session_key, [])]
+
+
+def list_all_gateway_approvals() -> dict[str, list[dict]]:
+    """Snapshot unresolved gateway approvals grouped by session key."""
+    from copy import deepcopy
+
+    with _lock:
+        return {
+            session_key: [deepcopy(entry.data) for entry in queue]
+            for session_key, queue in _gateway_queues.items()
+        }
 
 
 def register_gateway_settle(session_key: str, request_id: str, settle) -> bool:
@@ -806,7 +827,8 @@ def _smart_gate(spec: _GateSpec, command: str, description: str, pattern_key: st
 def _human_decision(spec: _GateSpec, *, command: str, description: str,
                     pattern_key: str, pattern_keys: list[str],
                     session_key: str, approval_callback, is_cli: bool, is_gateway: bool,
-                    is_ask: bool, smart: bool = False, pending_body=None) -> dict:
+                    is_ask: bool, smart: bool = False, pending_body=None,
+                    plugin_input: tuple[str, dict] | None = None) -> dict:
     """Ask a human (after the optional guardian-LLM step) and turn the answer into the gate result.
 
     ``pattern_keys`` are what :func:`_persist_choice` stores on session/always; a smart-DENY
@@ -860,22 +882,14 @@ def _human_decision(spec: _GateSpec, *, command: str, description: str,
     # Gateway/async approval: block the agent thread until /approve or /deny, mirroring the CLI's synchronous input()
     # flow. The agent never sees "approval_required" here — it gets output or a definitive BLOCKED.
     if is_gateway or is_ask:
-        # Redacted copies for user-visible rendering only (the gateway paints them into Discord/Slack); the raw
-        # command still executes after approval and persistence keys off pattern_key.
-        display_command = redact_approval_display(command)
-        display_description = redact_approval_display(description)
         notify_cb = _gateway_notify_cb(session_key)
         if notify_cb is not None:
-            # Smart DENY overrides are one-operation decisions, so the UI must not offer a
-            # permanent or session scope.
-            data = {
-                "command": display_command, "pattern_key": pattern_key,
-                "pattern_keys": pattern_keys, "description": display_description,
-                "allow_permanent": not smart_denied,
-                "allow_session": not smart_denied,
-            }
-            if smart_denied:
-                data["smart_denied"] = True
+            from tools.approval_gateway_wait import gateway_wait_data
+
+            data = gateway_wait_data(
+                command=command, description=description, pattern_key=pattern_key, pattern_keys=pattern_keys,
+                smart_denied=smart_denied, shell_command=spec is _COMMAND_GATE, plugin_input=plugin_input,
+            )
             decision = _await_gateway_decision(session_key, notify_cb, data, surface="gateway")
             if decision.get("notify_failed"):
                 return _denied(spec.notify_failed, pattern_key=pattern_key,
@@ -906,8 +920,10 @@ def _human_decision(spec: _GateSpec, *, command: str, description: str,
         if not _should_fall_through_to_cli_approval(
             is_cli=is_cli, approval_callback=approval_callback, notify_cb=notify_cb,
         ):
-            if not spec.pending_keys:
-                display_command, display_description = command, description
+            display_command, display_description = command, description
+            if spec.pending_keys:
+                display_command = redact_approval_display(command)
+                display_description = redact_approval_display(description)
             return _pending_result(
                 spec, session_key, command=display_command, description=display_description, pattern_key=pattern_key,
                 pattern_keys=pattern_keys, body=pending_body, smart_denied=smart_denied,
@@ -981,6 +997,7 @@ def _run_approval_gate(
     advice: str = "Find an alternative approach that avoids this action.",
     cron_deny_message: str = "", single_query_deny_message: str = "", unattended_deny_message: str = "",
     autoapprove_log_prefix: str, fail_closed_when_no_human: bool = False, no_human_block_message: str = "",
+    plugin_input: tuple[str, dict] | None = None,
 ) -> dict:
     """Shared human-approval gate for a flagged action (tool call or write): decision core for
     :func:`request_tool_approval` and the file-tool write gates.
@@ -1045,6 +1062,7 @@ def _run_approval_gate(
         _ACTION_GATE, command=display_target, description=description, pattern_key=pattern_key,
         pattern_keys=[pattern_key], session_key=session_key,
         approval_callback=approval_callback, is_cli=is_cli, is_gateway=is_gateway, is_ask=is_ask,
+        plugin_input=plugin_input,
     )
 
 
@@ -1128,7 +1146,10 @@ def check_dangerous_command(command: str, env_type: str,
     )
 
 
-def request_tool_approval(tool_name: str, reason: str, *, rule_key: str = "", approval_callback=None) -> dict:
+def request_tool_approval(
+    tool_name: str, reason: str, *, rule_key: str = "", approval_callback=None,
+    tool_args: dict | None = None,
+) -> dict:
     """Escalate an arbitrary tool call to the human-approval gate.
 
     Entry point for a plugin ``pre_tool_call`` hook returning ``{"action": "approve", ...}``:
@@ -1137,7 +1158,8 @@ def request_tool_approval(tool_name: str, reason: str, *, rule_key: str = "", ap
     the LLM cannot skip it. Cron honors ``approvals.cron_mode``; any OTHER non-interactive
     context without an approval bridge fails CLOSED. ``rule_key`` controls the ``[a]lways``
     allowlist grain; when empty it is ``tool_name`` + a hash of ``reason`` so DISTINCT reasons
-    on the same tool persist independently. Returns the ``check_dangerous_command`` result shape.
+    on the same tool persist independently. ``tool_args`` binds a queued approval to a
+    digest of the tool call. Returns the ``check_dangerous_command`` result shape.
     """
     description = reason or f"Plugin requires approval for {tool_name}"
     if not rule_key:
@@ -1153,6 +1175,7 @@ def request_tool_approval(tool_name: str, reason: str, *, rule_key: str = "", ap
         fail_closed_when_no_human=True,
         no_human_block_message=(f"BLOCKED: {subject} but no interactive user or gateway is present "
                                 "to approve it. A plugin flagged this action for human confirmation."),
+        plugin_input=(tool_name, tool_args) if tool_args is not None else None,
     )
 
 
