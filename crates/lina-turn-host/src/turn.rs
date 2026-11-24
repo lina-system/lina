@@ -29,8 +29,12 @@ pub(crate) struct Worker {
 enum TurnError {
     #[error(transparent)]
     Model(#[from] ModelError),
+    #[error("The model hit its output limit before finishing the response.")]
+    ResponseTruncated,
     #[error("Model generated invalid tool call: {0}")]
     UnknownToolLimit(String),
+    #[error("The model declined to respond to this request (safety refusal).")]
+    ContentPolicyBlocked(Option<String>),
     #[error(
         "Context pressure stopped this turn before the next model request. Completed tool results were kept. Continue in this session to use Python context recovery."
     )]
@@ -48,7 +52,23 @@ impl TurnError {
         match self {
             Self::ContextPressure => Some("context_pressure"),
             Self::ContextPreflightUnavailable => Some("context_preflight_unavailable"),
-            Self::Model(_) | Self::UnknownToolLimit(_) | Self::Interrupted => None,
+            Self::Model(_)
+            | Self::ResponseTruncated
+            | Self::UnknownToolLimit(_)
+            | Self::ContentPolicyBlocked(_)
+            | Self::Interrupted => None,
+        }
+    }
+
+    fn terminal_failure(&self) -> Option<(&'static str, bool)> {
+        match self {
+            Self::ResponseTruncated => Some(("truncated", true)),
+            Self::ContentPolicyBlocked(_) => Some(("content_policy_blocked", false)),
+            Self::Model(_)
+            | Self::UnknownToolLimit(_)
+            | Self::ContextPressure
+            | Self::ContextPreflightUnavailable
+            | Self::Interrupted => None,
         }
     }
 }
@@ -68,6 +88,7 @@ struct Transcript {
     messages: Vec<Map<String, Value>>,
     partial: String,
     usage: TurnUsage,
+    model_attempts: usize,
     last_usage: Option<Usage>,
     last_api_duration: Duration,
     priced_prefix_count: usize,
@@ -174,7 +195,7 @@ impl Worker {
         self,
         mut start: Start,
         endpoint: Url,
-        (mut cancel, mut read_state): (oneshot::Receiver<()>, ReadState),
+        mut cancel: oneshot::Receiver<()>,
     ) {
         let turn_id = start
             .turn_id
@@ -199,6 +220,7 @@ impl Worker {
             endpoint: &endpoint,
             worker: &self,
         };
+        let mut read_state = ReadState::default();
         let result = match context
             .run_model(&mut transcript, &mut events, &mut read_state, &mut cancel)
             .await
@@ -210,17 +232,12 @@ impl Worker {
             return;
         }
         let provider_error = match &result {
-            Some(Err(TurnError::Model(ModelError::Http { status, summary })))
-                if (400..600).contains(status) =>
-            {
-                Some(json!({"status_code": status, "message": summary, "attempts": 1}))
-            }
+            Some(Err(TurnError::Model(error))) => error.failure(transcript.model_attempts),
             _ => None,
         };
-        let context_failure = result
-            .as_ref()
-            .and_then(|result| result.as_ref().err())
-            .and_then(TurnError::context_failure);
+        let turn_error = result.as_ref().and_then(|result| result.as_ref().err());
+        let context_failure = turn_error.and_then(TurnError::context_failure);
+        let terminal_failure = turn_error.and_then(TurnError::terminal_failure);
         let usage = transcript.usage.payload(&start.turn_plan.model);
         let empty_outcome = match &result {
             Some(Ok(TurnReply::Empty {
@@ -249,6 +266,13 @@ impl Worker {
             }
             Some(Ok(TurnReply::Summary(None))) => ("complete", json!({"text": ""}), Some("empty")),
             Some(Ok(TurnReply::SummaryError)) => ("complete", json!({"text": ""}), Some("error")),
+            Some(Err(err @ TurnError::ContentPolicyBlocked(_))) => {
+                let mut payload = json!({"text": err.to_string()});
+                if let TurnError::ContentPolicyBlocked(Some(detail)) = err {
+                    payload["error"] = json!(detail);
+                }
+                ("error", payload, None)
+            }
             Some(Err(err)) => (
                 "error",
                 json!({"text": err.to_string(), "error": err.to_string(),
@@ -301,6 +325,12 @@ impl Worker {
         if let Some(context_failure) = context_failure {
             end.insert("context_failure".into(), json!(context_failure));
         }
+        if let Some((reason, retryable)) = terminal_failure {
+            completion["failure_reason"] = json!(reason);
+            completion["recoverable"] = json!(retryable);
+            end.insert("failure_reason".into(), json!(reason));
+            end.insert("failure_retryable".into(), json!(retryable));
+        }
         if let Some(outcome) = summary_outcome {
             end.insert("max_iterations_reached".into(), json!(true));
             end.insert("summary_outcome".into(), json!(outcome));
@@ -312,16 +342,15 @@ impl Worker {
             events.frame("message.complete", completion),
             start.route.reply("turn.end", end),
         ];
-        self.finish(sid, frames, read_state).await;
+        self.finish(sid, frames).await;
     }
 
-    async fn finish(&self, sid: &str, frames: Vec<Value>, read_state: ReadState) {
+    async fn finish(&self, sid: &str, frames: Vec<Value>) {
         if self
             .updates
             .send(Update::Done {
                 sid: sid.to_owned(),
                 frames,
-                read_state,
             })
             .await
             .is_err()
@@ -388,7 +417,14 @@ impl EmptyRecovery {
             _ = &mut *cancel => return Err(TurnError::Interrupted),
             delay = context.record_empty_attempt(transcript, turn_id, attempt) => delay?,
         };
-        if new_nudge {
+        // The loop's summary path requires a final tool round. Settle an empty
+        // response on the last iteration after accounting for its usage.
+        let can_continue = context
+            .start
+            .turn_plan
+            .max_iterations
+            .is_none_or(|limit| transcript.usage.calls < limit);
+        if new_nudge && can_continue {
             self.nudged_after_tool = true;
             transcript.empty_nudges.push((
                 transcript.messages.len(),
@@ -421,9 +457,11 @@ impl EmptyRecovery {
             }
             // Python's request assembly removes thinking prefill rows, even
             // though they count toward the turn's recovery budget.
-            return Ok(None);
+            if can_continue {
+                return Ok(None);
+            }
         }
-        if let Some(delay) = delay {
+        if can_continue && let Some(delay) = delay {
             self.retries += 1;
             tokio::select! {
                 biased;
@@ -456,7 +494,56 @@ impl TurnContext<'_> {
         if !events.begin_request().await {
             return Err(ModelError::OutputClosed);
         }
+        transcript.model_attempts = 0;
         let now = Instant::now();
+        let (answer, usage) = loop {
+            transcript.model_attempts += 1;
+            let error = match self.request_attempt(transcript, events).await {
+                Ok(reply) => break reply,
+                Err(error) => error,
+            };
+            if transcript.model_attempts >= plan.api_max_retries {
+                return Err(error);
+            }
+            let Some(failure) = error.failure(transcript.model_attempts) else {
+                return Err(error);
+            };
+            let ack = self
+                .request_parent(
+                    ParentRequestKind::ModelRetry,
+                    events.turn_id,
+                    json!({"failure": failure}),
+                )
+                .await;
+            let Some(delay) = ack
+                .and_then(|ack| ack["retry_delay_s"].as_f64())
+                .filter(|delay| (0.0..=600.0).contains(delay))
+            else {
+                return Err(error);
+            };
+            // The enclosing select cancels both the policy exchange and this sleep.
+            tokio::time::sleep(Duration::from_secs_f64(delay)).await;
+        };
+        let elapsed = now.elapsed();
+        transcript.usage.calls += 1;
+        if !events.end_request().await {
+            return Err(ModelError::OutputClosed);
+        }
+        if let Some(usage) = &usage {
+            transcript.usage.add(usage, elapsed);
+        }
+        transcript.last_usage = usage;
+        transcript.last_api_duration = elapsed;
+        transcript.priced_prefix_count = transcript.messages.len();
+        Ok(answer)
+    }
+
+    async fn request_attempt(
+        &self,
+        transcript: &mut Transcript,
+        events: &mut Events<'_>,
+    ) -> Result<(Message, Option<Usage>), ModelError> {
+        let plan = &self.start.turn_plan;
         let mode = if plan.stream {
             RequestMode::Stream
         } else {
@@ -516,18 +603,7 @@ impl TurnContext<'_> {
             }
             Err(error) => return Err(error),
         };
-        let elapsed = now.elapsed();
-        transcript.usage.calls += 1;
-        if !events.end_request().await {
-            return Err(ModelError::OutputClosed);
-        }
-        if let Some(usage) = &usage {
-            transcript.usage.add(usage, elapsed);
-        }
-        transcript.last_usage = usage;
-        transcript.last_api_duration = elapsed;
-        transcript.priced_prefix_count = transcript.messages.len();
-        Ok(answer)
+        Ok((answer, usage))
     }
 
     async fn run_model(
@@ -560,6 +636,14 @@ impl TurnContext<'_> {
                     Ok::<_, TurnError>(self.request_round(transcript, events).await?)
                 } => answer?,
             };
+            if answer.finish_reason.as_deref() == Some(model::CONTENT_FILTER) {
+                let detail = answer.refusal_explanation(self.worker.secret.as_deref());
+                return Err(TurnError::ContentPolicyBlocked(detail));
+            }
+            // A capped response cannot supply a final answer or executable tool arguments.
+            if answer.finish_reason.as_deref() == Some("length") {
+                return Err(TurnError::ResponseTruncated);
+            }
             if answer.tool_calls.iter().any(|call| !call.valid_function()) {
                 return Err(ModelError::InvalidResponse.into());
             }
@@ -884,6 +968,7 @@ impl TurnContext<'_> {
             ParentRequestKind::ReadPolicy => "read_file.policy",
             ParentRequestKind::IterationSummary => "iteration.summary",
             ParentRequestKind::ContextPreflight => "context.preflight",
+            ParentRequestKind::ModelRetry => "model.retry",
         };
         fields.insert("type".into(), json!(name));
         fields.insert("sid".into(), json!(route.sid));
@@ -901,7 +986,9 @@ impl TurnContext<'_> {
             .await
             .ok()?;
         match kind {
-            ParentRequestKind::ReadPolicy | ParentRequestKind::ContextPreflight => {
+            ParentRequestKind::ReadPolicy
+            | ParentRequestKind::ContextPreflight
+            | ParentRequestKind::ModelRetry => {
                 tokio::time::timeout(Duration::from_secs(5), receiver)
                     .await
                     .ok()?

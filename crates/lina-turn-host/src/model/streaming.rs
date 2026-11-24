@@ -5,7 +5,7 @@ use futures_util::StreamExt as _;
 use reqwest::Response;
 use serde_json::json;
 
-use super::{Completion, Message, ModelError, ToolCall, ToolDelta, Usage};
+use super::{CONTENT_FILTER, Completion, Message, ModelError, ToolCall, ToolDelta, Usage};
 use crate::protocol::Events;
 
 const THINK_TAGS: [(&str, &str); 9] = [
@@ -153,18 +153,28 @@ pub(crate) async fn stream(
     let mut finished = false;
     let mut finish_reason = None;
     let mut text = StreamText::default();
+    let mut refusal = String::new();
     let mut scrubber = VisibleText::default();
     let mut reasoning = StreamText::default();
     let mut reasoning_details = Vec::new();
+    let mut received_chunk = false;
 
     while let Some(event) = stream.next().await {
-        let event = event.map_err(|_| ModelError::Transport)?;
+        let event = event.map_err(|error| match error {
+            eventsource_stream::EventStreamError::Transport(err) if !received_chunk => {
+                ModelError::from_transport(err)
+            }
+            eventsource_stream::EventStreamError::Transport(_) => ModelError::IncompleteStream,
+            _ => ModelError::InvalidResponse,
+        })?;
         if event.data.trim() == "[DONE]" {
             finished = true;
             break;
         }
         let chunk: Completion =
             serde_json::from_str(&event.data).map_err(|_| ModelError::InvalidResponse)?;
+        // Includes buffered reasoning, tool fragments, and refusal text before any public delta.
+        received_chunk = true;
         if chunk.error.is_some() {
             return Err(ModelError::InvalidResponse);
         }
@@ -176,9 +186,14 @@ pub(crate) async fn stream(
         };
         if let Some(reason) = choice.finish_reason {
             finished = true;
-            finish_reason = Some(reason);
+            if finish_reason.as_deref() != Some(CONTENT_FILTER) {
+                finish_reason = Some(reason);
+            }
         }
         if let Some(delta) = choice.delta {
+            if let Some(part) = delta.refusal {
+                refusal.push_str(&part);
+            }
             if let Some(content) = delta.content {
                 let visible = scrubber.push(&text.push(&content, secret));
                 if !visible.is_empty() {
@@ -215,7 +230,18 @@ pub(crate) async fn stream(
             }
         }
     }
-    if !finished {
+    text.full.push_str(&text.pending);
+    reasoning.full.push_str(&reasoning.pending);
+    let mut message = Message {
+        content: (!text.full.is_empty()).then_some(text.full),
+        refusal: (!refusal.is_empty()).then_some(refusal),
+        reasoning_content: (!reasoning.full.is_empty()).then_some(reasoning.full),
+        reasoning_details: (!reasoning_details.is_empty()).then_some(reasoning_details),
+        tool_calls: calls.into_values().collect(),
+        ..Message::default()
+    };
+    message.normalize_finish_reason(finish_reason);
+    if !finished && message.finish_reason.as_deref() != Some(CONTENT_FILTER) {
         return Err(ModelError::IncompleteStream);
     }
     let mut visible = scrubber.push(&text.pending);
@@ -226,7 +252,6 @@ pub(crate) async fn stream(
             return Err(ModelError::OutputClosed);
         }
     }
-    text.full.push_str(&text.pending);
     if !reasoning.pending.is_empty()
         && (!events.first_output().await
             || !events
@@ -235,15 +260,6 @@ pub(crate) async fn stream(
     {
         return Err(ModelError::OutputClosed);
     }
-    reasoning.full.push_str(&reasoning.pending);
-    let message = Message {
-        content: (!text.full.is_empty()).then_some(text.full),
-        reasoning_content: (!reasoning.full.is_empty()).then_some(reasoning.full),
-        reasoning: None,
-        reasoning_details: (!reasoning_details.is_empty()).then_some(reasoning_details),
-        tool_calls: calls.into_values().collect(),
-        finish_reason,
-    };
     Ok((message, usage))
 }
 

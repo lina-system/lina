@@ -14,6 +14,7 @@ import copy
 import ipaddress
 import json
 import re
+import sys
 import threading
 import time
 from collections.abc import Iterator
@@ -267,6 +268,7 @@ def prepare_rust_turn(sid: str, session: dict, frame: dict) -> tuple[dict, dict[
             "system": wire[0]["content"], "tools": tools, "model": model,
             "base_url": str(agent.base_url), "params": kwargs, "stream": bool(stream),
             "max_iterations": agent.max_iterations,
+            "api_max_retries": min(agent._api_max_retries, sys.maxsize),
             "read_file_hints": agent._subdirectory_hints.enabled,
         }
         # Reject non-JSON provider extensions before anything crosses the pipe.
@@ -650,9 +652,14 @@ def prepare_iteration_summary(session: dict, frame: dict) -> dict:
         stage = session["_rust_turn_stage"]
         agent = session["agent"]
         rows = _rust_suffix(stage, frame)
-        rounds = sum(row["role"] == "assistant" and bool(row.get("tool_calls")) for row in rows)
+        attempts = stage.get("context_api_calls", 0)
+        message_count = len(frame["messages"])
+        # An empty retry spends an iteration without appending rows. Its priced
+        # prefix covers the whole transcript, even if an earlier tool row ends it.
         if (stage["turn_id"] != frame["turn_id"] or "summary_rows" in stage
-                or rounds != agent.max_iterations or rows[-1]["role"] != "tool"):
+                or attempts != agent.max_iterations or rows[-1]["role"] != "tool"
+                or message_count != stage.get("context_message_count")
+                or message_count == stage.get("context_response_count")):
             raise RustTurnConflict("summary does not follow the admitted iteration budget")
         stage["summary_rows"] = rows
         messages = copy.deepcopy([*stage["history"], *rows])
@@ -663,7 +670,7 @@ def prepare_iteration_summary(session: dict, frame: dict) -> dict:
         repair_message_sequence(agent, messages)
         messages.append({"role": "user", "content": MAX_ITERATIONS_SUMMARY_REQUEST})
         agent._emit_diagnostic_status(
-            f"⚠️ Iteration budget exhausted ({rounds}/{agent.max_iterations}) — asking model to summarise")
+            f"⚠️ Iteration budget exhausted ({attempts}/{agent.max_iterations}) — asking model to summarise")
         body = agent._build_api_kwargs(_iteration_summary_api_messages(agent, messages))
         sanitize_outbound_kwargs(agent, body)
         if (body.pop("extra_headers", {}) != stage["session_affinity"] or body.get("model") != agent.model

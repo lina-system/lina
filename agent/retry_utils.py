@@ -193,3 +193,20 @@ def provider_retry_after_seconds(error: Any) -> Optional[float]:
             nested = body.get("error")
             value = parse_retry_after_seconds((nested if isinstance(nested, dict) else body).get("retry_after"))
     return value if value is not None and value > 0 else None
+
+
+def provider_error_backoff(
+    error: Exception, *, attempt: int, base_url: str, model: str, adaptive: bool,
+) -> tuple[float, str | None, float | None]:
+    """Return the delay, adaptive policy name, and usable provider-declared wait."""
+    retry_after = provider_retry_after_seconds(error)
+    if retry_after is not None:
+        wait = min(retry_after, RETRY_AFTER_CAP_S)
+        return wait, None, wait
+    wait = jittered_backoff(attempt, base_delay=2.0, max_delay=60.0)
+    policy = None
+    if adaptive:
+        wait, policy = adaptive_rate_limit_backoff(
+            attempt, base_url=base_url, model=model, error=error, default_wait=wait,
+        )
+    return wait, policy, None

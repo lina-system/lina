@@ -43,6 +43,7 @@ class TurnPlan(_WireModel):
     base_url: str = Field(description="Provider base URL without embedded credentials.")
     params: JsonObject = Field(description="JSON request options without credentials or transport headers.")
     stream: bool
+    api_max_retries: int = Field(default=1, ge=1, description="Total logical attempts per model round.")
     max_iterations: int = Field(default=500, description="Effective iteration budget of the planning agent.")
     read_file_hints: bool = False
 
@@ -189,6 +190,32 @@ class IterationSummaryAck(_PolicyFrame):
     body: JsonObject | None = Field(default=None, repr=False)
 
 
+class ProviderError(_WireModel):
+    """Private, bounded fields used for retry policy and terminal presentation."""
+
+    status_code: int = Field(ge=400, le=599)
+    message: str = Field(max_length=512, pattern=r"^[^\x00-\x1f\x7f]*$", repr=False)
+    code: str | None = Field(default=None, max_length=128, repr=False)
+    retry_after: str | None = Field(default=None, max_length=128, repr=False)
+    body_retry_after: str | None = Field(default=None, max_length=128, repr=False)
+    attempts: int = Field(ge=1, description="Logical attempts, excluding diagnostic HTTP probes.")
+
+
+class TransportError(_WireModel):
+    transport: Literal["connection"]
+    attempts: int = Field(ge=1)
+
+
+class ModelRetry(_PolicyFrame):
+    type: Literal["model.retry"]
+    failure: ProviderError | TransportError = Field(repr=False)
+
+
+class ModelRetryAck(_PolicyFrame):
+    type: Literal["model.retry.ack"]
+    retry_delay_s: float | None = Field(default=None, ge=0, le=600, allow_inf_nan=False)
+
+
 class ContextResponseUsage(_WireModel):
     usage: JsonObject | None = Field(repr=False)
     api_duration_s: float = Field(default=0.0, ge=0.0, allow_inf_nan=False)
@@ -277,7 +304,7 @@ ReadFilePolicyAck = Annotated[
 
 ComputeHostRequest = Annotated[
     TurnStart | Interrupt | Respond | ReloadMcp | Control | Shutdown | ReadFilePolicyAck
-    | IterationSummaryAck | ContextPreflightAck,
+    | IterationSummaryAck | ContextPreflightAck | ModelRetryAck,
     Field(discriminator="type"),
 ]
 
@@ -332,14 +359,6 @@ class TurnStarted(_SessionReply):
     started_ns: int
 
 
-class ProviderError(_WireModel):
-    """Private HTTP failure summary used by the parent's error presenter."""
-
-    status_code: int = Field(ge=400, le=599)
-    message: str = Field(max_length=512, pattern=r"^[^\x00-\x1f\x7f]*$", repr=False)
-    attempts: int = Field(ge=1, description="Logical attempts, excluding diagnostic HTTP probes.")
-
-
 class TurnEnd(_SessionReply, _HistoryMetadata):
     type: Literal["turn.end"]
     request_id: str
@@ -349,9 +368,11 @@ class TurnEnd(_SessionReply, _HistoryMetadata):
     turn_id: str | None = None
     messages: list[JsonObject] | None = None
     new_messages: list[JsonObject] | None = None
-    provider_error: ProviderError | None = None
+    provider_error: ProviderError | TransportError | None = None
     context_response: ContextResponseUsage | None = None
     context_failure: Literal["context_pressure", "context_preflight_unavailable"] | None = None
+    failure_reason: Literal["truncated", "content_policy_blocked"] | None = None
+    failure_retryable: bool | None = None
     max_iterations_reached: Literal[True] | None = None
     summary_outcome: Literal["success", "empty", "error"] | None = None
     empty_response_exhausted: Literal["empty", "reasoning"] | None = None
@@ -417,7 +438,7 @@ class Error(_ChildFrame):
 ComputeHostResponse = Annotated[
     Hello | Heartbeat | Orphan | Rpc | TurnStarted | TurnEnd | TurnError | InterruptAck
     | RespondAck | RespondError | ReloadMcpAck | ControlAck | ControlError | ShutdownAck | Error
-    | ReadFilePolicy | IterationSummary | ContextPreflight,
+    | ReadFilePolicy | IterationSummary | ContextPreflight | ModelRetry,
     Field(discriminator="type"),
 ]
 

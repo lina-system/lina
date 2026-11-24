@@ -9,13 +9,16 @@ import random
 import re
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 from weakref import WeakKeyDictionary
 
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
+from tui_gateway.contracts.compute_host import ModelRetry, ProviderError, TransportError
 from tui_gateway.host_supervisor import HostSupervisor, NativeHostBuildError, _build_sha
 
 logger = logging.getLogger(__name__)
+_MODEL_FAILURE = TypeAdapter(ProviderError | TransportError)
 
 _TURN_EVENTS = frozenset({
     "message.start", "message.delta", "message.interim", "message.complete",
@@ -24,9 +27,10 @@ _TURN_EVENTS = frozenset({
 
 
 class _ProviderFailure(Exception):
-    def __init__(self, status_code: int, detail: str):
-        self.status_code = status_code
-        self.body = {"error": {"message": detail}}
+    def __init__(self, failure: ProviderError, detail: str):
+        self.status_code = failure.status_code
+        self.body = {"error": {"message": detail, "code": failure.code, "retry_after": failure.body_retry_after}}
+        self.response = SimpleNamespace(headers={"Retry-After": failure.retry_after})
         super().__init__(detail)
 
 
@@ -176,6 +180,24 @@ class RustHostSupervisor(HostSupervisor):
         if visible:
             server._emit("error", self.sid, message["params"]["payload"])
 
+    def _classify_model_failure(self, failure):
+        from agent.error_classifier import classify_api_error
+        from agent.redact import redact_sensitive_text
+        from tui_gateway import server
+
+        agent = self.session["agent"]
+        if isinstance(failure, TransportError):
+            error = ConnectionError("Model connection interrupted")
+        else:
+            detail = redact_sensitive_text(failure.message, force=True)
+            detail = server._strip_prompt_echo(detail, (self.session.get("_rust_turn_stage") or {}).get("text"))
+            if isinstance(agent.api_key, str) and agent.api_key:
+                detail = detail.replace(agent.api_key, "[REDACTED]")
+            error = _ProviderFailure(failure, detail)
+        return error, classify_api_error(
+            error, provider=agent.provider, model=agent.model, base_url=self.endpoint, api_key=agent.api_key,
+        )
+
     def terminal_details(self, frame: dict) -> dict:
         with self.session["history_lock"]:
             payload = self._final_event or {}
@@ -200,28 +222,42 @@ class RustHostSupervisor(HostSupervisor):
             "context_pressure", "context_preflight_unavailable",
         }:
             return {**details, "failure_reason": frame["context_failure"], "failure_retryable": True}
+        if payload.get("status") == "error" and frame.get("failure_reason") == "content_policy_blocked":
+            from agent.error_surface import build_error_surface_from_result
+            from agent.redact import redact_sensitive_text
+            from agent.turn_failure_copy import content_policy_copy, provider_label_for
+            from tui_gateway import server
+
+            with server._session_profile_runtime_scope(self.session, hydrate_secrets=False):
+                detail = redact_sensitive_text(payload.get("error", ""), force=True)
+                detail = server._strip_prompt_echo(detail, (self.session.get("_rust_turn_stage") or {}).get("text"))
+                agent = self.session["agent"]
+                text = "⚠️ " + content_policy_copy(
+                    label=provider_label_for(agent.provider),
+                    summary=detail or "the model returned no explanation",
+                )
+                error = f"content_policy_blocked: {detail or 'model declined (content_filter)'}"
+                surface = build_error_surface_from_result(
+                    {**frame, "error": error}, provider=agent.provider, model=agent.model,
+                )
+            payload.update(text=text, error=error, recoverable=False)
+            if surface is not None:
+                payload["error_surface"] = surface
+            return {**details, "text": text, "error": error}
         if payload.get("status") != "error" or frame.get("provider_error") is None:
             return details
-        from agent.error_classifier import FailoverReason, classify_api_error
+        from agent.error_classifier import FailoverReason
         from agent.error_surface import build_error_surface_from_result
-        from agent.redact import redact_sensitive_text
         from agent.turn_failure_copy import exhausted_copy, nonretryable_copy, provider_label_for
         from tui_gateway import server
-        from tui_gateway.contracts.compute_host import ProviderError
 
         try:
-            failure = ProviderError.model_validate(frame["provider_error"], strict=True)
+            failure = _MODEL_FAILURE.validate_python(frame["provider_error"], strict=True)
         except ValidationError:
             return details
         agent = self.session["agent"]
         with server._session_profile_runtime_scope(self.session, hydrate_secrets=False):
-            detail = redact_sensitive_text(failure.message, force=True)
-            detail = server._strip_prompt_echo(detail, (self.session.get("_rust_turn_stage") or {}).get("text"))
-            if isinstance(agent.api_key, str) and agent.api_key:
-                detail = detail.replace(agent.api_key, "[REDACTED]")
-            error = _ProviderFailure(failure.status_code, detail)
-            classifier = classify_api_error(
-                error, provider=agent.provider, model=agent.model, base_url=self.endpoint, api_key=agent.api_key)
+            error, classifier = self._classify_model_failure(failure)
             summary = agent._summarize_api_error(error)
             result = {"error": summary, "failure_reason": classifier.reason.value,
                       "failure_retryable": classifier.retryable}
@@ -313,6 +349,9 @@ class RustHostSupervisor(HostSupervisor):
             return
         if kind == "context.preflight":
             self._answer_context_preflight(frame)
+            return
+        if kind == "model.retry":
+            self._answer_model_retry(frame)
             return
         if kind != "read_file.policy":
             return super()._handle_host_frame(frame)
@@ -406,18 +445,47 @@ class RustHostSupervisor(HostSupervisor):
             ack["retry_delay_s"] = retry_delay_s
         self._send_frame(ack)
 
-    def _prepare_context_preflight(self, check):
-        from tui_gateway import server
-        from tui_gateway.rust_turn_plan import prepare_context_preflight, prepare_empty_retry
-
+    def _owns_policy_request(self, check):
         with self.session["history_lock"]:
-            owns_turn = (check.sid == self.sid and self.session.get("running")
+            return (check.sid == self.sid and self.session.get("running")
                          and not self.session.get("_closing") and not self.session.get("_turn_cancel_requested")
                          and self.session.get("_compute_host_turn_host") is self
                          and self.session.get("_compute_host_turn_id") == check.turn_id
                          and self._event_source == (threading.current_thread(), check.turn_id)
                          and self._final_event is None)
-        if not owns_turn:
+
+    def _answer_model_retry(self, frame):
+        from agent.error_classifier import FailoverReason
+        from agent.retry_utils import is_zai_coding_overload_error, provider_error_backoff
+        from agent.turn_recovery import free_tier_cooldown_ends_turn
+        from tui_gateway import server
+
+        check = ModelRetry.model_validate(frame)
+        delay = None
+        if self._owns_policy_request(check):
+            with self.settlement_lock, server._session_profile_runtime_scope(self.session):
+                agent = self.session["agent"]
+                error, verdict = self._classify_model_failure(check.failure)
+                rate_limited = verdict.reason in (FailoverReason.rate_limit, FailoverReason.upstream_rate_limit)
+                if (check.failure.attempts < agent._api_max_retries and verdict.retryable
+                        and verdict.reason in (FailoverReason.rate_limit, FailoverReason.upstream_rate_limit,
+                                               FailoverReason.overloaded, FailoverReason.server_error, FailoverReason.timeout)
+                        and not (rate_limited and free_tier_cooldown_ends_turn(agent, error, self.endpoint))):
+                    adaptive = rate_limited or is_zai_coding_overload_error(
+                        base_url=self.endpoint, model=agent.model, error=error,
+                    )
+                    delay, _, _ = provider_error_backoff(
+                        error, attempt=check.failure.attempts, base_url=self.endpoint, model=agent.model,
+                        adaptive=adaptive,
+                    )
+        self._send_frame({"type": "model.retry.ack", "sid": self.sid, "turn_id": check.turn_id,
+                          "request_id": check.request_id, "retry_delay_s": delay})
+
+    def _prepare_context_preflight(self, check):
+        from tui_gateway import server
+        from tui_gateway.rust_turn_plan import prepare_context_preflight, prepare_empty_retry
+
+        if not self._owns_policy_request(check):
             return "unavailable", None
         with self.settlement_lock, server._session_profile_runtime_scope(self.session):
             if check.empty_retry:

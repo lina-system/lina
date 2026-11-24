@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{self, BufRead as _};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -14,7 +14,6 @@ use uuid::Uuid;
 
 use crate::model::ModelClient;
 use crate::protocol::{Command, ParentRequestKind, Route, Start, Update, now_ns};
-use crate::read_file::ReadState;
 use crate::turn::Worker;
 
 struct Active {
@@ -36,7 +35,7 @@ struct Host {
     worker: Worker,
     tasks: JoinSet<()>,
     active: HashMap<String, Active>,
-    read_states: HashMap<String, ReadState>,
+    completed_sessions: HashSet<String>,
     progress: u64,
     stdout: Stdout,
 }
@@ -70,7 +69,7 @@ pub(crate) async fn run() -> io::Result<()> {
         },
         tasks: JoinSet::new(),
         active: HashMap::new(),
-        read_states: HashMap::new(),
+        completed_sessions: HashSet::new(),
         progress: 0,
         stdout: tokio::io::stdout(),
     };
@@ -123,7 +122,7 @@ impl Host {
     async fn write(&mut self, mut frame: Value) -> io::Result<()> {
         if !matches!(
             frame["type"].as_str(),
-            Some("read_file.policy" | "iteration.summary" | "context.preflight")
+            Some("read_file.policy" | "iteration.summary" | "context.preflight" | "model.retry")
         ) {
             frame["host_ns"] = json!(now_ns());
         }
@@ -184,7 +183,7 @@ impl Host {
             }
             Command::Respond { route, params } => {
                 let failure = if !self.active.contains_key(&route.sid)
-                    && !self.read_states.contains_key(&route.sid)
+                    && !self.completed_sessions.contains(&route.sid)
                 {
                     Some("session not found")
                 } else if !params.is_object() {
@@ -222,6 +221,9 @@ impl Host {
             }
             Command::ContextPreflightAck(route) => {
                 self.acknowledge(ParentRequestKind::ContextPreflight, route, frame);
+            }
+            Command::ModelRetryAck(route) => {
+                self.acknowledge(ParentRequestKind::ModelRetry, route, frame);
             }
             Command::Shutdown { request_id } => {
                 self.write(json!({"type": "shutdown.ack", "request_id": request_id}))
@@ -313,9 +315,7 @@ impl Host {
             secret: self.worker.secret.clone(),
             updates: self.worker.updates.clone(),
         };
-        let state = self.read_states.remove(&route.sid).unwrap_or_default();
-        self.tasks
-            .spawn(worker.run(start, endpoint, (cancelled, state)));
+        self.tasks.spawn(worker.run(start, endpoint, cancelled));
         Ok(())
     }
 
@@ -364,13 +364,9 @@ impl Host {
                 }
                 Ok(())
             }
-            Update::Done {
-                sid,
-                frames,
-                read_state,
-            } => {
+            Update::Done { sid, frames } => {
                 self.active.remove(&sid);
-                self.read_states.insert(sid, read_state);
+                self.completed_sessions.insert(sid);
                 self.progress = self.progress.saturating_add(1);
                 for frame in frames {
                     self.write(frame).await?;

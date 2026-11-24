@@ -34,6 +34,8 @@ pub(crate) enum Command {
     IterationSummaryAck(Route),
     #[serde(rename = "context.preflight.ack")]
     ContextPreflightAck(Route),
+    #[serde(rename = "model.retry.ack")]
+    ModelRetryAck(Route),
     #[serde(rename = "shutdown")]
     Shutdown {
         #[serde(default)]
@@ -108,6 +110,8 @@ pub(crate) struct TurnPlan {
     pub(crate) base_url: String,
     pub(crate) params: Map<String, Value>,
     pub(crate) stream: bool,
+    #[serde(default = "single_attempt")]
+    pub(crate) api_max_retries: usize,
     #[serde(default)]
     pub(crate) read_file_hints: bool,
     #[serde(
@@ -119,6 +123,10 @@ pub(crate) struct TurnPlan {
 
 fn default_max_iterations() -> Option<usize> {
     Some(500)
+}
+
+fn single_attempt() -> usize {
+    1
 }
 
 fn deserialize_max_iterations<'de, D: Deserializer<'de>>(
@@ -183,6 +191,7 @@ pub(crate) enum ParentRequestKind {
     ReadPolicy,
     IterationSummary,
     ContextPreflight,
+    ModelRetry,
 }
 
 pub(crate) enum Update {
@@ -196,7 +205,6 @@ pub(crate) enum Update {
     Done {
         sid: String,
         frames: Vec<Value>,
-        read_state: crate::read_file::ReadState,
     },
 }
 

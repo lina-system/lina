@@ -1454,26 +1454,17 @@ def compute_error_backoff(
     ``Retry-After`` over ``LIVE_RETRY_WAIT_CAP_S`` is announced when it starts."""
     # Imported lazily so tests that patch ``agent.retry_utils.jittered_backoff`` /
     # ``adaptive_rate_limit_backoff`` (incl. the run_agent conftest fast-backoff fixture) intercept.
-    from agent.retry_utils import (
-        LIVE_RETRY_WAIT_CAP_S, RETRY_AFTER_CAP_S, adaptive_rate_limit_backoff, jittered_backoff,
-        provider_retry_after_seconds,
-    )
+    from agent.retry_utils import LIVE_RETRY_WAIT_CAP_S, provider_error_backoff
     from hermes_cli.anon_auth import on_free_model
 
     # Respect Retry-After on every retryable provider error, not just 429s. Retryable
     # 5xx responses (e.g. Cloudflare 520/524) also carry the header or a structured
     # ``retry_after`` problem-detail body field; ignoring either turns an origin
     # outage into a retry storm.
-    _retry_after = provider_retry_after_seconds(api_error)
-    if _retry_after is not None:
-        _retry_after = min(_retry_after, RETRY_AFTER_CAP_S)
-    wait_time = _retry_after if _retry_after is not None else jittered_backoff(retry_count, base_delay=2.0, max_delay=60.0)
-    _backoff_policy = None
     _adaptive = is_rate_limited or is_zai_coding_overload
-    if _adaptive and _retry_after is None:
-        wait_time, _backoff_policy = adaptive_rate_limit_backoff(
-            retry_count, base_url=str(base_url), model=model, error=api_error, default_wait=wait_time,
-        )
+    wait_time, _backoff_policy, _retry_after = provider_error_backoff(
+        api_error, attempt=retry_count, base_url=str(base_url), model=model, adaptive=_adaptive,
+    )
     _reset = reset_hint(api_error) if _adaptive else ""
     _free_busy = is_rate_limited and on_free_model(agent, base_url)
     _wait_reason = ("The free model is busy" if _free_busy

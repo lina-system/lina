@@ -1,4 +1,6 @@
 use std::collections::VecDeque;
+use std::error::Error;
+use std::io::ErrorKind;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -8,6 +10,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 use crate::protocol::TurnPlan;
+
+pub(crate) const CONTENT_FILTER: &str = "content_filter";
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum ModelError {
@@ -21,14 +25,74 @@ pub(crate) enum ModelError {
     InvalidSessionAffinity,
     #[error("model request failed")]
     Transport,
+    #[error("model connection interrupted")]
+    TransientTransport,
     #[error("model endpoint returned HTTP {status}")]
-    Http { status: u16, summary: String },
+    Http { status: u16, detail: HttpDetail },
     #[error("invalid model response")]
     InvalidResponse,
     #[error("model stream ended before completion")]
     IncompleteStream,
     #[error("host output closed")]
     OutputClosed,
+}
+
+#[derive(Debug, Default, Serialize)]
+pub(crate) struct HttpDetail {
+    message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    retry_after: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    body_retry_after: Option<String>,
+}
+
+impl ModelError {
+    pub(crate) fn failure(&self, attempts: usize) -> Option<Value> {
+        match self {
+            Self::Http { status, detail } if (400..600).contains(status) => {
+                let mut failure = json!(detail);
+                failure["status_code"] = json!(status);
+                failure["attempts"] = json!(attempts);
+                Some(failure)
+            }
+            Self::TransientTransport => {
+                Some(json!({"transport": "connection", "attempts": attempts}))
+            }
+            _ => None,
+        }
+    }
+
+    fn from_transport(error: reqwest::Error) -> Self {
+        if error.is_timeout() {
+            return Self::TransientTransport;
+        }
+        // A reqwest connect error can also be a permanent TLS verification failure.
+        let mut cause = error.source();
+        while let Some(err) = cause {
+            if err.downcast_ref::<std::io::Error>().is_some_and(|io| {
+                matches!(
+                    io.kind(),
+                    ErrorKind::ConnectionRefused
+                        | ErrorKind::ConnectionReset
+                        | ErrorKind::ConnectionAborted
+                        | ErrorKind::BrokenPipe
+                        | ErrorKind::TimedOut
+                        | ErrorKind::UnexpectedEof
+                        | ErrorKind::NetworkUnreachable
+                        | ErrorKind::HostUnreachable
+                )
+            }) || err
+                .downcast_ref::<hyper::Error>()
+                .is_some_and(|http| http.is_incomplete_message() || http.is_closed())
+            {
+                return Self::TransientTransport;
+            }
+            cause = err.source();
+        }
+        Self::Transport
+    }
 }
 
 pub(crate) struct ModelClient {
@@ -179,10 +243,16 @@ impl ModelClient {
         if let Some(key) = &self.key {
             request = request.header(reqwest::header::AUTHORIZATION, key.clone());
         }
-        let mut response = request.send().await.map_err(|_| ModelError::Transport)?;
+        let mut response = request.send().await.map_err(ModelError::from_transport)?;
         if !response.status().is_success() {
             let status = response.status().as_u16();
-            let summary = if (400..600).contains(&status) {
+            let retry_after = response
+                .headers()
+                .get(reqwest::header::RETRY_AFTER)
+                .and_then(|value| value.to_str().ok())
+                .filter(|value| value.len() <= 128)
+                .map(str::to_owned);
+            let detail = if (400..600).contains(&status) {
                 tokio::time::timeout(Duration::from_secs(1), error_summary(&mut response, secret))
                     .await
                     .ok()
@@ -190,8 +260,12 @@ impl ModelClient {
             } else {
                 None
             };
-            let summary = summary.unwrap_or_else(|| format!("HTTP {status}"));
-            return Err(ModelError::Http { status, summary });
+            let mut detail = detail.unwrap_or_default();
+            if detail.message.is_empty() {
+                detail.message = format!("HTTP {status}");
+            }
+            detail.retry_after = retry_after;
+            return Err(ModelError::Http { status, detail });
         }
         Ok(response)
     }
@@ -238,7 +312,7 @@ async fn summary_text(response: Response) -> Result<Option<String>, ModelError> 
     Ok((!text.is_empty()).then(|| text.to_owned()))
 }
 
-async fn error_summary(response: &mut Response, secret: Option<&str>) -> Option<String> {
+async fn error_summary(response: &mut Response, secret: Option<&str>) -> Option<HttpDetail> {
     const MAX_BODY_BYTES: usize = 16 * 1024;
     let mut body = Vec::new();
     while let Some(chunk) = response.chunk().await.ok()? {
@@ -248,14 +322,24 @@ async fn error_summary(response: &mut Response, secret: Option<&str>) -> Option<
         body.extend_from_slice(&chunk);
     }
     let data: Value = serde_json::from_slice(&body).ok()?;
-    let message = data.pointer("/error/message")?.as_str()?;
+    let error = data.get("error").filter(|v| v.is_object()).unwrap_or(&data);
+    let message = error["message"].as_str().unwrap_or_default();
     let clean: String = message.chars().filter(|ch| !ch.is_control()).collect();
     let clean = match secret {
         Some(secret) => clean.replace(secret, "[REDACTED]"),
         None => clean,
     };
-    let summary: String = clean.trim().chars().take(512).collect();
-    (!summary.is_empty()).then_some(summary)
+    let short_field = |value: &Value| match value {
+        Value::String(s) if s.len() <= 128 && !s.chars().any(char::is_control) => Some(s.clone()),
+        Value::Number(n) => Some(n.to_string()).filter(|s| s.len() <= 128),
+        _ => None,
+    };
+    Some(HttpDetail {
+        message: clean.trim().chars().take(512).collect(),
+        code: short_field(&error["code"]),
+        body_retry_after: short_field(&error["retry_after"]),
+        retry_after: None,
+    })
 }
 
 fn affinity_headers(value: &Value) -> Result<HeaderMap, ModelError> {
@@ -597,6 +681,7 @@ struct Choice {
 #[derive(Default, Deserialize)]
 pub(crate) struct Message {
     pub(crate) content: Option<String>,
+    refusal: Option<String>,
     pub(crate) reasoning_content: Option<String>,
     reasoning: Option<String>,
     pub(crate) reasoning_details: Option<Vec<Value>>,
@@ -604,6 +689,43 @@ pub(crate) struct Message {
     pub(crate) tool_calls: Vec<ToolCall>,
     #[serde(skip)]
     pub(crate) finish_reason: Option<String>,
+}
+
+impl Message {
+    fn normalize_finish_reason(&mut self, finish_reason: Option<String>) {
+        let refusal_only = self
+            .refusal
+            .as_deref()
+            .is_some_and(|text| !text.trim().is_empty())
+            && self
+                .content
+                .as_deref()
+                .is_none_or(|text| text.trim().is_empty())
+            && self.tool_calls.is_empty();
+        self.finish_reason = match finish_reason.as_deref() {
+            None | Some("stop") if refusal_only => Some(CONTENT_FILTER.to_owned()),
+            _ => finish_reason,
+        };
+    }
+
+    pub(crate) fn refusal_explanation(&self, secret: Option<&str>) -> Option<String> {
+        [self.content.as_deref(), self.refusal.as_deref()]
+            .into_iter()
+            .flatten()
+            .find_map(|text| {
+                let (visible, _) = visible_text(text);
+                let visible = match secret {
+                    Some(secret) => visible.replace(secret, "[REDACTED]"),
+                    None => visible,
+                };
+                let clean: String = visible
+                    .chars()
+                    .filter(|ch| !ch.is_control() || *ch == '\n')
+                    .collect();
+                let explanation = clean.trim();
+                (!explanation.is_empty()).then(|| explanation.chars().take(500).collect())
+            })
+    }
 }
 
 #[derive(Default, Deserialize, Serialize)]
@@ -629,6 +751,7 @@ pub(crate) struct Function {
 #[derive(Deserialize)]
 struct Delta {
     content: Option<String>,
+    refusal: Option<String>,
     reasoning_content: Option<String>,
     reasoning: Option<String>,
     reasoning_details: Option<Vec<Value>>,
@@ -651,10 +774,9 @@ struct FunctionDelta {
 }
 
 pub(crate) async fn nonstream(response: Response) -> Result<(Message, Option<Usage>), ModelError> {
-    let reply: Completion = response
-        .json()
-        .await
-        .map_err(|_| ModelError::InvalidResponse)?;
+    let body = response.bytes().await.map_err(ModelError::from_transport)?;
+    let reply: Completion =
+        serde_json::from_slice(&body).map_err(|_| ModelError::InvalidResponse)?;
     if reply.error.is_some() {
         return Err(ModelError::InvalidResponse);
     }
@@ -664,7 +786,7 @@ pub(crate) async fn nonstream(response: Response) -> Result<(Message, Option<Usa
         .next()
         .ok_or(ModelError::InvalidResponse)?;
     let mut message = choice.message.ok_or(ModelError::InvalidResponse)?;
-    message.finish_reason = choice.finish_reason;
+    message.normalize_finish_reason(choice.finish_reason);
     if message.reasoning_content.is_none() {
         message.reasoning_content = message.reasoning.take();
     }
@@ -679,3 +801,81 @@ pub(crate) async fn nonstream(response: Response) -> Result<(Message, Option<Usa
 
 mod streaming;
 pub(crate) use streaming::{inline_reasoning, stream, visible_text};
+
+#[cfg(test)]
+mod tests {
+    use super::{CONTENT_FILTER, Message};
+    use serde_json::json;
+
+    #[test]
+    fn structured_refusal_promotes_only_without_a_live_payload() {
+        let calls = json!([{
+            "id": "call-1",
+            "type": "function",
+            "function": {"name": "read_file", "arguments": "{}"},
+        }]);
+        let cases = [
+            (
+                None,
+                Some("I decline."),
+                json!([]),
+                Some("stop"),
+                Some(CONTENT_FILTER),
+            ),
+            (
+                Some(" \n"),
+                Some("I decline."),
+                json!([]),
+                None,
+                Some(CONTENT_FILTER),
+            ),
+            (None, Some(" \n"), json!([]), Some("stop"), Some("stop")),
+            (
+                Some("Visible text."),
+                Some("I decline."),
+                json!([]),
+                None,
+                None,
+            ),
+            (None, Some("I decline."), calls, Some("stop"), Some("stop")),
+            (
+                None,
+                Some("I decline."),
+                json!([]),
+                Some("length"),
+                Some("length"),
+            ),
+            (
+                Some("Visible text."),
+                None,
+                json!([]),
+                Some(CONTENT_FILTER),
+                Some(CONTENT_FILTER),
+            ),
+        ];
+        for (content, refusal, tool_calls, reason, expected) in cases {
+            let mut message: Message = serde_json::from_value(json!({
+                "content": content, "refusal": refusal, "tool_calls": tool_calls,
+            }))
+            .unwrap();
+            message.normalize_finish_reason(reason.map(str::to_owned));
+            assert_eq!(message.finish_reason.as_deref(), expected);
+        }
+    }
+
+    #[test]
+    fn refusal_explanation_excludes_private_reasoning_and_secrets() {
+        let message: Message = serde_json::from_value(json!({
+            "content": "<think>private inline reasoning</think>",
+            "reasoning_content": "private structured reasoning",
+            "refusal": "Provider declined token synthetic-key.\u{1b}",
+        }))
+        .unwrap();
+        assert_eq!(
+            message
+                .refusal_explanation(Some("synthetic-key"))
+                .as_deref(),
+            Some("Provider declined token [REDACTED]."),
+        );
+    }
+}

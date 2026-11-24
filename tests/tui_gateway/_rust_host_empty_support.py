@@ -54,10 +54,6 @@ def assert_empty_recovery_parity(
         result = {"content": ANSWER} if user == PROMPTS[-1] else attempts[min(count, len(attempts) - 1)]
         envelope = {"id": f"local-{index}", "created": 1, "model": parity.MODEL}
         message = {"role": "assistant", "content": None, **(result or {})}
-        if "tool_calls" in message and user == PROMPTS[1]:
-            message["tool_calls"] = [{
-                **TOOL_CALL, "function": {**TOOL_CALL["function"], "arguments": '{"path": "second.txt"}'},
-            }]
         content_chunks = message.pop("content_chunks", [])
         if content_chunks:
             message["content"] = "".join(content_chunks)
@@ -88,20 +84,20 @@ def assert_empty_recovery_parity(
         workspace = home / "workspace"
         workspace.mkdir()
         (workspace / "fixture.txt").write_text("A real tool result.\n", encoding="utf-8")
-        (workspace / "second.txt").write_text("Another tool result.\n", encoding="utf-8")
         with parity.loopback_model((parity.Reply(),) * (2 * limit + 1)) as model:
             _config(home, workspace, model.url, implementation)
             with parity.gateway(home, binary, {}, store_dsn, (parity.MODEL_KEY, APP_PASSWORD)) as client:
                 client.rpc("session.create", cwd=str(workspace))
                 finals = []
+                host_pids = []
                 for prompt in PROMPTS:
                     after = len(client.sink.frames())
                     _submit(client, prompt)
-                    if not finals:
-                        _host_pid(home, implementation, binary)
                     final = _event(client, "message.complete", after=after)["payload"]
                     _host_frame(client, "turn.end", "turn.error", after=after)
+                    host_pids.append(_host_pid(home, implementation, binary))
                     finals.append({key: final.get(key) for key in ("status", "text", "reasoning")})
+                assert len(set(host_pids)) == 1, host_pids
                 rows = [
                     {key: row.get(key) for key in ("role", "content", "reasoning", "reasoning_content")}
                     for row in parity.stored_rows(home)

@@ -873,6 +873,106 @@
       "type": "object"
     },
     "JsonValue": {},
+    "ModelRetry": {
+      "additionalProperties": false,
+      "properties": {
+        "failure": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProviderError"
+            },
+            {
+              "$ref": "#/$defs/TransportError"
+            }
+          ],
+          "title": "Failure"
+        },
+        "request_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "title": "Request Id"
+        },
+        "sid": {
+          "title": "Sid",
+          "type": "string"
+        },
+        "turn_id": {
+          "title": "Turn Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "model.retry",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sid",
+        "turn_id",
+        "request_id",
+        "type",
+        "failure"
+      ],
+      "title": "ModelRetry",
+      "type": "object"
+    },
+    "ModelRetryAck": {
+      "additionalProperties": false,
+      "properties": {
+        "request_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "title": "Request Id"
+        },
+        "retry_delay_s": {
+          "anyOf": [
+            {
+              "maximum": 600,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Retry Delay S"
+        },
+        "sid": {
+          "title": "Sid",
+          "type": "string"
+        },
+        "turn_id": {
+          "title": "Turn Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "model.retry.ack",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sid",
+        "turn_id",
+        "request_id",
+        "type"
+      ],
+      "title": "ModelRetryAck",
+      "type": "object"
+    },
     "Orphan": {
       "additionalProperties": false,
       "properties": {
@@ -905,7 +1005,7 @@
     },
     "ProviderError": {
       "additionalProperties": false,
-      "description": "Private HTTP failure summary used by the parent's error presenter.",
+      "description": "Private, bounded fields used for retry policy and terminal presentation.",
       "properties": {
         "attempts": {
           "description": "Logical attempts, excluding diagnostic HTTP probes.",
@@ -913,11 +1013,50 @@
           "title": "Attempts",
           "type": "integer"
         },
+        "body_retry_after": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Body Retry After"
+        },
+        "code": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Code"
+        },
         "message": {
           "maxLength": 512,
           "pattern": "^[^\\x00-\\x1f\\x7f]*$",
           "title": "Message",
           "type": "string"
+        },
+        "retry_after": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Retry After"
         },
         "status_code": {
           "maximum": 599,
@@ -1955,6 +2094,27 @@
       "title": "TranscriptMessage",
       "type": "object"
     },
+    "TransportError": {
+      "additionalProperties": false,
+      "properties": {
+        "attempts": {
+          "minimum": 1,
+          "title": "Attempts",
+          "type": "integer"
+        },
+        "transport": {
+          "const": "connection",
+          "title": "Transport",
+          "type": "string"
+        }
+      },
+      "required": [
+        "transport",
+        "attempts"
+      ],
+      "title": "TransportError",
+      "type": "object"
+    },
     "TurnEnd": {
       "additionalProperties": false,
       "properties": {
@@ -2004,6 +2164,34 @@
         "ended_ns": {
           "title": "Ended Ns",
           "type": "integer"
+        },
+        "failure_reason": {
+          "anyOf": [
+            {
+              "enum": [
+                "truncated",
+                "content_policy_blocked"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Failure Reason"
+        },
+        "failure_retryable": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Failure Retryable"
         },
         "history_version": {
           "anyOf": [
@@ -2092,10 +2280,14 @@
               "$ref": "#/$defs/ProviderError"
             },
             {
+              "$ref": "#/$defs/TransportError"
+            },
+            {
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "title": "Provider Error"
         },
         "request_id": {
           "title": "Request Id",
@@ -2241,6 +2433,13 @@
       "additionalProperties": false,
       "description": "Resolved model request configuration. The child supplies provider authentication.",
       "properties": {
+        "api_max_retries": {
+          "default": 1,
+          "description": "Total logical attempts per model round.",
+          "minimum": 1,
+          "title": "Api Max Retries",
+          "type": "integer"
+        },
         "base_url": {
           "description": "Provider base URL without embedded credentials.",
           "title": "Base Url",
@@ -2695,6 +2894,8 @@
       "interrupt.ack": "#/$defs/InterruptAck",
       "iteration.summary": "#/$defs/IterationSummary",
       "iteration.summary.ack": "#/$defs/IterationSummaryAck",
+      "model.retry": "#/$defs/ModelRetry",
+      "model.retry.ack": "#/$defs/ModelRetryAck",
       "orphan": "#/$defs/Orphan",
       "read_file.policy": {
         "discriminator": {
@@ -2790,6 +2991,9 @@
       "$ref": "#/$defs/ContextPreflightAck"
     },
     {
+      "$ref": "#/$defs/ModelRetryAck"
+    },
+    {
       "$ref": "#/$defs/Hello"
     },
     {
@@ -2860,6 +3064,9 @@
     },
     {
       "$ref": "#/$defs/ContextPreflight"
+    },
+    {
+      "$ref": "#/$defs/ModelRetry"
     }
   ],
   "title": "Hermes compute-host frames"

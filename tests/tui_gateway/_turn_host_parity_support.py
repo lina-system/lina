@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from fcntl import LOCK_EX, flock
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Final, TypeAlias
+from typing import Final, Literal, TypeAlias
 from unittest.mock import patch
 
 from pydantic import JsonValue
@@ -61,6 +61,10 @@ class Reply:
     status: int = 200
     gate: threading.Event | None = None
     usage: Json | None = None
+    finish_reason: str | None = None
+    disconnect: Literal["before_headers", "during_stream"] | None = None
+    retry_after: str | None = None
+    error_code: str = "parity_500"
 
 
 class ModelServer(ThreadingHTTPServer):
@@ -99,13 +103,26 @@ class ModelHandler(BaseHTTPRequestHandler):
             self.send_error(400)
             return
         reply = self.server.replies[index]
+        if reply.disconnect == "before_headers":
+            self.close_connection = True
+            return
+        if reply.disconnect == "during_stream":
+            chunk = {"choices": [{"index": 0, "delta": {"content": reply.text}}]}
+            data = f"data: {json.dumps(chunk)}\n\n".encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Content-Length", str(len(data) + 100))
+            self.end_headers()
+            self.wfile.write(data)
+            self.close_connection = True
+            return
         if reply.gate is not None and not reply.gate.wait(TIMEOUT):
             self.server.errors.append("The test did not release the model response")
             self.send_error(504)
             return
         if reply.status != 200:
-            error = {"message": "parity model failure", "type": "server_error", "code": "parity_500"}
-            self._send(reply.status, "application/json", json.dumps({"error": error}).encode())
+            error = {"message": "parity model failure", "type": "server_error", "code": reply.error_code}
+            self._send(reply.status, "application/json", json.dumps({"error": error}).encode(), reply.retry_after)
             return
         try:
             self._complete(body, index, reply)
@@ -113,15 +130,17 @@ class ModelHandler(BaseHTTPRequestHandler):
             if reply.gate is None:
                 raise
 
-    def _send(self, status: int, content_type: str, data: bytes) -> None:
+    def _send(self, status: int, content_type: str, data: bytes, retry_after: str | None = None) -> None:
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
+        if retry_after is not None:
+            self.send_header("Retry-After", retry_after)
         self.end_headers()
         self.wfile.write(data)
 
     def _complete(self, request: Json, index: int, reply: Reply) -> None:
-        finish = "tool_calls" if reply.calls else "stop"
+        finish = reply.finish_reason or ("tool_calls" if reply.calls else "stop")
         envelope = {"id": f"parity-{index}", "created": 1, "model": MODEL}
         message = {"role": "assistant", "content": reply.text}
         if reply.calls:
@@ -309,6 +328,12 @@ def _serve_parent() -> None:
     supervisors: list[HostSupervisor] = []
     start = HostSupervisor.start
     handle_host_frame = HostSupervisor._handle_host_frame
+    send_frame = HostSupervisor._send_frame
+
+    def observe_send_frame(self: HostSupervisor, frame: Json) -> None:
+        send_frame(self, frame)
+        if frame["type"] == "model.retry.ack":
+            transport.write({"parity_host_frame": {"type": frame["type"], "retry_delay_s": frame["retry_delay_s"]}})
 
     def observe_start(self: HostSupervisor) -> None:
         if self not in supervisors:
@@ -328,6 +353,7 @@ def _serve_parent() -> None:
         patches.enter_context(patch.object(server, "_new_session_key", return_value=SESSION_KEY))
         patches.enter_context(patch.object(HostSupervisor, "start", observe_start))
         patches.enter_context(patch.object(HostSupervisor, "_handle_host_frame", observe_host_frame))
+        patches.enter_context(patch.object(HostSupervisor, "_send_frame", observe_send_frame))
         if os.getenv("PARITY_READ_TARGET") and os.getenv("PARITY_RUST") == "1":
             from tui_gateway.rust_host_supervisor import RustHostSupervisor
 

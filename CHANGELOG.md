@@ -29,6 +29,11 @@ Hermes Agent upstream changes are not listed here; see the upstream history on t
 - Dashboard turns use Python when the native host cannot prove it was built from the parent's revision. Git-free builds can supply the revision through `LINA_TURN_HOST_BUILD_SHA`.
 - Rust dashboard turns now record token counts, estimated cost and billing route in the served profile's session database using the Python pricing path.
 - Rust dashboard turns retry empty and reasoning-only replies, preserve completed tool results during recovery, and show the Python no-reply notice when retries are exhausted.
+- A compute-host frame handler failure settles the affected turn and lets the dashboard process later frames. The dashboard retires a child that cannot settle the interrupted turn.
+- Rust dashboard turns report truncated answers as retryable failures and show provider refusals without making an empty-response retry.
+- Rust dashboard turns honor the configured model retry budget and count empty recovery attempts toward the iteration limit.
+- Reading the same file in a later Rust dashboard turn returns its contents again.
+- A goal set or resumed while a Rust dashboard turn is running receives the completed reply for evaluation.
 
 ### Changed
 
