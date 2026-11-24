@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::error::Error;
 use std::io::ErrorKind;
 use std::sync::Mutex;
@@ -12,6 +12,7 @@ use serde_json::{Map, Value, json};
 use crate::protocol::TurnPlan;
 
 pub(crate) const CONTENT_FILTER: &str = "content_filter";
+const MAX_ERROR_BYTES: usize = 16 * 1024;
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum ModelError {
@@ -28,7 +29,10 @@ pub(crate) enum ModelError {
     #[error("model connection interrupted")]
     TransientTransport,
     #[error("model endpoint returned HTTP {status}")]
-    Http { status: u16, detail: HttpDetail },
+    Http {
+        status: u16,
+        detail: Box<HttpDetail>,
+    },
     #[error("invalid model response")]
     InvalidResponse,
     #[error("model stream ended before completion")]
@@ -37,7 +41,7 @@ pub(crate) enum ModelError {
     OutputClosed,
 }
 
-#[derive(Debug, Default, Serialize)]
+#[derive(Debug, Serialize)]
 pub(crate) struct HttpDetail {
     message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -46,6 +50,12 @@ pub(crate) struct HttpDetail {
     retry_after: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     body_retry_after: Option<String>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    body_reset: BTreeMap<&'static str, Value>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    error_reset: BTreeMap<&'static str, Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rate_limit_reset: Option<String>,
 }
 
 impl ModelError {
@@ -246,26 +256,20 @@ impl ModelClient {
         let mut response = request.send().await.map_err(ModelError::from_transport)?;
         if !response.status().is_success() {
             let status = response.status().as_u16();
-            let retry_after = response
-                .headers()
-                .get(reqwest::header::RETRY_AFTER)
-                .and_then(|value| value.to_str().ok())
-                .filter(|value| value.len() <= 128)
-                .map(str::to_owned);
-            let detail = if (400..600).contains(&status) {
-                tokio::time::timeout(Duration::from_secs(1), error_summary(&mut response, secret))
+            let body = if (400..600).contains(&status) {
+                tokio::time::timeout(Duration::from_secs(1), error_body(&mut response))
                     .await
                     .ok()
                     .flatten()
             } else {
                 None
             };
-            let mut detail = detail.unwrap_or_default();
-            if detail.message.is_empty() {
-                detail.message = format!("HTTP {status}");
-            }
-            detail.retry_after = retry_after;
-            return Err(ModelError::Http { status, detail });
+            return Err(provider_error(
+                status,
+                body.as_ref().unwrap_or(&Value::Null),
+                response.headers(),
+                secret,
+            ));
         }
         Ok(response)
     }
@@ -312,34 +316,76 @@ async fn summary_text(response: Response) -> Result<Option<String>, ModelError> 
     Ok((!text.is_empty()).then(|| text.to_owned()))
 }
 
-async fn error_summary(response: &mut Response, secret: Option<&str>) -> Option<HttpDetail> {
-    const MAX_BODY_BYTES: usize = 16 * 1024;
+async fn error_body(response: &mut Response) -> Option<Value> {
     let mut body = Vec::new();
     while let Some(chunk) = response.chunk().await.ok()? {
-        if chunk.len() > MAX_BODY_BYTES - body.len() {
+        if chunk.len() > MAX_ERROR_BYTES - body.len() {
             return None;
         }
         body.extend_from_slice(&chunk);
     }
-    let data: Value = serde_json::from_slice(&body).ok()?;
-    let error = data.get("error").filter(|v| v.is_object()).unwrap_or(&data);
+    serde_json::from_slice(&body).ok()
+}
+
+fn bounded_scalar(value: &Value) -> Option<&Value> {
+    match value {
+        Value::Number(_) => Some(value),
+        Value::String(s) if s.len() <= 128 && !s.chars().any(char::is_control) => Some(value),
+        _ => None,
+    }
+}
+
+fn reset_fields(payload: &Value) -> BTreeMap<&'static str, Value> {
+    ["resets_in_seconds", "resets_at", "reset_at", "retry_after"]
+        .into_iter()
+        .filter_map(|name| Some((name, bounded_scalar(payload.get(name)?)?.clone())))
+        .collect()
+}
+
+fn provider_error(
+    status: u16,
+    data: &Value,
+    headers: &HeaderMap,
+    secret: Option<&str>,
+) -> ModelError {
+    let error = data.get("error").filter(|v| v.is_object()).unwrap_or(data);
     let message = error["message"].as_str().unwrap_or_default();
     let clean: String = message.chars().filter(|ch| !ch.is_control()).collect();
     let clean = match secret {
         Some(secret) => clean.replace(secret, "[REDACTED]"),
         None => clean,
     };
-    let short_field = |value: &Value| match value {
-        Value::String(s) if s.len() <= 128 && !s.chars().any(char::is_control) => Some(s.clone()),
-        Value::Number(n) => Some(n.to_string()).filter(|s| s.len() <= 128),
-        _ => None,
+    let short_field = |value: &Value| {
+        bounded_scalar(value).map(|value| match value.as_str() {
+            Some(s) => s.to_owned(),
+            None => value.to_string(),
+        })
     };
-    Some(HttpDetail {
-        message: clean.trim().chars().take(512).collect(),
-        code: short_field(&error["code"]),
+    let header = |name: &str| {
+        headers
+            .get(name)?
+            .to_str()
+            .ok()
+            .filter(|s| s.len() <= 128 && !s.chars().any(char::is_control))
+            .map(str::to_owned)
+    };
+    let detail = HttpDetail {
+        message: if clean.trim().is_empty() {
+            format!("HTTP {status}")
+        } else {
+            clean.trim().chars().take(512).collect()
+        },
+        code: short_field(&error["code"]).or_else(|| short_field(&error["type"])),
         body_retry_after: short_field(&error["retry_after"]),
-        retry_after: None,
-    })
+        retry_after: header("retry-after"),
+        body_reset: reset_fields(data),
+        error_reset: reset_fields(&data["error"]),
+        rate_limit_reset: header("x-ratelimit-reset"),
+    };
+    ModelError::Http {
+        status,
+        detail: Box::new(detail),
+    }
 }
 
 fn affinity_headers(value: &Value) -> Result<HeaderMap, ModelError> {
@@ -668,7 +714,7 @@ struct Completion {
     choices: Vec<Choice>,
     usage: Option<Usage>,
     service_tier: Option<String>,
-    error: Option<Value>,
+    error: Option<serde::de::IgnoredAny>,
 }
 
 #[derive(Deserialize)]

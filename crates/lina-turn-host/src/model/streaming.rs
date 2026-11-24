@@ -2,10 +2,13 @@ use std::collections::BTreeMap;
 
 use eventsource_stream::Eventsource as _;
 use futures_util::StreamExt as _;
-use reqwest::Response;
-use serde_json::json;
+use reqwest::{Response, header::HeaderMap};
+use serde_json::{Value, json};
 
-use super::{CONTENT_FILTER, Completion, Message, ModelError, ToolCall, ToolDelta, Usage};
+use super::{
+    CONTENT_FILTER, Completion, MAX_ERROR_BYTES, Message, ModelError, ToolCall, ToolDelta, Usage,
+    provider_error,
+};
 use crate::protocol::Events;
 
 const THINK_TAGS: [(&str, &str); 9] = [
@@ -141,12 +144,40 @@ pub(crate) fn inline_reasoning(text: &str) -> Option<String> {
     (!parts.is_empty()).then(|| parts.join("\n\n"))
 }
 
+fn stream_error(data: &str, headers: &HeaderMap, secret: Option<&str>) -> ModelError {
+    // Inspect the bounded error envelope only on the failure path. Normal token frames
+    // deserialize directly into Completion without allocating a JSON object tree.
+    if data.len() > MAX_ERROR_BYTES {
+        return ModelError::InvalidResponse;
+    }
+    let Ok(body) = serde_json::from_str::<Value>(data) else {
+        return ModelError::InvalidResponse;
+    };
+    let error = &body["error"];
+    // Same numeric statuses as agent.error_classifier._status_code_from_body.
+    let status = [
+        &error["status_code"],
+        &error["status"],
+        &error["http_status"],
+        &error["code"],
+        &body["code"],
+    ]
+    .into_iter()
+    .filter_map(Value::as_u64)
+    .find(|n| (400..600).contains(n));
+    match status.and_then(|n| u16::try_from(n).ok()) {
+        Some(status) => provider_error(status, &body, headers, secret),
+        None => ModelError::InvalidResponse,
+    }
+}
+
 pub(crate) async fn stream(
-    response: Response,
+    mut response: Response,
     events: &mut Events<'_>,
     partial: &mut String,
     secret: Option<&str>,
 ) -> Result<(Message, Option<Usage>), ModelError> {
+    let headers = std::mem::take(response.headers_mut());
     let mut stream = response.bytes_stream().eventsource();
     let mut calls = BTreeMap::new();
     let mut usage = None;
@@ -157,11 +188,19 @@ pub(crate) async fn stream(
     let mut scrubber = VisibleText::default();
     let mut reasoning = StreamText::default();
     let mut reasoning_details = Vec::new();
-    let mut received_chunk = false;
-
     while let Some(event) = stream.next().await {
+        // Role and usage frames carry no model output. Buffered text, reasoning,
+        // refusal, tool fragments and a finish reason all preclude replay.
+        let replay_safe = || {
+            !finished
+                && text.is_empty()
+                && reasoning.is_empty()
+                && refusal.is_empty()
+                && reasoning_details.is_empty()
+                && calls.is_empty()
+        };
         let event = event.map_err(|error| match error {
-            eventsource_stream::EventStreamError::Transport(err) if !received_chunk => {
+            eventsource_stream::EventStreamError::Transport(err) if replay_safe() => {
                 ModelError::from_transport(err)
             }
             eventsource_stream::EventStreamError::Transport(_) => ModelError::IncompleteStream,
@@ -173,10 +212,12 @@ pub(crate) async fn stream(
         }
         let chunk: Completion =
             serde_json::from_str(&event.data).map_err(|_| ModelError::InvalidResponse)?;
-        // Includes buffered reasoning, tool fragments, and refusal text before any public delta.
-        received_chunk = true;
         if chunk.error.is_some() {
-            return Err(ModelError::InvalidResponse);
+            return Err(if replay_safe() {
+                stream_error(&event.data, &headers, secret)
+            } else {
+                ModelError::IncompleteStream
+            });
         }
         if let Some(sample) = chunk.usage {
             usage = Some(sample);
@@ -287,6 +328,10 @@ struct StreamText {
 }
 
 impl StreamText {
+    fn is_empty(&self) -> bool {
+        self.full.is_empty() && self.pending.is_empty()
+    }
+
     fn push(&mut self, text: &str, secret: Option<&str>) -> String {
         let Some(secret) = secret else {
             self.full.push_str(text);

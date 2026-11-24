@@ -65,6 +65,9 @@ class Reply:
     disconnect: Literal["before_headers", "during_stream"] | None = None
     retry_after: str | None = None
     error_code: str = "parity_500"
+    error_body: Json | None = None
+    reset_header: str | None = None
+    sse_frames: tuple[Json, ...] = ()
 
 
 class ModelServer(ThreadingHTTPServer):
@@ -106,12 +109,12 @@ class ModelHandler(BaseHTTPRequestHandler):
         if reply.disconnect == "before_headers":
             self.close_connection = True
             return
-        if reply.disconnect == "during_stream":
+        if reply.sse_frames or reply.disconnect == "during_stream":
             chunk = {"choices": [{"index": 0, "delta": {"content": reply.text}}]}
-            data = f"data: {json.dumps(chunk)}\n\n".encode()
+            data = "".join(f"data: {json.dumps(frame)}\n\n" for frame in reply.sse_frames or (chunk,)).encode()
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
-            self.send_header("Content-Length", str(len(data) + 100))
+            self.send_header("Content-Length", str(len(data) + (100 if reply.disconnect else 0)))
             self.end_headers()
             self.wfile.write(data)
             self.close_connection = True
@@ -122,7 +125,8 @@ class ModelHandler(BaseHTTPRequestHandler):
             return
         if reply.status != 200:
             error = {"message": "parity model failure", "type": "server_error", "code": reply.error_code}
-            self._send(reply.status, "application/json", json.dumps({"error": error}).encode(), reply.retry_after)
+            data = json.dumps(reply.error_body or {"error": error}).encode()
+            self._send(reply.status, "application/json", data, reply.retry_after, reply.reset_header)
             return
         try:
             self._complete(body, index, reply)
@@ -130,12 +134,15 @@ class ModelHandler(BaseHTTPRequestHandler):
             if reply.gate is None:
                 raise
 
-    def _send(self, status: int, content_type: str, data: bytes, retry_after: str | None = None) -> None:
+    def _send(self, status: int, content_type: str, data: bytes, retry_after: str | None = None,
+              reset_header: str | None = None) -> None:
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
         if retry_after is not None:
             self.send_header("Retry-After", retry_after)
+        if reset_header is not None:
+            self.send_header("X-RateLimit-Reset", reset_header)
         self.end_headers()
         self.wfile.write(data)
 

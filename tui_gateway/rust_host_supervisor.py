@@ -29,8 +29,12 @@ _TURN_EVENTS = frozenset({
 class _ProviderFailure(Exception):
     def __init__(self, failure: ProviderError, detail: str):
         self.status_code = failure.status_code
-        self.body = {"error": {"message": detail, "code": failure.code, "retry_after": failure.body_retry_after}}
-        self.response = SimpleNamespace(headers={"Retry-After": failure.retry_after})
+        self.body = {**failure.body_reset, "error": {
+            "message": detail, "code": failure.code, "retry_after": failure.body_retry_after, **failure.error_reset,
+        }}
+        self.response = SimpleNamespace(headers={
+            "Retry-After": failure.retry_after, "x-ratelimit-reset": failure.rate_limit_reset,
+        })
         super().__init__(detail)
 
 

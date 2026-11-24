@@ -551,21 +551,23 @@ impl TurnContext<'_> {
         };
         let model = &self.worker.model;
         let secret = self.worker.secret.as_deref();
-        let request_messages = transcript.request_messages();
         let response = model
-            .request(self.endpoint, plan, &request_messages, mode, secret)
+            .request(
+                self.endpoint,
+                plan,
+                &transcript.request_messages(),
+                mode,
+                secret,
+            )
             .await;
-        let (answer, usage) = match response {
+        let completion = match response {
             Ok(response) if plan.stream => {
-                model::stream(
-                    response,
-                    events,
-                    &mut transcript.partial,
-                    self.worker.secret.as_deref(),
-                )
-                .await?
+                model::stream(response, events, &mut transcript.partial, secret).await
             }
-            Ok(response) => model::nonstream(response).await?,
+            Ok(response) => model::nonstream(response).await,
+            Err(error) => Err(error),
+        };
+        match completion {
             Err(original @ ModelError::Http { status, .. })
                 if plan.stream && (500..600).contains(&status) && model.claim_stream_probe() =>
             {
@@ -573,7 +575,7 @@ impl TurnContext<'_> {
                     .request(
                         self.endpoint,
                         plan,
-                        &request_messages,
+                        &transcript.request_messages(),
                         RequestMode::Probe,
                         secret,
                     )
@@ -591,19 +593,18 @@ impl TurnContext<'_> {
                             }
                             transcript.partial.push_str(&visible);
                         }
-                        (answer, usage)
+                        Ok((answer, usage))
                     }
                     Err(probe @ ModelError::Http { status, .. })
                         if (400..500).contains(&status) =>
                     {
-                        return Err(probe);
+                        Err(probe)
                     }
-                    Err(_) => return Err(original),
+                    Err(_) => Err(original),
                 }
             }
-            Err(error) => return Err(error),
-        };
-        Ok((answer, usage))
+            result => result,
+        }
     }
 
     async fn run_model(

@@ -1013,6 +1013,31 @@
           "title": "Attempts",
           "type": "integer"
         },
+        "body_reset": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "pattern": "^[^\\x00-\\x1f\\x7f]*$",
+                "type": "string"
+              },
+              {
+                "type": "number"
+              }
+            ]
+          },
+          "maxProperties": 4,
+          "propertyNames": {
+            "enum": [
+              "resets_in_seconds",
+              "resets_at",
+              "reset_at",
+              "retry_after"
+            ]
+          },
+          "title": "Body Reset",
+          "type": "object"
+        },
         "body_retry_after": {
           "anyOf": [
             {
@@ -1039,11 +1064,49 @@
           "default": null,
           "title": "Code"
         },
+        "error_reset": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "pattern": "^[^\\x00-\\x1f\\x7f]*$",
+                "type": "string"
+              },
+              {
+                "type": "number"
+              }
+            ]
+          },
+          "maxProperties": 4,
+          "propertyNames": {
+            "enum": [
+              "resets_in_seconds",
+              "resets_at",
+              "reset_at",
+              "retry_after"
+            ]
+          },
+          "title": "Error Reset",
+          "type": "object"
+        },
         "message": {
           "maxLength": 512,
           "pattern": "^[^\\x00-\\x1f\\x7f]*$",
           "title": "Message",
           "type": "string"
+        },
+        "rate_limit_reset": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rate Limit Reset"
         },
         "retry_after": {
           "anyOf": [

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Annotated, Literal
 from urllib.parse import parse_qsl, urlsplit
 
-from pydantic import BaseModel, ConfigDict, Discriminator, Field, JsonValue, Tag, field_validator
+from pydantic import BaseModel, ConfigDict, Discriminator, Field, FiniteFloat, JsonValue, Tag, field_validator
 from pydantic_core import PydanticCustomError
 
 from .common import TranscriptMessage
@@ -190,6 +190,12 @@ class IterationSummaryAck(_PolicyFrame):
     body: JsonObject | None = Field(default=None, repr=False)
 
 
+QuotaResetFields = dict[
+    Literal["resets_in_seconds", "resets_at", "reset_at", "retry_after"],
+    Annotated[str, Field(max_length=128, pattern=r"^[^\x00-\x1f\x7f]*$")] | FiniteFloat,
+]
+
+
 class ProviderError(_WireModel):
     """Private, bounded fields used for retry policy and terminal presentation."""
 
@@ -198,6 +204,9 @@ class ProviderError(_WireModel):
     code: str | None = Field(default=None, max_length=128, repr=False)
     retry_after: str | None = Field(default=None, max_length=128, repr=False)
     body_retry_after: str | None = Field(default=None, max_length=128, repr=False)
+    body_reset: QuotaResetFields = Field(default_factory=dict, max_length=4, repr=False)
+    error_reset: QuotaResetFields = Field(default_factory=dict, max_length=4, repr=False)
+    rate_limit_reset: str | None = Field(default=None, max_length=128, repr=False)
     attempts: int = Field(ge=1, description="Logical attempts, excluding diagnostic HTTP probes.")
 
 
