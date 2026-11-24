@@ -177,6 +177,8 @@ def _config(home: Path, workspace: Path, url: str, impl: str, *, max_turns: int 
         "memory": {"memory_enabled": False, "user_profile_enabled": False},
         "auxiliary": {"title_generation": {"enabled": False}},
         "display": {"tool_progress": "all"},
+        # Keep the banner update check off the network; its result would race session.info.
+        "updates": {"check": False},
     }
     if max_turns is not None:
         settings["agent"]["max_turns"] = max_turns
