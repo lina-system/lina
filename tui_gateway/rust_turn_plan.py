@@ -44,6 +44,10 @@ class RustTurnConflict(RuntimeError):
 def _agent_for_turn(sid: str, session: dict, frame: dict):
     from tui_gateway import server
 
+    # Ordinary Rust settlement does not drive the owning profile's goal judge
+    # and continuation dispatcher.
+    if session.get("session_key") and server._active_goal_manager(session) is not None:
+        return None
     if session.get("agent") is None:
         server._start_agent_build(sid, session)
         if server._wait_agent_for_prompt(session, str(frame.get("request_id") or ""), sid):
@@ -60,6 +64,7 @@ def _compatible_agent(agent) -> bool:
     from openai import OpenAI
     from agent.context_compressor import ContextCompressor
     from hermes_cli.plugins import has_hook, has_middleware
+    from hermes_cli.plugins_dispatch import stream_held
     from run_agent import AIAgent
 
     return (
@@ -74,6 +79,10 @@ def _compatible_agent(agent) -> bool:
         and not getattr(agent, "prefill_messages", None)
         and not getattr(agent, "_memory_manager", None)
         and type(agent.context_compressor) is ContextCompressor
+        # Python captures held transforms before streaming and rewrites before
+        # persistence. The Rust host can publish deltas and commit raw output.
+        and not stream_held()
+        and not has_hook("transform_llm_output")
         and not any(has_hook(name) for name in ("pre_llm_call", "pre_api_request", "pre_tool_call"))
         and not any(has_middleware(name) for name in (
             "llm_request", "llm_execution", "tool_request", "tool_execution"))

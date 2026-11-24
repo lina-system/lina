@@ -19,6 +19,7 @@ Hermes Agent upstream changes are not listed here; see the upstream history on t
 - A card's `now` line no longer names who does the work: the writer's prompt says to write what is being done, not who, and `check_now` refuses a line whose first word is an agent's name (bare or with any particle) or that carries one with a subject or dative particle (the agents' ids and display names of the work record and of the Hermes board's old record, less the owner's), so a stored line like that is asked again once. `리나` before `웹`, `서버`, `코어` or `허브` is the product and passes.
 
 - Dashboard session teardown handles a missing history lock when reclaiming gateway and desktop sessions.
+- Dashboard turns with an output transform or active goal use Python so the profile can rewrite replies, withhold streamed text, and continue its goal.
 
 ### Changed
 
