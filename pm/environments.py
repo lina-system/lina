@@ -15,6 +15,7 @@ import shlex
 from pathlib import Path
 
 from hermes_constants import get_default_hermes_root, project_venv_dir
+from pm.payload_manifest import payload_manifest
 
 
 def install_key(project_root: Path) -> str:
@@ -147,33 +148,6 @@ def record_activation_inputs(stamps: Path, mtimes: dict[str, int], project_root:
         os.utime(stamp, ns=(mtime, mtime))
 
 
-def _payload_manifest(root: Path) -> tuple[dict, Path] | None:
-    """The manifest of the sealed payload whose tree is the resolved *root*, with the
-    payload directory its entries resolve from, or ``None``.
-
-    The manifest sits at the payload root: beside the tree, or on the tree itself when
-    the tree IS the payload root (the Docker image's in-place ``repo: "."`` assembly).
-    Every install asks, so a ``manifest.json`` that some other tool left beside a
-    checkout, or one with a mistyped field, must read as "not a payload", never as an
-    error. Readers then take each field with ``.get`` and treat an absent one as unset.
-    """
-    for path in (root.parent / "manifest.json", root / "manifest.json"):
-        try:
-            manifest = json.loads(path.read_text(encoding="utf-8-sig"))
-        except (OSError, ValueError):
-            continue
-        if not isinstance(manifest, dict) or not isinstance(manifest.get("repo"), str):
-            continue
-        runtime = manifest.get("runtime", {})
-        commands = runtime.get("commands", {}) if isinstance(runtime, dict) else None
-        well_formed = (isinstance(commands, dict)
-                       and isinstance(commands.get("hermes", ""), str)
-                       and all(isinstance(manifest.get(key, ""), str) for key in ("venv", "store")))
-        if well_formed and (path.parent / manifest["repo"]).resolve() == root:
-            return manifest, path.parent
-    return None
-
-
 def _payload_path(payload_root: Path, relative: str, what: str) -> Path:
     """*relative* resolved from the payload root its manifest was read from; a manifest
     may not point outside it."""
@@ -186,14 +160,14 @@ def _payload_path(payload_root: Path, relative: str, what: str) -> Path:
 def payload_venv(project_root: Path) -> Path | None:
     """The environment a sealed payload ships with its tree, or ``None``."""
     root = Path(project_root).resolve()
-    payload = _payload_manifest(root)
-    venv = payload[0].get("venv") if payload else None
+    payload = payload_manifest(root)
+    venv = payload[0].venv if payload else None
     return _payload_path(payload[1], venv, "environment") if venv else None
 
 
 def _payload_hermes_command(root: Path) -> Path | None:
-    payload = _payload_manifest(root)
-    command = payload[0].get("runtime", {}).get("commands", {}).get("hermes") if payload else None
+    payload = payload_manifest(root)
+    command = payload[0].hermes_command if payload else None
     return _payload_path(payload[1], command, "launcher") if command else None
 
 
@@ -231,8 +205,8 @@ def store_root(project_root: Path, *, honor_runtime_override: bool = True) -> Pa
         if override:
             return Path(override).resolve()
     root = Path(project_root).resolve()
-    payload = _payload_manifest(root)
-    store = payload[0].get("store") if payload else None
+    payload = payload_manifest(root)
+    store = payload[0].store if payload else None
     if store:
         return _payload_path(payload[1], store, "store")
     from pm.paths import install_stamp_path
@@ -350,13 +324,11 @@ def project_python(project_root: Path) -> Path:
 
 def _payload_store_python(root: Path) -> Path | None:
     """A sealed payload's own interpreter when a venv must not be entered through its own."""
-    payload = _payload_manifest(root)
-    if payload is None or str(payload[0].get("target", "")).endswith("-bionic"):
+    payload = payload_manifest(root)
+    if payload is None or payload[0].target.endswith("-bionic"):
         return None  # Termux payloads launch through their venv interpreter by design.
-    relative = payload[0].get("runtime", {}).get("storePython")
-    if not isinstance(relative, str) or not relative:
-        return None
-    return _payload_path(payload[1], relative, "interpreter")
+    relative = payload[0].store_python
+    return _payload_path(payload[1], relative, "interpreter") if relative else None
 
 
 def venv_command(project_root: Path, venv: Path, options: tuple[str, ...] | list[str] = ()) -> list[str]:
@@ -519,7 +491,7 @@ def activate_dependencies(project_root: Path) -> None:
     # A sealed payload's Windows venv redirectors never go on PATH: a shipped venv's still
     # names the build machine, and a generation built since names PM's writable Python copy,
     # which cannot start the package's executables (see venv_command).
-    if not (os.name == "nt" and _payload_manifest(project_root.resolve()) is not None):
+    if not (os.name == "nt" and payload_manifest(project_root.resolve()) is not None):
         directories.append(venv_bin_dir(environment))
     prefix = [str(path) for path in directories if path.is_dir()]
     if prefix:
