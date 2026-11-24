@@ -10,6 +10,8 @@ threads (parallel subagents, execute_code RPC handlers) can block concurrently
 call time.
 """
 
+import hashlib
+import json
 import logging
 import threading
 import time
@@ -20,6 +22,38 @@ from tools import approval_context as _ctx
 from tools.approval_human_wait import activity_heartbeat, human_wait_window
 
 logger = logging.getLogger("tools.approval")
+
+
+def gateway_wait_data(
+    *, command: str, description: str, pattern_key: str, pattern_keys: list[str],
+    smart_denied: bool, shell_command: bool, plugin_input: tuple[str, dict] | None,
+) -> dict:
+    """Bind raw content to an approval while queueing only a safe display copy."""
+    from agent.redact import redact_approval_display
+
+    content_version = None
+    if shell_command:
+        content_version = hashlib.sha256(command.encode("utf-8")).hexdigest()
+    if plugin_input is not None:
+        name, args = plugin_input
+        canonical = json.dumps(
+            {"name": name, "args": args},
+            sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False,
+        )
+        content_version = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    force_redaction = content_version is not None
+    data = {
+        "command": redact_approval_display(command, force=force_redaction),
+        "description": redact_approval_display(description, force=force_redaction),
+        "pattern_key": pattern_key, "pattern_keys": pattern_keys,
+        # Smart DENY overrides cover one operation.
+        "allow_permanent": not smart_denied, "allow_session": not smart_denied,
+    }
+    if smart_denied:
+        data["smart_denied"] = True
+    if content_version is not None:
+        data["content_version"] = content_version
+    return data
 
 
 class _ApprovalEntry:
