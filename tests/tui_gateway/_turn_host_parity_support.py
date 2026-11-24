@@ -250,7 +250,7 @@ def gateway(
         "XDG_DATA_HOME": str(home / "data"),
         "XDG_STATE_HOME": str(home / "state"),
         "TMPDIR": str(home),
-        "TZ": "UTC",
+        "TZ": os.environ.get("TZ", "UTC"),
         "LANG": "C.UTF-8",
         "PYTHONDONTWRITEBYTECODE": "1",
         "HERMES_TUI_TOOLSETS": "file_read",
