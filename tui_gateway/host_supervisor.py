@@ -48,6 +48,12 @@ _LATE_CONTROL_MAX = 64
 _CONTROL_REPLY_TYPES = frozenset({
     "control.ack", "control.error", "respond.ack", "respond.error", "interrupt.ack",
     "reload_mcp.ack", "shutdown.ack"})
+_TURN_TERMINAL_TYPES = frozenset({"turn.end", "turn.error"})
+_TURN_REQUEST_TYPES = frozenset({"context.preflight", "iteration.summary", "model.retry", "read_file.policy"})
+_TURN_FRAME_FAILURE = "Could not process a compute host turn frame"
+# Give the child time to settle an interrupted turn, including a native read
+# that was authorized before interrupt and is still awaiting the parent.
+_FRAME_INTERRUPT_GRACE_SECS = 6.0
 
 
 def append_log_record(path: str | Path, record: str) -> None:
@@ -107,8 +113,8 @@ def _call_logged(cb: Callable[[dict], None], frame: dict, failure: str) -> None:
     """Invoke a host-frame callback; a raising callback is logged, never propagated."""
     try:
         cb(frame)
-    except Exception:
-        logger.exception(failure)
+    except Exception as exc:  # health: allow BLE001 -- isolate arbitrary parent callbacks at the frame boundary
+        logger.error("%s (%s)", failure, type(exc).__name__)
 
 
 def _pid_alive(pid: int) -> bool:
@@ -178,6 +184,7 @@ class HostSupervisor:
         self._hello_event = threading.Event()
         self._hello: dict[str, Any] = {}
         self._closing = False
+        self._retiring_for_frame_failure = False
         self._stopped_respawning = False
         self._restart_times: list[float] = []
         self._pending_turns: dict[str, tuple[str, Callable[[dict], None] | None]] = {}
@@ -199,12 +206,15 @@ class HostSupervisor:
 
     def is_running(self) -> bool:
         proc = self._proc
-        return proc is not None and proc.poll() is None and not self._stopped_respawning
+        return (proc is not None and proc.poll() is None
+                and not self._retiring_for_frame_failure and not self._stopped_respawning)
 
     def start(self) -> None:
         with self._lock:
             if self.is_running():
                 return
+            if self._proc is not None and not self._closing:
+                raise RuntimeError("compute host is exiting")
             self._closing = False
             self.reconcile_startup_orphan()
             self._spawn_locked(reason="startup")
@@ -348,7 +358,7 @@ class HostSupervisor:
             with contextlib.suppress(queue.Full):
                 q.put_nowait(frame)
         elif late is not None:
-            _call_logged(late[1], frame, f"compute host late control ack handler failed (request_id={request_id})")
+            _call_logged(late[1], frame, "compute host late control ack handler failed")
 
     def _child_environment(self) -> dict[str, str]:
         env = {**hermes_subprocess_env(inherit_credentials=True), **os.environ, **(self.env or {})}
@@ -365,6 +375,7 @@ class HostSupervisor:
             raise NativeHostBuildError("compute host parent build SHA is unknown")
         self._hello_event.clear()
         self._hello = {}
+        self._retiring_for_frame_failure = False
         env = self._child_environment()
         env["HERMES_COMPUTE_HOST_HEARTBEAT_SECS"] = str(self.heartbeat_secs)
         # Lossy UTF-8 decode: a locale-mismatched byte must not raise inside the drain threads.
@@ -426,21 +437,139 @@ class HostSupervisor:
     def _send_frame(self, frame: dict[str, Any]) -> None:
         with self._lock:
             proc = self._proc
-            if proc is None or proc.poll() is not None or proc.stdin is None:
+            if (proc is None or proc.poll() is not None or proc.stdin is None
+                    or self._retiring_for_frame_failure):
                 raise RuntimeError("compute host is not running")
             proc.stdin.write(json.dumps(frame, separators=(",", ":"), ensure_ascii=False) + "\n")
             proc.stdin.flush()
 
     def _drain_stdout(self, proc: subprocess.Popen[str]) -> None:
         assert proc.stdout is not None
+        active: dict[str, str] = {}
+        failed: dict[str, threading.Event] = {}
         for raw in proc.stdout:
+            if self._proc is not proc:
+                break
+            if self._retiring_for_frame_failure:
+                continue
             try:
                 frame = json.loads(raw)
             except json.JSONDecodeError:
-                logger.warning("compute host emitted invalid json: %r", raw[:200])
+                logger.warning("compute host emitted invalid JSON")
                 continue
-            if isinstance(frame, dict):
+            if not isinstance(frame, dict):
+                continue
+            self._dispatch_stdout_frame(proc, frame, active, failed)
+
+    def _dispatch_stdout_frame(
+        self, proc: subprocess.Popen[str], frame: dict, active: dict[str, str],
+        failed: dict[str, threading.Event],
+    ) -> None:
+        kind = frame.get("type")
+        if not isinstance(kind, str):
+            return
+        sid, request_id = frame.get("sid"), frame.get("request_id")
+        terminal = kind in _TURN_TERMINAL_TYPES
+        if terminal or kind == "turn.started":
+            if not isinstance(sid, str) or not isinstance(request_id, str):
+                return
+            with self._lock:
+                pending = self._pending_turns.get(request_id)
+                if self._proc is not proc or pending is None or pending[0] != sid:
+                    return
+            if kind == "turn.started":
+                active[sid] = request_id
+            elif active.get(sid) == request_id:
+                del active[sid]
+        else:
+            route = self._progress_route(frame, active)
+            if route is None:
+                return
+            sid, request_id = route
+
+        try:
+            if request_id not in failed:
                 self._handle_host_frame(frame)
+                return
+            if not terminal:
+                return
+        except Exception as exc:  # health: allow BLE001 -- one dispatch fault must not stop the pipe reader
+            logger.error("compute host frame handler failed (%s)", type(exc).__name__)
+            if not terminal:
+                if request_id is not None:
+                    settled = failed[request_id] = threading.Event()
+                    self._interrupt_failed_turn(proc, sid, request_id, settled)
+                return
+
+        if (settled := failed.pop(request_id, None)) is not None:
+            settled.set()
+        # Preserve the Python host's durable history pointer after it finishes
+        # writing. The Rust host settles its admitted row through this callback.
+        failure = {
+            key: frame[key] for key in ("session_key", "history_version", "message_count", "session_info")
+            if key in frame
+        }
+        failure.update(type="turn.error", sid=sid, request_id=request_id,
+                       reason="frame_handler_failed", message=_TURN_FRAME_FAILURE)
+        self._complete_host_turn(request_id, failure)
+
+    def _progress_route(self, frame: dict, active: dict[str, str]) -> tuple[str, str | None] | None:
+        """Return the active turn route, or no route for stale turn traffic."""
+        kind = frame["type"]
+        sid = frame.get("sid")
+        turn_id = frame.get("turn_id")
+        if kind == "rpc":
+            message = frame.get("message")
+            params = message.get("params") if isinstance(message, dict) else None
+            if isinstance(params, dict):
+                sid = params.get("session_id") or sid
+                if message.get("method") == "compute_host.activity":
+                    turn_id = params.get("turn_id")
+        elif kind not in _TURN_REQUEST_TYPES:
+            return "", None
+        if not isinstance(sid, str):
+            return "", None
+        request_id = active.get(sid)
+        if turn_id is not None and turn_id != request_id:
+            return None
+        return sid, request_id
+
+    def _interrupt_failed_turn(
+        self, proc: subprocess.Popen[str], sid: str, request_id: str, settled: threading.Event,
+    ) -> None:
+        from agent.memory_provider import spawn_context_thread
+
+        # Keep the turn pending until the child is done, so a queued prompt cannot
+        # start while the failed turn is still running or writing history.
+        with self._lock:
+            if self._proc is not proc or request_id not in self._pending_turns:
+                return
+            grace = _FRAME_INTERRUPT_GRACE_SECS
+            try:
+                self._send_frame({"type": "interrupt", "sid": sid, "turn_id": request_id,
+                                  "request_id": f"interrupt-{request_id}"})
+            except (OSError, RuntimeError, ValueError) as exc:
+                logger.error("compute host frame recovery could not send interrupt (%s)", type(exc).__name__)
+                grace = 0.0
+        spawn_context_thread(
+            self._retire_if_turn_unsettled, args=(proc, request_id, settled, grace),
+            name="compute-host-frame-recovery",
+        ).start()
+
+    def _retire_if_turn_unsettled(
+        self, proc: subprocess.Popen[str], request_id: str, settled: threading.Event, grace: float,
+    ) -> None:
+        if settled.wait(grace):
+            return
+        with self._lock:
+            if (settled.is_set() or self._proc is not proc or self._closing
+                    or self._retiring_for_frame_failure or request_id not in self._pending_turns):
+                return
+            self._retiring_for_frame_failure = True
+        # The exit watcher settles all remaining turns only after the child can
+        # no longer write. In particular, a retry cannot race a retiring writer.
+        logger.error("compute host retired after a turn frame handler failure")
+        self._terminate_process(proc)
 
     def _drain_stderr(self, proc: subprocess.Popen[str]) -> None:
         assert proc.stderr is not None
@@ -459,34 +588,41 @@ class HostSupervisor:
             self._hello_event.set()
         elif ftype == "hb":
             self._last_progress_counter = int(frame.get("progress_counter") or self._last_progress_counter)
-            logger.debug("compute host heartbeat: %s", frame)
+            logger.debug("compute host heartbeat")
         elif ftype == "rpc":
             if isinstance(frame.get("message"), dict):
                 self.rpc_sink(frame["message"])
-        elif ftype in ("turn.end", "turn.error"):
-            with self._lock:
-                pending = self._pending_turns.pop(request_id, None)
-            if pending is not None and pending[1] is not None:
-                _call_logged(pending[1], frame, "compute host turn completion callback failed")
+        elif ftype in _TURN_TERMINAL_TYPES:
+            self._complete_host_turn(request_id, frame)
+
+    def _complete_host_turn(self, request_id: str, frame: dict) -> None:
+        with self._lock:
+            if self._retiring_for_frame_failure:
+                return
+            pending = self._pending_turns.pop(request_id, None)
+        if pending is not None and pending[1] is not None:
+            _call_logged(pending[1], frame, "compute host turn completion callback failed")
 
     def _wait_for_exit(self, proc: subprocess.Popen[str]) -> None:
         code = proc.wait()
-        if self._closing:
-            return
-        with self._lock:
-            if self._proc is not proc:
-                return
-            self._proc = None
-        self._remove_registry()
-        try:
-            self._fail_pending_turns(reason="crash", message=f"compute host exited with code {code}")
-        finally:
+        if self._fail_pending_turns(reason="crash", message=f"compute host exited with code {code}", exited=proc):
             self._maybe_respawn_after_crash()
 
-    def _fail_pending_turns(self, *, reason: str, message: str) -> None:
+    def _fail_pending_turns(
+        self, *, reason: str, message: str, exited: subprocess.Popen[str] | None = None,
+    ) -> bool:
         with self._lock:
+            if exited is not None:
+                if self._closing or self._proc is not exited:
+                    return False
+                self._proc = None
+                self._retiring_for_frame_failure = False
+                self._remove_registry()
             pending = self._pending_turns
             self._pending_turns = {}
+            # A replacement child must have its own table before callbacks run.
+            late = self._late_control_handlers
+            self._late_control_handlers = {}
         failure = {"reason": reason, "message": message}
         for request_id, (sid, cb) in pending.items():
             _call_logged(
@@ -498,12 +634,10 @@ class HostSupervisor:
                 _call_logged(cb, frame, "compute host error callback failed")
         # A crashed host never emits the late acks timed-out control waiters still expect; fail
         # them too so the client's "still running" notice can't hang.
-        with self._lock:
-            late = self._late_control_handlers
-            self._late_control_handlers = {}
         for request_id, (_registered_at, handler) in late.items():
             frame = {"type": "control.error", "request_id": request_id, **failure}
             _call_logged(handler, frame, "compute host late control error handler failed")
+        return True
 
     def _maybe_respawn_after_crash(self) -> None:
         now = time.monotonic()
