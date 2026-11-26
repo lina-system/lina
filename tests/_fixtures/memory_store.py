@@ -142,15 +142,16 @@ def _run_or_explain(argv: list[str], root: Path) -> None:
         raise ClusterUnavailable(f"{Path(argv[0]).name} failed ({done.returncode}): {detail[-600:]}")
 
 
-def _start_local() -> Optional[Cluster]:
+def _start_local(reasons: list[str]) -> Optional[Cluster]:
     initdb, pg_ctl, pg_config = _which("initdb"), _which("pg_ctl"), _which("pg_config")
     if not (initdb and pg_ctl and pg_config):
         return None
     sharedir = subprocess.run([pg_config, "--sharedir"], capture_output=True, text=True, timeout=30, check=False).stdout.strip()
     control = Path(sharedir) / "extension" / "vector.control"
     if not control.is_file():
-        raise ClusterUnavailable(f"Postgres at {initdb} is missing pgvector: {pg_config} --sharedir "
-                                 f"reported {sharedir!r}, but {control} was not found")
+        reasons.append(f"Postgres at {initdb} is missing pgvector: {pg_config} --sharedir "
+                       f"reported {sharedir!r}, but {control} was not found")
+        return None
     root = Path(tempfile.mkdtemp(prefix="lina-test-pg-"))
     data = root / "data"
     _run_or_explain([initdb, "-D", str(data), "-U", "lina", "--auth=trust", "-E", "UTF8", "--no-instructions"], root)
@@ -201,10 +202,12 @@ def start_cluster() -> Cluster:
     if given:
         cluster = Cluster(given, CLUSTER_ENV)
     else:
-        cluster = _start_local() or _start_docker()
+        reasons: list[str] = []
+        cluster = _start_local(reasons) or _start_docker()
         if cluster is None:
-            raise ClusterUnavailable("no Postgres for the memory store tests: set LINA_TEST_PG_DSN, install "
-                                     "Postgres with pgvector (initdb on PATH), or start Docker")
+            message = ("no Postgres for the memory store tests: set LINA_TEST_PG_DSN, install "
+                       "Postgres with pgvector (initdb on PATH), or start Docker")
+            raise ClusterUnavailable(". ".join([message, *reasons]))
     try:
         bootstrap(cluster.dsn)
     except BaseException:
