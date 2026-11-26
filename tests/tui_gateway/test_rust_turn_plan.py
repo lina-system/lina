@@ -158,6 +158,26 @@ def test_plan_uses_actual_prompt_tools_parameters_and_scoped_auth(turn):
     assert frame["terminal_backend"] == "local"
 
 
+@pytest.mark.parametrize("hook_name", [
+    "transform_tool_result", "post_tool_call", "post_llm_call", "post_api_request",
+    "on_stream_start", "on_stream_delta", "on_stream_end",
+])
+def test_registered_turn_hook_keeps_turn_on_python(turn, hook_name):
+    from hermes_cli.plugins import PluginContext, PluginManifest, get_plugin_manager
+    from tui_gateway import server
+
+    session, frame, _ = turn
+    with server._session_profile_runtime_scope(session):
+        manager = get_plugin_manager()
+        manager.discover_and_load()
+        plugin = PluginContext(PluginManifest(name="turn-observer"), manager)
+        hook = plugin.register_hook(hook_name, lambda **kwargs: None)
+    try:
+        assert prepare_rust_turn("runtime", session, frame) is None
+    finally:
+        hook.dispose()
+
+
 def test_missing_procfs_stays_on_python_before_agent_preparation(turn, monkeypatch):
     from tui_gateway import server
 

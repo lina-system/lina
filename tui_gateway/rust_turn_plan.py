@@ -40,6 +40,13 @@ ConversationHeader = Literal[
 _AFFINITY_HEADERS: tuple[ConversationHeader, ...] = (
     "session-id", "x-opencode-session", "x-litellm-session-id", "x-grok-conv-id",
 )
+# These hooks run inside the Python turn loop. Rust cannot deliver them.
+_PYTHON_TURN_HOOKS = (
+    "pre_llm_call", "post_llm_call", "transform_llm_output",
+    "pre_api_request", "post_api_request",
+    "pre_tool_call", "post_tool_call", "transform_tool_result",
+    "on_stream_start", "on_stream_delta", "on_stream_end",
+)
 
 
 class RustTurnConflict(RuntimeError):
@@ -90,8 +97,7 @@ def _compatible_agent(agent) -> bool:
         # Python captures held transforms before streaming and rewrites before
         # persistence. The Rust host can publish deltas and commit raw output.
         and not stream_held()
-        and not has_hook("transform_llm_output")
-        and not any(has_hook(name) for name in ("pre_llm_call", "pre_api_request", "pre_tool_call"))
+        and not any(has_hook(name) for name in _PYTHON_TURN_HOOKS)
         and not any(has_middleware(name) for name in (
             "llm_request", "llm_execution", "tool_request", "tool_execution"))
     )
