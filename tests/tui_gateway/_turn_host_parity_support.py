@@ -361,19 +361,19 @@ def _serve_parent() -> None:
         patches.enter_context(patch.object(HostSupervisor, "start", observe_start))
         patches.enter_context(patch.object(HostSupervisor, "_handle_host_frame", observe_host_frame))
         patches.enter_context(patch.object(HostSupervisor, "_send_frame", observe_send_frame))
-        if os.getenv("PARITY_READ_TARGET") and os.getenv("PARITY_RUST") == "1":
+        if os.getenv("PARITY_CONNECT_LOG"):
             from tui_gateway.rust_host_supervisor import RustHostSupervisor
 
             child_environment = RustHostSupervisor._child_environment
             gate_env = {name: os.environ[name] for name in (
-                "LD_PRELOAD", "PARITY_READ_TARGET", "PARITY_READ_ENTERED", "PARITY_READ_RELEASE",
-            )}
+                "LD_PRELOAD", "PARITY_CONNECT_LOG", "PARITY_READ_TARGET", "PARITY_READ_ENTERED", "PARITY_READ_RELEASE",
+            ) if name in os.environ}
 
-            def include_read_gate(self: RustHostSupervisor) -> dict[str, str]:
+            def include_parity_guards(self: RustHostSupervisor) -> dict[str, str]:
                 return {**child_environment(self), **gate_env}
 
             patches.enter_context(
-                patch.object(RustHostSupervisor, "_child_environment", include_read_gate),
+                patch.object(RustHostSupervisor, "_child_environment", include_parity_guards),
             )
         try:
             for line in sys.stdin:

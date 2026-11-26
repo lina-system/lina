@@ -21,6 +21,7 @@ from pydantic import JsonValue
 from agent.context_compressor import MAX_ITERATIONS_SUMMARY_REQUEST
 from hermes_state_store import StoreUnavailableError
 from tests._fixtures.memory_store import APP_PASSWORD, PROCESS_STORE
+from tests.tui_gateway._parity_network_guard import build_network_guard, guarded_arm
 from tests.tui_gateway._turn_host_parity_support import (
     MODEL,
     MODEL_KEY,
@@ -128,6 +129,11 @@ def parity_root() -> Iterator[Path]:
     root.mkdir(parents=True, exist_ok=True)
     with TemporaryDirectory(dir=root, prefix="turn-host-") as path:
         yield Path(path)
+
+
+@pytest.fixture(scope="module")
+def network_guard(parity_root: Path) -> Path:
+    return build_network_guard(parity_root)
 
 
 def _tool_call(number: int, path: str, name: str = "read_file", **pagination: int) -> Json:
@@ -276,15 +282,19 @@ def _drive_turns(
 
 def _observe(
     case: str, impl: str, root: Path, binary: Path, model: ModelServer, gate: ReadGate | None,
-    store_dsn: str,
+    store_dsn: str, network_guard: Path,
 ) -> Observations:
     home = root / "home"
     workspace = root / "workspace"
     home.mkdir()
     try:
+        # A cold catalog triggers a models.dev refresh during session.create.
+        (home / "models_dev_cache.json").write_text(json.dumps({"parity": {"models": {}}}), encoding="utf-8")
         _config(home, workspace, model.url, impl, max_turns=TURN_CAP if case == "turn_cap" else None)
-        env = {**gate.env, "PARITY_RUST": "1" if impl == "rust" else "0"} if gate else {}
-        with gateway(home, binary, env, store_dsn, (MODEL_KEY, APP_PASSWORD)) as client:
+        with (
+            guarded_arm(network_guard, home, gate.env if gate else {}) as env,
+            gateway(home, binary, env, store_dsn, (MODEL_KEY, APP_PASSWORD)) as client,
+        ):
             if gate is None:
                 _drive_turns(client, case, model, home, workspace, impl, binary, gate)
             else:
@@ -489,7 +499,7 @@ def _validate_reads(case: str, requests: list[Json]) -> None:
 
 @pytest.mark.parametrize("case", CASES)
 def test_compute_hosts_have_identical_turn_observations(
-    case: str, parity_root: Path, monkeypatch: pytest.MonkeyPatch,
+    case: str, parity_root: Path, network_guard: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(registry, "STRICT", True)
     binary = Path(shutil.which("lina-turn-host") or ROOT / "target/debug/lina-turn-host").resolve()
@@ -523,7 +533,7 @@ def test_compute_hosts_have_identical_turn_observations(
     with loopback_model(_script(case, workspace)) as model:
         for impl in ("python", "rust"):
             try:
-                runs[impl] = _observe(case, impl, root, binary, model, gate, store_dsn)
+                runs[impl] = _observe(case, impl, root, binary, model, gate, store_dsn, network_guard)
             except (AssertionError, StoreUnavailableError) as exc:
                 failures.append(f"{impl} observation failed: {exc}")
                 PROCESS_STORE.refused_this_test = False
