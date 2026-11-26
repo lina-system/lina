@@ -108,6 +108,7 @@ impl ModelError {
 pub(crate) struct ModelClient {
     http: Client,
     key: Option<HeaderValue>,
+    authenticated_proxy: bool,
     last_stream_probe: Mutex<Option<Instant>>,
 }
 
@@ -128,10 +129,23 @@ impl ModelClient {
                 Ok::<_, ModelError>(header)
             })
             .transpose()?;
-        let http = Client::builder()
+        let mut builder = Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .retry(reqwest::retry::never())
-            .no_proxy()
+            .no_proxy();
+        let mut authenticated_proxy = false;
+        if let Some(raw) = std::env::var_os("LINA_TURN_MODEL_PROXY") {
+            let mut url = Url::parse(raw.to_str().ok_or(ModelError::Transport)?)
+                .map_err(|_| ModelError::Transport)?;
+            authenticated_proxy = !url.username().is_empty() || url.password().is_some();
+            // httpx sends the destination name to the SOCKS5 server for resolution.
+            if url.scheme() == "socks5" {
+                url.set_scheme("socks5h")
+                    .map_err(|_| ModelError::Transport)?;
+            }
+            builder = builder.proxy(reqwest::Proxy::all(url).map_err(|_| ModelError::Transport)?);
+        }
+        let http = builder
             .connect_timeout(Duration::from_secs(10))
             .read_timeout(Duration::from_secs(120))
             .pool_idle_timeout(Duration::from_secs(90))
@@ -140,6 +154,7 @@ impl ModelClient {
         Ok(Self {
             http,
             key,
+            authenticated_proxy,
             last_stream_probe: Mutex::new(None),
         })
     }
@@ -256,6 +271,16 @@ impl ModelClient {
         let mut response = request.send().await.map_err(ModelError::from_transport)?;
         if !response.status().is_success() {
             let status = response.status().as_u16();
+            // For plaintext HTTP the proxy itself can supply any status, headers and body,
+            // including an echo of Proxy-Authorization. Only the status is safe to forward.
+            if self.authenticated_proxy && (endpoint.scheme() == "http" || status == 407) {
+                return Err(provider_error(
+                    status,
+                    &Value::Null,
+                    &HeaderMap::new(),
+                    secret,
+                ));
+            }
             let body = if (400..600).contains(&status) {
                 tokio::time::timeout(Duration::from_secs(1), error_body(&mut response))
                     .await

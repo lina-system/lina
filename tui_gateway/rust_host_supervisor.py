@@ -67,6 +67,8 @@ class RustHostSupervisor(HostSupervisor):
             respawn_max=cfg["compute_host_respawn_max"],
             autostart=False,
         )
+        if proxy := credentials.get("LINA_TURN_MODEL_PROXY"):
+            self.env["LINA_TURN_MODEL_PROXY"] = proxy
 
     def _child_environment(self):
         # The default supervisor boots a Python agent which hydrates its own profile.
@@ -518,6 +520,7 @@ def _select_python_host(session, cfg):
 
 def select_host(sid, session, cfg, frame, leases):
     """Prepare the eligible session before launching a child with its provider credential."""
+    from agent.process_bootstrap import _get_proxy_for_base_url
     from hermes_constants import get_hermes_home
     from tui_gateway import server
     from tui_gateway.rust_turn_plan import prepare_rust_turn, rust_turn_lease
@@ -552,6 +555,8 @@ def select_host(sid, session, cfg, frame, leases):
     with session["history_lock"]:
         host = session.get("_rust_host")
     plan, env = prepared
+    if proxy := _get_proxy_for_base_url(plan["base_url"]):
+        env = {**env, "LINA_TURN_MODEL_PROXY": proxy}
     home = str(session.get("profile_home") or get_hermes_home())
     if host and (host.endpoint != plan["base_url"] or host.env != {"HERMES_HOME": home, **env}):
         server._retire_session_rust_host(session)
