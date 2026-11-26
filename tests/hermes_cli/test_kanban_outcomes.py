@@ -390,6 +390,10 @@ def test_learning_stops_pair_next_resume_and_union_duration(kanban_home):
                 kb._append_event(conn, tid, kind, payload, run_id=run_id)
                 conn.execute("UPDATE task_events SET created_at=? WHERE id=last_insert_rowid()", (at,))
         kb.block_task(conn, tid, reason="waiting", expected_run_id=run_id)
+        conn.execute(
+            "UPDATE task_events SET created_at = ? WHERE task_id = ? AND kind = 'blocked'",
+            (now, tid),
+        )
         row = ko.compute_outcome(conn, tid, now=now + 50)
     assert [(s["seconds"], s["resumed_by"]) for s in row["stops"][:2]] == [(100, "rumi"), (90, "rumi")]
     assert row["stops"][0]["reason"] == "timeout"
