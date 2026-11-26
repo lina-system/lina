@@ -147,8 +147,10 @@ def _start_local() -> Optional[Cluster]:
     if not (initdb and pg_ctl and pg_config):
         return None
     sharedir = subprocess.run([pg_config, "--sharedir"], capture_output=True, text=True, timeout=30, check=False).stdout.strip()
-    if not (Path(sharedir) / "extension" / "vector.control").exists():
-        return None
+    control = Path(sharedir) / "extension" / "vector.control"
+    if not control.is_file():
+        raise ClusterUnavailable(f"Postgres at {initdb} is missing pgvector: {pg_config} --sharedir "
+                                 f"reported {sharedir!r}, but {control} was not found")
     root = Path(tempfile.mkdtemp(prefix="lina-test-pg-"))
     data = root / "data"
     _run_or_explain([initdb, "-D", str(data), "-U", "lina", "--auth=trust", "-E", "UTF8", "--no-instructions"], root)
