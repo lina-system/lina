@@ -21,6 +21,8 @@ from __future__ import annotations
 import re
 import subprocess
 import tempfile
+from contextlib import ExitStack
+from functools import partial
 from pathlib import Path
 from typing import Protocol
 
@@ -191,6 +193,7 @@ def _change(clone: Path, onto: str) -> tuple[int, int]:
 
 
 def follow_up(gh, hub, job: dict, pull: dict, branch: str, issue: int, *, base: Path | None, source, out,
+              waited: bool = False,
               **merge_options) -> int:
     """The worker's new commits onto the open pull request *pull* of *branch*, pushed as a fast-forward."""
     from hermes_cli.worker import settings as worker_settings
@@ -198,24 +201,34 @@ def follow_up(gh, hub, job: dict, pull: dict, branch: str, issue: int, *, base: 
     url = str(worker_settings.setting("repo_url", worker=hub.worker)).format(repo=repo)
     with tempfile.TemporaryDirectory(prefix="lina-land-") as tmp:
         clone = Path(tmp) / "repo"
+        out(f"{branch}: cloning {repo}")
         git("clone", "-q", "-b", onto_branch, url, str(clone), cwd=Path(tmp))
         onto, pushed = f"origin/{onto_branch}", git("rev-parse", f"refs/remotes/origin/{branch}", cwd=clone)
+        out(f"{branch}: fetching worker branch")
         worker_head = (source or WorkerBranchSource(base)).fetch(job, clone, branch)
         git("switch", "-q", branch, cwd=clone)
         if not git("merge-base", pushed, branch, cwd=clone, check=False):
             raise LandError(f"{branch} has no common ancestor with pull request #{number}")
         count = int(git("rev-list", "--count", f"{pushed}..{branch}", cwd=clone))
         if count == 0:
+            if waited:
+                out(f"{branch}: pull request #{number} already open and contains the worker commits")
+                return 0
             raise LandError(f"{branch} has no commits over pull request #{number}")
         if not _contains(clone, pushed, branch):
+            out(f"{branch}: merging pull request #{number} head")
             _merge_pull_head(clone, pushed, number, base)  # the result then descends from it: a fast-forward
+        out(f"{branch}: checking commit authors")
         check_authors(clone, onto, branch, base)
         merged = not _contains(clone, onto, branch)
         if merged:
+            out(f"{branch}: merging {onto_branch}")
             merge_base_into(clone, onto, base)
+        out(f"{branch}: running landing checks")
         check_result(clone, onto, worker_head, base)
         out(f"{branch}: {count} worker commit(s) added to #{number} as they are"
             + (f", {onto_branch} merged in" if merged else ""))
+        out(f"{branch}: pushing to {repo}")
         git("push", "-q", "origin", f"{branch}:refs/heads/{branch}", cwd=clone)
         change = _change(clone, onto)
     if said := size.note(gh, repo, issue, number, change):
@@ -224,7 +237,8 @@ def follow_up(gh, hub, job: dict, pull: dict, branch: str, issue: int, *, base: 
                                                                     **merge_options)
 
 
-def land(gh, branch: str, task: str, title: str, issue: int, *, base: Path | None = None, source=None, out=print,
+def land(gh, branch: str, task: str, title: str, issue: int, *, base: Path | None = None, source=None,
+         out=partial(print, flush=True),
          **merge_options) -> int:
     from hermes_cli.worker import settings as worker_settings
     from hermes_cli.worker.hub import Hub
@@ -233,34 +247,54 @@ def land(gh, branch: str, task: str, title: str, issue: int, *, base: Path | Non
     repo = job.get("repo")
     if not repo or "/" not in repo:
         raise LandError(f"{task} has no owner/name repository")
-    pulls = gh.json(f"repos/{repo}/pulls?state=all&head={repo.split('/')[0]}:{branch}")
-    if pulls:
-        pull = _existing_pull(pulls, branch)
-        if pull.get("merged_at"):
-            return report_only(gh, repo, int(pull["number"]), base=base, out=out)
-        return follow_up(gh, hub, job, pull, branch, issue, base=base, source=source, out=out,
-                         **merge_options)
+    key = "work-land-" + hub.store.key_name(f"{repo.lower()}\0{branch}")
+    with ExitStack() as locks:
+        acquired = locks.enter_context(hub.store.lock(key, wait=False))
+        if not acquired:
+            out(f"{branch}: waiting for the current landing of {repo}")
+            locks.enter_context(hub.store.lock(key))
+        pulls = gh.json(f"repos/{repo}/pulls?state=all&head={repo.split('/')[0]}:{branch}")
+        if pulls:
+            pull = _existing_pull(pulls, branch)
+            if pull.get("merged_at"):
+                return report_only(gh, repo, int(pull["number"]), base=base, out=out)
+            return follow_up(gh, hub, job, pull, branch, issue, base=base, source=source, out=out,
+                             waited=not acquired, **merge_options)
+        return _open_pull(gh, hub, job, branch, title, issue, base=base, source=source, out=out, **merge_options)
+
+
+def _open_pull(gh, hub, job: dict, branch: str, title: str, issue: int, *, base: Path | None, source, out,
+               **merge_options) -> int:
+    from hermes_cli.worker import settings as worker_settings
+    repo = job["repo"]
     onto_branch = job.get("base_branch") or settings.base_branch(base)
     url = str(worker_settings.setting("repo_url", worker=hub.worker)).format(repo=repo)
     with tempfile.TemporaryDirectory(prefix="lina-land-") as tmp:
         clone = Path(tmp) / "repo"
+        out(f"{branch}: cloning {repo}")
         git("clone", "-q", "-b", onto_branch, url, str(clone), cwd=Path(tmp))
         onto = f"origin/{onto_branch}"
+        out(f"{branch}: fetching worker branch")
         worker_head = (source or WorkerBranchSource(base)).fetch(job, clone, branch)
         git("switch", "-q", branch, cwd=clone)
         count = int(git("rev-list", "--count", f"{onto}..{branch}", cwd=clone))
         if count == 0:
             raise LandError(f"{branch} has no commits over {onto_branch}")
+        out(f"{branch}: checking commit authors")
         check_authors(clone, onto, branch, base)
+        out(f"{branch}: merging {onto_branch}")
         merge_base_into(clone, onto, base)
+        out(f"{branch}: running landing checks")
         check_result(clone, onto, worker_head, base)
         out(f"{branch}: {count} worker commit(s) kept as they are, {onto_branch} merged in")
+        out(f"{branch}: pushing to {repo}")
         git("push", "-q", "origin", f"{branch}:refs/heads/{branch}", cwd=clone)
         change = _change(clone, onto)
         log = "\n".join(f"- {s}" for s in git("log", "--no-merges", "--format=%s", f"{onto}..HEAD",
                                                 cwd=clone).splitlines())
         body_file = Path(tmp) / "body.md"
         body_file.write_text(_body(hub.store.out_dir(job), log, issue), encoding="utf-8")
+        out(f"{branch}: creating pull request")
         gh.run(["pr", "create", "-R", repo, "--base", onto_branch, "--head", branch, "--title", title,
                 "--body-file", str(body_file)])
     number = int(gh.json(f"repos/{repo}/pulls?state=open&head={repo.split('/')[0]}:{branch}")[0]["number"])
