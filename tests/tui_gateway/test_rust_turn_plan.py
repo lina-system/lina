@@ -158,6 +158,76 @@ def test_plan_uses_actual_prompt_tools_parameters_and_scoped_auth(turn):
     assert frame["terminal_backend"] == "local"
 
 
+@pytest.mark.parametrize("hook_name", [
+    "transform_tool_result", "post_tool_call", "post_llm_call", "post_api_request",
+    "on_stream_start", "on_stream_delta", "on_stream_end",
+])
+def test_registered_turn_hook_keeps_turn_on_python(turn, hook_name):
+    from hermes_cli.plugins import PluginContext, PluginManifest, get_plugin_manager
+    from tui_gateway import server
+
+    session, frame, _ = turn
+    with server._session_profile_runtime_scope(session):
+        manager = get_plugin_manager()
+        manager.discover_and_load()
+        plugin = PluginContext(PluginManifest(name="turn-observer"), manager)
+        hook = plugin.register_hook(hook_name, lambda **kwargs: None)
+    try:
+        assert prepare_rust_turn("runtime", session, frame) is None
+    finally:
+        hook.dispose()
+
+
+def test_registered_hook_routing_partitions_valid_hooks(turn):
+    from hermes_cli.plugins import VALID_HOOKS, PluginContext, PluginManifest, get_plugin_manager
+    from tui_gateway import server
+    from tui_gateway.rust_turn_plan import _PYTHON_TURN_HOOKS
+
+    EXPECTED_PYTHON_ONLY = {
+        "pre_llm_call", "post_llm_call", "transform_llm_output",
+        "pre_api_request", "post_api_request",
+        "pre_tool_call", "post_tool_call", "transform_tool_result",
+        "on_stream_start", "on_stream_delta", "on_stream_end",
+    }
+    # Python can fire these hooks, but their registration still admits a Rust plan (#919).
+    EXPECTED_RUST_GAPS = {
+        "on_interim_message", "api_request_error", "pre_verify", "on_session_start", "on_session_end",
+    }
+    EXPECTED_RUST_PLAN = {
+        "agent_loop_stopped", "gateway_platform_event",
+        "kanban_task_blocked", "kanban_task_claimed", "kanban_task_completed",
+        "on_human_input_request", "on_human_input_resolved",
+        "on_kanban_dispatch_tick", "on_kanban_task_updated",
+        "on_kanban_worker_exited", "on_kanban_worker_spawned", "on_kanban_worker_stale_claim",
+        "on_room_member_activity",
+        "on_session_delete", "on_session_finalize", "on_session_reset", "on_skill_lifecycle",
+        "post_approval_response", "post_auxiliary_call", "post_compaction", "post_gateway_admission",
+        "pre_approval_request", "pre_auxiliary_call", "pre_command", "pre_gateway_dispatch", "pre_transcription",
+        "subagent_start", "subagent_stop", "transform_api_error_classification", "transform_terminal_output",
+    }
+    assert not (EXPECTED_PYTHON_ONLY & EXPECTED_RUST_GAPS)
+    assert not (EXPECTED_PYTHON_ONLY & EXPECTED_RUST_PLAN)
+    assert not (EXPECTED_RUST_GAPS & EXPECTED_RUST_PLAN)
+    assert EXPECTED_PYTHON_ONLY | EXPECTED_RUST_GAPS | EXPECTED_RUST_PLAN == VALID_HOOKS
+    assert EXPECTED_PYTHON_ONLY == frozenset(_PYTHON_TURN_HOOKS)
+
+    session, frame, _ = turn
+    with server._session_profile_runtime_scope(session):
+        manager = get_plugin_manager()
+        manager.discover_and_load()
+        plugin = PluginContext(PluginManifest(name="turn-observer"), manager)
+        for hook_name in sorted(VALID_HOOKS):
+            hook = plugin.register_hook(hook_name, lambda **kwargs: None)
+            try:
+                result = prepare_rust_turn("runtime", session.copy(), copy.deepcopy(frame))
+                if hook_name in EXPECTED_PYTHON_ONLY:
+                    assert result is None, hook_name
+                else:
+                    assert result is not None, hook_name
+            finally:
+                hook.dispose()
+
+
 def test_missing_procfs_stays_on_python_before_agent_preparation(turn, monkeypatch):
     from tui_gateway import server
 
