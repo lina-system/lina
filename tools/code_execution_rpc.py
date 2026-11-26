@@ -25,9 +25,21 @@ logger = logging.getLogger("tools.code_execution_tool")
 _TERMINAL_BLOCKED_PARAMS = {"background", "pty", "notify", "notify_on_complete", "watch_patterns", "heartbeat", "persist_on_release"}
 
 
+def standalone_tool_hook_ids() -> dict[str, str]:
+    """Identify one dispatch when there is no provider-issued tool-call ID."""
+    from agent.message_metadata import mint_uid
+    from agent.relay_runtime import current_turn
+
+    turn = current_turn()
+    turn_id = turn.turn_id if turn and not turn.closed and not turn.lease.released else ""
+    return {"tool_call_id": mint_uid(), "turn_id": turn_id or mint_uid()}
+
+
 def _default_dispatch(task_id):
     from model_tools import handle_function_call
-    return lambda tool_name, tool_args: handle_function_call(tool_name, tool_args, task_id=task_id)
+    return lambda tool_name, tool_args: handle_function_call(
+        tool_name, tool_args, task_id=task_id, **standalone_tool_hook_ids()
+    )
 
 
 def _private_dirs_cmd(root: str, *subdirs: str) -> str:
