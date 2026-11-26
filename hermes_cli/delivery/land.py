@@ -18,11 +18,12 @@ the issue per pull request and one line here, and never stops the landing.
 """
 from __future__ import annotations
 
+import os
 import re
 import subprocess
+import sys
 import tempfile
 from contextlib import ExitStack
-from functools import partial
 from pathlib import Path
 from typing import Protocol
 
@@ -213,7 +214,7 @@ def follow_up(gh, hub, job: dict, pull: dict, branch: str, issue: int, *, base: 
         if count == 0:
             if waited:
                 out(f"{branch}: pull request #{number} already open and contains the worker commits")
-                return 0
+                return _gates(gh, repo, number, base=base, out=out, **merge_options)
             raise LandError(f"{branch} has no commits over pull request #{number}")
         if not _contains(clone, pushed, branch):
             out(f"{branch}: merging pull request #{number} head")
@@ -233,12 +234,39 @@ def follow_up(gh, hub, job: dict, pull: dict, branch: str, issue: int, *, base: 
         change = _change(clone, onto)
     if said := size.note(gh, repo, issue, number, change):
         out(said)
+    return _gates(gh, repo, number, base=base, out=out, **merge_options)
+
+
+def _gates(gh, repo: str, number: int, *, base: Path | None, out, **merge_options) -> int:
+    """The exit code for an open pull request: its gates (``report_only``), or its merge with ``work.land_merge``."""
     return (merge_pr if settings.land_merge(base) else report_only)(gh, repo, number, base=base, out=out,
                                                                     **merge_options)
 
 
+def _progress(line: str) -> None:
+    """One progress line, written at once. A reader that has gone away (a cut SSH session) must not end the
+    landing: the exit code stays the landing's."""
+    try:
+        print(line, flush=True)
+    except (OSError, ValueError):
+        _discard_stdout()
+
+
+def _discard_stdout() -> None:
+    """Point stdout at the null device. The line that failed stays in its buffer, and flushing it at exit would
+    otherwise replace the landing's exit code with 120."""
+    try:
+        null = os.open(os.devnull, os.O_WRONLY)
+        try:
+            os.dup2(null, sys.stdout.fileno())
+        finally:
+            os.close(null)
+    except (OSError, ValueError, AttributeError):
+        pass
+
+
 def land(gh, branch: str, task: str, title: str, issue: int, *, base: Path | None = None, source=None,
-         out=partial(print, flush=True),
+         out=_progress,
          **merge_options) -> int:
     from hermes_cli.worker import settings as worker_settings
     from hermes_cli.worker.hub import Hub
@@ -301,5 +329,4 @@ def _open_pull(gh, hub, job: dict, branch: str, title: str, issue: int, *, base:
     out(f"{branch}: opened #{number}")
     if said := size.note(gh, repo, issue, number, change):
         out(said)
-    return (merge_pr if settings.land_merge(base) else report_only)(gh, repo, number, base=base, out=out,
-                                                                    **merge_options)
+    return _gates(gh, repo, number, base=base, out=out, **merge_options)

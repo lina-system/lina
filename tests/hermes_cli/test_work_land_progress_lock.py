@@ -118,5 +118,5 @@ def test_same_branch_reuses_pr_while_an_independent_branch_completes(run_land):
         result = second.result(timeout=10)
     created = [args[args.index("--head") + 1] for args in gh.commands if args[:2] == ["pr", "create"]]
     assert created.count(branch) == created.count(other) == 1, created
-    assert result == 0
+    assert result == 75, "the caller that waited ends with the same gates as the one that opened the pull request"
     assert any("#31" in line and "already open" in line for line in waiting_lines)
