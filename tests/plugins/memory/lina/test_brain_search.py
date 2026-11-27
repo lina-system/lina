@@ -87,6 +87,36 @@ def _call(agent, tool: str, **args) -> dict:
     return json.loads(agent._memory_manager.handle_tool_call(tool, args, session_id=SESSION))
 
 
+@pytest.mark.parametrize("route", ["sequential", "parallel"])
+def test_search_receives_the_session_that_dispatched_the_call(agent, monkeypatch, route):
+    from agent.inline_tool_executors import InlineToolContext, resolve_invoke_tool_executor
+    from agent.tool_executor import _resolve_sequential_dispatch, _ToolCallRef
+    from plugins.memory.lina import search
+
+    received = []
+    store_lists = search.MemorySearch._store_lists
+
+    def record(engine, *args, **kwargs):
+        received.append(kwargs.get("session_id"))
+        return store_lists(engine, *args, **kwargs)
+
+    monkeypatch.setattr(search.MemorySearch, "_store_lists", record)
+    payload = {"kinds": ["agent"], "query": "synthetic", "session_id": "model-input"}
+    for session in ("session-a", "session-b"):
+        agent.session_id = session
+        if route == "sequential":
+            ref = _ToolCallRef("brain_search", payload, "task", "call", [])
+            dispatch = _resolve_sequential_dispatch(agent, ref, [])
+        else:
+            invoke = resolve_invoke_tool_executor(agent, "brain_search")
+        agent.session_id = "next-session"
+        _provider(agent).on_session_switch(agent.session_id)
+        result = (dispatch.execute(payload) if route == "sequential"
+                  else invoke(agent, payload, InlineToolContext("task")))
+        assert json.loads(result)["skipped"] == []
+    assert received == ["session-a", "session-b"]
+
+
 def test_hits_carry_source_and_grade_and_an_external_page_is_flagged_for_quoting(agent, wiki):
     _import_and_index(wiki, None)
 

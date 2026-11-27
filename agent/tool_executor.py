@@ -1706,9 +1706,11 @@ def _resolve_sequential_dispatch(agent, ref: _ToolCallRef, messages: list) -> _S
         )
     if agent._memory_manager and agent._memory_manager.has_tool(function_name):
         # Memory-provider tools (hindsight_retain, honcho_search, ...) are not in the registry.
+        session_id = getattr(agent, "session_id", "") or ""
         return _SequentialDispatch(
             execute=lambda next_args: agent._memory_manager.handle_tool_call(
                 function_name, next_args,
+                session_id=session_id,
                 caller_gsk=(getattr(agent, "_gateway_session_key", "") or ""),
                 task_id=effective_task_id or "",
             ),

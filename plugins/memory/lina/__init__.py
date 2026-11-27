@@ -428,17 +428,18 @@ class LinaMemoryProvider(MemoryProvider):
     def prefetch(self, query: str, *, session_id: str = "") -> str:
         """Found memory for the turn, then a Korean agent's words for the turn's concepts (``korean.py``, lina#380)."""
         honcho = self._honcho.prefetch(query, session_id=session_id) if self._honcho_on else ""
-        found = self._with_external_messages(honcho, query)
+        found = self._with_external_messages(honcho, query, session_id=session_id)
         return "\n\n".join(part for part in (found, korean.turn_block(self._message_store, query)) if part)
 
     def recall_query(self, query: str, *, session_id: str = "") -> str:
         """Explicit ``memory_recall``. Honcho's prefetch is cadence-gated; this is not."""
         honcho = self._honcho.recall_query(query, session_id=session_id) if self._honcho_on else ""
-        return self._with_external_messages(honcho, query)
+        return self._with_external_messages(honcho, query, session_id=session_id)
 
-    def _with_external_messages(self, honcho: str, query: str) -> str:
+    def _with_external_messages(self, honcho: str, query: str, *, session_id: str = "") -> str:
         """Original records precede derived recall; generated Honcho text stays inside the shared data block."""
-        found = self._memory_search().search(query, sources=["agent", "messages", "honcho", "lcm"])
+        found = self._memory_search().search(query, sources=["agent", "messages", "honcho", "lcm"],
+                                             session_id=session_id)
         hits = list(found["results"])
         if honcho:
             hits.append({"ref": "Honcho generated recall (no original record reference)",
@@ -461,7 +462,8 @@ class LinaMemoryProvider(MemoryProvider):
         if tool_name == standing_rules.TOOL:
             return standing_rules.handle(self, args)
         if tool_name in search.TOOL_NAMES:
-            return search.handle_tool_call(self._memory_search(), tool_name, args)
+            return search.handle_tool_call(self._memory_search(), tool_name, args,
+                                           session_id=kwargs.get("session_id") or "")
         if tool_name == links.LINK_TOOL:
             return links.handle_tool_call(self._registry, args)
         if tool_name == terms.TERMS_TOOL:
