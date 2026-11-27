@@ -246,14 +246,20 @@ jobs:
           prune-python-cache: true
 
       - name: Install Postgres with pgvector
-        # The memory store tests (lina#12) need a Postgres with pgvector and this runner has no Docker:
-        # the test fixture starts its own cluster with initdb/pg_ctl from PATH. Homebrew's pgvector bottle
-        # exists for postgresql@17 and @18 only; no brew service is started.
+        # Homebrew's pgvector bottle is built for postgresql@18 and @19 only
+        # (0.8.7_1, 2026-11-19; @17 was dropped). No brew service is started.
         shell: bash
         run: |
           set -euo pipefail
-          brew install postgresql@17 pgvector
-          echo "$(brew --prefix postgresql@17)/bin" >> "$GITHUB_PATH"
+          brew install postgresql@18 pgvector
+          PG_BIN="$(brew --prefix postgresql@18)/bin"
+          echo "$PG_BIN" >> "$GITHUB_PATH"
+          SHAREDIR="$("$PG_BIN/pg_config" --sharedir)"
+          test -f "$SHAREDIR/extension/vector.control" || {
+            echo "::error::pgvector is not visible to $PG_BIN/pg_config (sharedir=$SHAREDIR)"
+            ls -la "$SHAREDIR/extension" || true
+            exit 1
+          }
 
       - name: Run macOS tests
         shell: bash
