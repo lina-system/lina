@@ -12,6 +12,7 @@ from collections.abc import Callable, Iterator
 from contextlib import ExitStack, closing, contextmanager
 from dataclasses import dataclass
 from fcntl import LOCK_EX, flock
+from functools import partial
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Final, Literal, TypeAlias
@@ -370,6 +371,10 @@ def _serve_parent() -> None:
         patches.enter_context(patch.object(HostSupervisor, "start", observe_start))
         patches.enter_context(patch.object(HostSupervisor, "_handle_host_frame", observe_host_frame))
         patches.enter_context(patch.object(HostSupervisor, "_send_frame", observe_send_frame))
+        if delay := os.getenv("PARITY_AGENT_PREWARM_DELAY"):
+            patches.enter_context(patch.object(
+                server, "_schedule_agent_build", partial(server._schedule_agent_build, delay=float(delay)),
+            ))
         if os.getenv("PARITY_CONNECT_LOG"):
             from tui_gateway.rust_host_supervisor import RustHostSupervisor
 

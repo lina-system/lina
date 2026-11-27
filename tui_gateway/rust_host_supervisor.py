@@ -52,6 +52,7 @@ class RustHostSupervisor(HostSupervisor):
         self._retired = False
         self._event_source = None
         self._final_event = None
+        self.pending_goal = None
         self._failure_status = None
         self._read_grant = None
         self._stdout_lock = threading.Lock()
@@ -317,6 +318,16 @@ class RustHostSupervisor(HostSupervisor):
 
                 server._agent_status_update(self.sid, "lifecycle", DiagnosticText(failure_status))
             server._emit("message.complete", self.sid, payload)
+
+    def _dispatch_stdout_frame(self, proc, frame, active, failed):
+        super()._dispatch_stdout_frame(proc, frame, active, failed)
+        pending = self.pending_goal
+        if pending is not None and frame.get("type") == "turn.end" and frame.get("request_id") == pending[0]:
+            from tui_gateway import server
+
+            self.pending_goal = None
+            _, rid, prompt, version = pending
+            server._start_rust_goal_followup(rid, self.sid, self.session, prompt, version)
 
     def _handle_host_frame(self, frame):
         kind = frame.get("type")
