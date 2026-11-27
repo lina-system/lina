@@ -335,7 +335,7 @@ def _opts(a, todos: list[dict], who: str) -> dict:
     opts = {"briefs": [str(Path(a.brief).expanduser().resolve())], "mode": a.mode, "repo": a.repo,
             "inputs": [str(Path(x).expanduser().resolve()) for x in a.input or []], "todo": todos[0]["id"],
             "topic": "+".join(r["id"] for r in todos), "host": a.host, "model": a.model, "note": a.note,
-            "runner": a.runner, "bot": who, "wait": None}
+            "runner": a.runner, "base_branch": a.base_branch, "bot": who, "wait": None}
     if a.card:
         board, card = kanban_parts(norm_link("kanban:" + a.card if not a.card.startswith("kanban:") else a.card,
                                              owner()))
