@@ -390,8 +390,8 @@ def _start_rust_goal_followup(rid, sid: str, session: dict, prompt: str, version
                     _emit("message.start", sid)
                     _run_after_agent_ready(rid, sid, session, prompt, None, None, None)
                     return
-            except Exception as exc:
-                _hook_failure("goal continuation dispatch", exc)
+            except Exception:
+                logger.exception("Failed to dispatch goal continuation for session %s", sid)
             with session["history_lock"]:
                 session["running"] = False
 
