@@ -364,7 +364,8 @@ class MemorySearch:
 
     def search(self, query: str, sources: Optional[Sequence[str]] = None, limit: Optional[int] = None, *,
                speakers: Optional[Sequence[str]] = None, person: Optional[str] = None,
-               types: Optional[Sequence[str]] = None, senders: Optional[Sequence[str]] = None) -> dict[str, Any]:
+               types: Optional[Sequence[str]] = None, senders: Optional[Sequence[str]] = None,
+               session_id: str = "") -> dict[str, Any]:
         """Hits of *sources* (default: every source) for *query*. *speakers*, *person* and *senders* keep only
         stored messages of those speakers, that person's channels or those authors; *types* only brain pages of
         those types."""
@@ -409,7 +410,8 @@ class MemorySearch:
                 store_sources.remove("messages")
                 skipped.append({"source": "messages", "reason": "External messages are off."})
         if store_sources:
-            leg(store_sources, lambda: self._store_lists(query, terms, store_sources, limit, kinds, authors))
+            leg(store_sources, lambda: self._store_lists(query, terms, store_sources, limit, kinds, authors,
+                                                         session_id=session_id))
             if not any(s["source"] in store_sources for s in skipped) and authors is None:
                 leg(["vectors"], lambda: self._vector_lists(query, terms, store_sources, limit, kinds))
         if "brain" in wanted:
@@ -491,7 +493,8 @@ class MemorySearch:
                  for item in found[:limit]]]
 
     def _store_lists(self, query: str, terms: Sequence[str], sources: Sequence[str], limit: int,
-                     kinds: Optional[Sequence[str]], authors: Optional[Sequence[str]]) -> list[list[Hit]]:
+                     kinds: Optional[Sequence[str]], authors: Optional[Sequence[str]], *,
+                     session_id: str) -> list[list[Hit]]:
         # One query per source, narrowed in the store before its limit: a better-ranked row of another source or
         # speaker never takes a place of the rows asked for.
         store = self._readers.store()
@@ -727,7 +730,8 @@ def _lists(args: dict[str, Any], *names: str) -> Optional[str]:
     return next((name for name in names if args.get(name) is not None and not isinstance(args[name], list)), None)
 
 
-def _search(search: MemorySearch, args: dict[str, Any], *, kinds_key: str, default: Sequence[str]) -> Any:
+def _search(search: MemorySearch, args: dict[str, Any], *, kinds_key: str, default: Sequence[str],
+            session_id: str) -> Any:
     from tools.registry import tool_error
     wrong = _lists(args, kinds_key, "speaker", "types", "sender")
     if wrong:
@@ -737,14 +741,14 @@ def _search(search: MemorySearch, args: dict[str, Any], *, kinds_key: str, defau
         return tool_error(f"memory_search reads {', '.join(MEMORY_SOURCES)}; use brain_search for the others")
     return search.search(str(args.get("query") or ""), sources=kinds, limit=args.get("limit"),
                          speakers=args.get("speaker"), person=args.get("person") or None,
-                         types=args.get("types"), senders=args.get("sender"))
+                         types=args.get("types"), senders=args.get("sender"), session_id=session_id)
 
 
-def _call(search: MemorySearch, name: str, args: dict[str, Any]) -> Any:
+def _call(search: MemorySearch, name: str, args: dict[str, Any], *, session_id: str) -> Any:
     if name == BRAIN_SEARCH_TOOL:
-        return _search(search, args, kinds_key="kinds", default=SOURCES)
+        return _search(search, args, kinds_key="kinds", default=SOURCES, session_id=session_id)
     if name == SEARCH_TOOL:
-        return _search(search, args, kinds_key="sources", default=MEMORY_SOURCES)
+        return _search(search, args, kinds_key="sources", default=MEMORY_SOURCES, session_id=session_id)
     if name == BRAIN_LINKS_TOOL:
         relations = args.get("relations")
         if relations is not None and not isinstance(relations, list):
@@ -756,12 +760,12 @@ def _call(search: MemorySearch, name: str, args: dict[str, Any]) -> Any:
                        pages=name == BRAIN_GET_TOOL)
 
 
-def handle_tool_call(search: MemorySearch, name: str, args: dict[str, Any]) -> str:
+def handle_tool_call(search: MemorySearch, name: str, args: dict[str, Any], *, session_id: str = "") -> str:
     """Run brain_search, brain_get, brain_links or a deprecated alias; a bad argument or ref, or a source that cannot
     open it, is a tool error."""
     from tools.registry import tool_error
     try:
-        result = _call(search, name, args)
+        result = _call(search, name, args, session_id=session_id)
         if isinstance(result, str):
             return result
     except (ValueError, TypeError, SourceOff) as exc:
