@@ -1,12 +1,12 @@
 """``lina work merge --branch <B> --task <run id> <title> <issue>``: land a worker branch.
 
-The branch is fetched from the worker's device as it is and ``dev`` is merged into it: commits are never re-applied
+The branch is fetched from the worker's device as it is and its delivery branch is merged into it: commits are never re-applied
 as patches (a subtree import once landed without its files that way). Before anything leaves this machine the
-landing stops on: no commits over ``dev``, an author or committer that is not the project's noreply address, a
+landing stops on: no commits over the delivery branch, an author or committer that is not the project's noreply address, a
 conflict outside ``CHANGELOG.md`` (both sides are kept there), a worker commit or a changed file the result lost,
 an added line matching ``work.forbidden_patterns``, or a gitleaks finding. Then the branch is pushed, the pull
-request opened, and the same gates as ``lina work merge <repo> <pr>`` decide. A task submitted with ``--base`` lands
-on that branch instead of ``dev``.
+request opened, and the same gates as ``lina work merge <repo> <pr>`` decide. A task's explicit base takes
+precedence over ``work.base`` and the repository's default branch.
 
 A branch whose pull request is open takes the worker's new commits as a follow-up on that pull request: the pull
 request's head merged into the worker branch when the branch lacks it (a conflict stops the landing), the same
@@ -282,20 +282,23 @@ def land(gh, branch: str, task: str, title: str, issue: int, *, base: Path | Non
             out(f"{branch}: waiting for the current landing of {repo}")
             locks.enter_context(hub.store.lock(key))
         pulls = gh.json(f"repos/{repo}/pulls?state=all&head={repo.split('/')[0]}:{branch}")
+        delivery = settings.delivery_branch(gh, repo, base, job.get("base_branch"))
         if pulls:
             pull = _existing_pull(pulls, branch)
             if pull.get("merged_at"):
-                return report_only(gh, repo, int(pull["number"]), base=base, out=out)
+                return report_only(gh, repo, int(pull["number"]), base=base, base_branch=delivery, out=out)
+            if pull["base"]["ref"] != delivery:
+                raise LandError(f"pull request #{pull['number']} targets {pull['base']['ref']}, expected {delivery}")
             return follow_up(gh, hub, job, pull, branch, issue, base=base, source=source, out=out,
-                             waited=not acquired, **merge_options)
-        return _open_pull(gh, hub, job, branch, title, issue, base=base, source=source, out=out, **merge_options)
+                             waited=not acquired, base_branch=delivery, **merge_options)
+        return _open_pull(gh, hub, job, branch, title, issue, onto_branch=delivery, base=base, source=source,
+                          out=out, **merge_options)
 
 
-def _open_pull(gh, hub, job: dict, branch: str, title: str, issue: int, *, base: Path | None, source, out,
+def _open_pull(gh, hub, job: dict, branch: str, title: str, issue: int, *, onto_branch: str, base: Path | None, source, out,
                **merge_options) -> int:
     from hermes_cli.worker import settings as worker_settings
     repo = job["repo"]
-    onto_branch = job.get("base_branch") or settings.base_branch(base)
     url = str(worker_settings.setting("repo_url", worker=hub.worker)).format(repo=repo)
     with tempfile.TemporaryDirectory(prefix="lina-land-") as tmp:
         clone = Path(tmp) / "repo"
@@ -329,4 +332,4 @@ def _open_pull(gh, hub, job: dict, branch: str, title: str, issue: int, *, base:
     out(f"{branch}: opened #{number}")
     if said := size.note(gh, repo, issue, number, change):
         out(said)
-    return _gates(gh, repo, number, base=base, out=out, **merge_options)
+    return _gates(gh, repo, number, base=base, base_branch=onto_branch, out=out, **merge_options)

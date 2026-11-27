@@ -10,7 +10,7 @@ import pytest
 
 from hermes_cli import merge_rules as rules
 from hermes_cli.delivery import merge
-from tests.hermes_cli._work_fakes import FakeGh
+from tests.hermes_cli.test_work_land import RepositoryGh
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 REPO, HEAD, OLD = "acme/app", "h" * 40, "o" * 40
@@ -196,11 +196,21 @@ def _github(snap: dict, *, queue: bool, queue_answers=(), issue_body="## Done wh
             state["merged"] = True
         return ""
 
-    return FakeGh(routes, graphql, on_run)
+    return RepositoryGh(routes, graphql, on_run)
 
 
 def _merge(gh, lines):
     return merge.merge_pr(gh, REPO, 7, out=lines.append, sleep=lambda _s: None, poll_s=60, queue_timeout_s=600)
+
+
+def test_direct_merge_checks_the_repository_default_before_accepting_the_pr_base(tmp_path):
+    gh = _github(snapshot(base="dev"), queue=False)
+    gh.default_branch = "main"
+    gh.routes[f"repos/{REPO}/rules/branches/main"] = []
+    lines = []
+    assert merge.merge_pr(gh, REPO, 7, base=tmp_path, out=lines.append) == rules.FAIL
+    assert "FAIL base is dev, not main" in lines
+    assert not gh.commands and not gh.writes
 
 
 def test_landing_an_already_merged_branch_finishes_issues_once(tmp_path):
