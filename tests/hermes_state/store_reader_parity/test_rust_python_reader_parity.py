@@ -20,7 +20,7 @@ from plugins.memory.lina.search import MemorySearch, Readers
 from plugins.memory.lina import links
 from plugins.memory.lina.identity import IdentityRegistry
 from tests._fixtures.memory_store import _connect
-from tests.store_reader_parity.fixtures import CASES
+from .fixtures import CASES
 
 pytestmark = pytest.mark.skipif(shutil.which("cargo") is None, reason="store reader parity requires Cargo on PATH")
 
@@ -57,7 +57,7 @@ class ObservedStore(MessageStore):
 
 def _rust_batch(dataset, observations, tmp_path):
     target = Path(os.environ.get("CARGO_TARGET_DIR", tmp_path / "target"))
-    root = Path(__file__).resolve().parents[2]
+    root = Path(__file__).resolve().parents[3]
     subprocess.run(
         [dataset.cargo, "build", "--locked", "-p", "lina-store-reader", "--target-dir", target],
         cwd=root, check=True, timeout=600,

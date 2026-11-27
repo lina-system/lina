@@ -39,8 +39,8 @@ else:
 path.write_text(source)
 PY
     log="$scratch/$mutation.log"
-    if scripts/run_tests.sh -j 1 --file-retries 0 tests/store_reader_parity/ -- \
-        -p tests.store_reader_parity.zone --reader-zone=UTC --tb=short \
+    if scripts/run_tests.sh -j 1 --file-retries 0 tests/hermes_state/store_reader_parity/ -- \
+        -p tests.hermes_state.store_reader_parity.zone --reader-zone=UTC --tb=short \
         -o "cache_dir=$TMPDIR/pytest-cache" --junitxml="$scratch/$mutation.xml" \
         -o junit_family=legacy > "$log" 2>&1; then
         echo "Expected $mutation to fail. See $log" >&2
