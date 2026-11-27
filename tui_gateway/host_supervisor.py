@@ -16,6 +16,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 import uuid
 from collections.abc import Callable
 from pathlib import Path
@@ -110,12 +111,21 @@ class NativeHostBuildError(RuntimeError):
     """The Python parent and Rust executable could not prove matching revisions."""
 
 
+def _log_frame_failure(failure: str, exc: Exception) -> None:
+    # Source lines, locals and exception messages can all contain frame values.
+    locations = " -> ".join(
+        f"{frame.f_code.co_filename}:{lineno} in {frame.f_code.co_name}"
+        for frame, lineno in traceback.walk_tb(exc.__traceback__)
+    )
+    logger.error("%s (%s) at %s", failure, type(exc).__name__, locations)
+
+
 def _call_logged(cb: Callable[[dict], None], frame: dict, failure: str) -> None:
     """Invoke a host-frame callback; a raising callback is logged, never propagated."""
     try:
         cb(frame)
     except Exception as exc:  # health: allow BLE001 -- isolate arbitrary parent callbacks at the frame boundary
-        logger.error("%s (%s)", failure, type(exc).__name__)
+        _log_frame_failure(failure, exc)
 
 
 def _pid_alive(pid: int) -> bool:
@@ -495,7 +505,7 @@ class HostSupervisor:
             if not terminal:
                 return
         except Exception as exc:  # health: allow BLE001 -- one dispatch fault must not stop the pipe reader
-            logger.error("compute host frame handler failed (%s)", type(exc).__name__)
+            _log_frame_failure("compute host frame handler failed", exc)
             if not terminal:
                 if request_id is not None:
                     settled = failed[request_id] = threading.Event()
@@ -550,7 +560,7 @@ class HostSupervisor:
                 self._send_frame({"type": "interrupt", "sid": sid, "turn_id": request_id,
                                   "request_id": f"interrupt-{request_id}"})
             except (OSError, RuntimeError, ValueError) as exc:
-                logger.error("compute host frame recovery could not send interrupt (%s)", type(exc).__name__)
+                _log_frame_failure("compute host frame recovery could not send interrupt", exc)
                 grace = 0.0
         spawn_context_thread(
             self._retire_if_turn_unsettled, args=(proc, request_id, settled, grace),

@@ -2,6 +2,7 @@
 
 import errno
 import queue
+import re
 import sys
 
 import pytest
@@ -82,6 +83,27 @@ def test_submit_during_exit_is_retryable(tmp_path):
         terminal = completed.get(timeout=5)
         assert (terminal["request_id"], terminal["type"]) == ("other", "turn.end")
         assert completed.empty()
+    finally:
+        host.shutdown()
+
+
+@pytest.mark.parametrize("boundary", ["reader", "completion"])
+def test_handler_log_locates_fault_without_payload(tmp_path, caplog, boundary):
+    def reject_payload(frame):
+        raise ValueError("private exception marker", frame)
+
+    host = HostSupervisor(
+        argv=[sys.executable, "-u", "-c", _CHILD, "normal"],
+        registry_path=tmp_path / "host.json", expected_build_sha="unknown",
+        rpc_sink=reject_payload if boundary == "reader" else None,
+    )
+    try:
+        host.submit_turn({"sid": "private-session-marker", "request_id": "other"},
+                         on_complete=reject_payload if boundary == "completion" else None)
+        assert wait_until(lambda: "ValueError" in caplog.text, timeout=5)
+        assert re.search(r"test_host_supervisor_reader\.py:\d+ in reject_payload", caplog.text)
+        for value in ("private-session-marker", "private exception marker", "unrelated progress"):
+            assert value not in caplog.text
     finally:
         host.shutdown()
 
