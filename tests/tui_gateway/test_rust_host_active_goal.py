@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 from threading import Event
 
@@ -96,10 +97,15 @@ def test_goal_activated_during_rust_turn_judges_reply_and_continues(
     workdir: Path, home: Path, rust_binary: Path, store_dsn: str, resume: bool,
 ) -> None:
     release = Event()
-    replies = (Reply(text=FIRST, gate=release), *GOAL_REPLIES)
+    continue_reply = Event()
+    judge, continuation, final_judge = GOAL_REPLIES
+    replies = (
+        Reply(text=FIRST, gate=release), judge, replace(continuation, gate=continue_reply), final_judge,
+    )
     with loopback_model(replies) as model:
         served = _configure_goal_profile(home, workdir, model.url)
-        with gateway(home, rust_binary, {}, store_dsn, FIXTURE_SECRETS) as client:
+        prewarm_env = {"PARITY_AGENT_PREWARM_DELAY": "600"}
+        with gateway(home, rust_binary, prewarm_env, store_dsn, FIXTURE_SECRETS) as client:
             client.rpc("session.create", cwd=str(workdir), profile="served")
             if resume:
                 client.rpc("command.dispatch", session_id=SID, name="goal", arg=f"set {OBJECTIVE}")
@@ -115,12 +121,23 @@ def test_goal_activated_during_rust_turn_judges_reply_and_continues(
                     client.rpc("command.dispatch", session_id=SID, name="goal", arg=f"set {OBJECTIVE}")
                 state = client.rpc("session.control.read", session_id=SID)["control"]["goal"]
                 assert (state["status"], state["turns_used"]) == ("active", 0)
+                after = len(client.sink.frames())
             finally:
                 release.set()
 
-            first = _event(client, "message.complete")["payload"]
-            assert (first["status"], first["text"]) == ("complete", FIRST)
-            _host_frame(client, "turn.end")
+            try:
+                first = _event(client, "message.complete", after=after)["payload"]
+                assert (first["status"], first["text"]) == ("complete", FIRST)
+                boundary = client.wait(
+                    lambda frame: frame.get("parity_host_frame", {}).get("type") in {"turn.end", "turn.error"}
+                    or (frame.get("method") == "event" and frame["params"].get("session_id") == SID
+                        and frame["params"]["type"] == "message.start"),
+                    after=after,
+                )
+                assert boundary.get("parity_host_frame", {}).get("type") == "turn.end", boundary
+                model.wait_for_requests(3)  # first answer, goal judge, continuation (still gated)
+            finally:
+                continue_reply.set()
             client.wait(
                 lambda frame: frame.get("method") == "event"
                 and frame["params"]["type"] == "session.control.update"

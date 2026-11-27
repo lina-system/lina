@@ -12,6 +12,7 @@ from collections.abc import Callable, Iterator
 from contextlib import ExitStack, closing, contextmanager
 from dataclasses import dataclass
 from fcntl import LOCK_EX, flock
+from functools import partial
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Final, Literal, TypeAlias
@@ -356,11 +357,24 @@ def _serve_parent() -> None:
 
     # Fixed fixture session IDs avoid normalizing session identity out of the observations.
     with ExitStack() as patches:
+        from run_agent import AIAgent
+
+        initialize = AIAgent.__init__
+
+        def observe_parent_agent(agent, *args, **kwargs):
+            transport.write({"parity_parent_agent_built": True})
+            initialize(agent, *args, **kwargs)
+
+        patches.enter_context(patch.object(AIAgent, "__init__", observe_parent_agent))
         patches.enter_context(patch.object(server, "_new_runtime_ids", return_value=(SID, "desktop")))
         patches.enter_context(patch.object(server, "_new_session_key", return_value=SESSION_KEY))
         patches.enter_context(patch.object(HostSupervisor, "start", observe_start))
         patches.enter_context(patch.object(HostSupervisor, "_handle_host_frame", observe_host_frame))
         patches.enter_context(patch.object(HostSupervisor, "_send_frame", observe_send_frame))
+        if delay := os.getenv("PARITY_AGENT_PREWARM_DELAY"):
+            patches.enter_context(patch.object(
+                server, "_schedule_agent_build", partial(server._schedule_agent_build, delay=float(delay)),
+            ))
         if os.getenv("PARITY_CONNECT_LOG"):
             from tui_gateway.rust_host_supervisor import RustHostSupervisor
 

@@ -1115,9 +1115,9 @@ def _clear_pending(sid: str | None = None) -> None:
 
 
 
-def _live_session_agent_db(session: dict | None):
+def _live_session_agent_db(session: dict | None, *, runtime=None):
     """(agent, session_key, db) for a live record, or None when any of them is missing."""
-    agent = (session or {}).get("agent")
+    agent = runtime if runtime is not None else (session or {}).get("agent")
     session_key = str((session or {}).get("session_key") or "").strip()
     if agent is None or not session_key:
         return None
@@ -1125,9 +1125,9 @@ def _live_session_agent_db(session: dict | None):
     return None if db is None else (agent, session_key, db)
 
 
-def _persist_live_session_system_prompt(session: dict | None) -> None:
+def _persist_live_session_system_prompt(session: dict | None, *, runtime=None) -> None:
     """Refresh the stored system prompt after a live runtime identity change."""
-    live = _live_session_agent_db(session)
+    live = _live_session_agent_db(session, runtime=runtime)
     if live is None or not hasattr(live[0], "_build_system_prompt") or not hasattr(live[2], "update_system_prompt"):
         return
     agent, session_key, db = live
@@ -1390,8 +1390,9 @@ DESKTOP_BACKEND_CONTRACT = 8
 def _session_usage_snapshot(session: dict | None) -> dict:
     sess = session or {}
     mirror_usage = _metadata_mirror(session).get("usage")
-    if sess.get("agent") is not None and not (sess.get("_compute_host_active") and isinstance(mirror_usage, dict)):
-        return _get_usage(sess["agent"])
+    runtime = sess.get("agent") or sess.get("_rust_plan_state")
+    if runtime is not None and not (sess.get("_compute_host_active") and isinstance(mirror_usage, dict)):
+        return _get_usage(runtime)
     return dict(mirror_usage) if isinstance(mirror_usage, dict) else {}
 
 
@@ -1423,7 +1424,7 @@ def _live_session_identity(session: dict) -> tuple[str, str]:
     carries. The profile default is the LAST resort, never the answer for a chat that made its own pick."""
     pending = session.get("pending_model_switch") or {}
     mirror = _metadata_mirror(session)
-    agent = session_runtime_view(session.get("agent"))
+    agent = session_runtime_view(session.get("agent") or session.get("_rust_plan_state"))
     override = session.get("model_override") or {}
     model = (str(pending.get("display_model") or "").strip() or mirror.get("model")
              or getattr(agent, "model", "") or override.get("model"))

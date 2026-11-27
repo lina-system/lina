@@ -465,17 +465,34 @@ def test_lost_durable_lease_fences_the_batch(turn):
     assert session["history_version"] == 0
 
 
-def test_lazy_build_uses_existing_agent_readiness_seam(turn, monkeypatch):
+def _configure_cold_turn(session, monkeypatch):
+    home = Path(session["profile_home"])
+    settings = {
+        "model": {"provider": "custom", "default": "test-model", "context_length": 100000,
+                  "base_url": "http://127.0.0.1:9/v1", "api_key": "scoped-test-key"},
+        "memory": {"memory_enabled": False, "user_profile_enabled": False},
+        "updates": {"check": False},
+    }
+    (home / "config.yaml").write_text(json.dumps(settings))
+    monkeypatch.setenv("HERMES_TUI_TOOLSETS", "file_read")
+
+
+def test_cold_turn_waits_for_history_and_plans_without_starting_parent(turn, monkeypatch):
     from tui_gateway import server
 
     session, frame, _ = turn
-    agent = session.pop("agent")
-    monkeypatch.setattr(server, "_start_agent_build", lambda sid, record: record.update(agent=agent))
-    monkeypatch.setattr(server, "_wait_agent_for_prompt", lambda *args: None)
+    session["agent"] = None
+    _configure_cold_turn(session, monkeypatch)
+    monkeypatch.setattr(server, "_start_agent_build", lambda *_: pytest.fail("unexpected parent build"))
+    monkeypatch.setattr(server, "_await_resume_history", lambda *_: False)
+    assert prepare_rust_turn("runtime", session, frame) is None
+    assert "_rust_turn_stage" not in session
+    monkeypatch.setattr(server, "_await_resume_history", lambda *_: True)
 
     plan, env = prepare_rust_turn("runtime", session, frame)
 
-    assert plan["model"] == agent.model
+    assert session["agent"] is None
+    assert plan["model"] == "test-model"
     assert env == {"OPENAI_API_KEY": "scoped-test-key"}
 
 
@@ -808,7 +825,7 @@ def test_crash_keeps_real_accepted_user_open_for_cold_rehydration(turn):
 
 
 @pytest.mark.usefixtures("real_build_revision")
-def test_crash_preserves_parent_mirror_and_requires_fresh_agent_sync(turn, monkeypatch):
+def test_crash_preserves_parent_mirror_and_replans_on_replacement_host(turn, monkeypatch):
     import time
     from contextlib import ExitStack
 
@@ -817,6 +834,8 @@ def test_crash_preserves_parent_mirror_and_requires_fresh_agent_sync(turn, monke
 
     session, frame, db = turn
     agent = session["agent"]
+    _configure_cold_turn(session, monkeypatch)
+    agent.base_url = agent._client_kwargs["base_url"] = "http://127.0.0.1:9/v1"
     ready = threading.Event()
     ready.set()
     session.update(agent_ready=ready, agent_build_started=True, agent_error="stale build error")
@@ -852,28 +871,8 @@ def test_crash_preserves_parent_mirror_and_requires_fresh_agent_sync(turn, monke
     assert "config_model_seen" not in session
     assert "_rust_parent_history" not in session
 
-    built = []
-
-    def make_agent(*args, **kwargs):
-        replacement = type(agent)(
-            model="test-model", provider="custom", api_mode="chat_completions",
-            api_key="scoped-test-key", base_url=agent.base_url,
-            session_id="stored", session_db=db, quiet_mode=True,
-            skip_context_files=True, skip_memory=True, checkpoints_enabled=False,
-            reasoning_config={"enabled": False},
-        )
-        replacement._cached_system_prompt = "Stored system prompt"
-        replacement._use_prompt_caching = False
-        built.append(replacement)
-        return replacement
-
     monkeypatch.setitem(server._sessions, "runtime", session)
-    monkeypatch.setattr(server, "_make_agent", make_agent)
-    monkeypatch.setattr(server, "_bind_build_profile_scopes", lambda _: None)
-    monkeypatch.setattr(server, "_open_profile_session_db", lambda _: None)
-    monkeypatch.setattr(server, "_wire_session_agent", lambda *_: False)
-    monkeypatch.setattr(server, "_announce_built_agent", lambda *_: None)
-    monkeypatch.setattr("tui_gateway.entry.ensure_mcp_discovery_started", lambda: None)
+    monkeypatch.setattr(server, "_start_agent_build", lambda *_: pytest.fail("unexpected parent rebuild"))
     monkeypatch.setattr(
         server, "_get_compute_host_supervisor",
         lambda _: pytest.fail("cold builder failure selected the Python supervisor"))
@@ -882,22 +881,16 @@ def test_crash_preserves_parent_mirror_and_requires_fresh_agent_sync(turn, monke
         "text": "A new explicit request", "history": copy.deepcopy(session["history"]),
         "history_version": session["history_version"],
     }
-    try:
-        with ExitStack() as leases:
-            selected = select_host("runtime", session, cfg, next_frame, leases)
-            assert selected is host
-            assert session["_rust_host"] is host
-            assert host._restart_times is restart_times
-            assert host._replacement_ready is True
-            assert len(built) == 1
-            assert session["agent"] is built[0]
-            assert session["agent_ready"] is not ready
-            assert session["agent_ready"].is_set()
-            assert "agent_error" not in session
-            assert db.get_session("stored")["ended_at"] is None
-    finally:
-        for replacement in built:
-            replacement.close()
+    with ExitStack() as leases:
+        selected = select_host("runtime", session, cfg, next_frame, leases)
+        assert selected is host
+        assert session["_rust_host"] is host
+        assert host._restart_times is restart_times
+        assert host._replacement_ready is True
+        assert session["agent"] is None
+        assert "agent_error" not in session
+        assert db.get_session("stored")["ended_at"] is None
+        assert [row["content"] for row in next_frame["history"]] == ["Earlier request", "Earlier reply"]
 
 
 def test_host_error_without_transcript_persists_failure_without_fabricated_call(turn):

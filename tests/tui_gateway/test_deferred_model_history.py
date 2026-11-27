@@ -19,6 +19,9 @@ def test_deferred_resume_preserves_model_history_and_db_ownership(tmp_path, monk
     db.append_message("parent", "user", "ancestor-only display", timestamp=100.0)
     db.end_session("parent", "compression")
     db.create_session("tip", source=source, parent_session_id="parent")
+    # This fixture lends a single handle to the history reader. A complete workspace
+    # row keeps the independent Git enrichment worker from borrowing that handle.
+    db.update_session_cwd("tip", str(home), git_branch="main", git_repo_root=str(home))
     db.append_message("tip", "user", "archived display", timestamp=101.0)
     db.archive_and_compact("tip", [
         {"role": "assistant", "content": "summary", "_compressed_summary": True},

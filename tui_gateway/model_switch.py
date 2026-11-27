@@ -488,6 +488,30 @@ def _sync_bot_capabilities(sid: str, session: dict) -> None:
         logger.warning("Bot capability sync failed for %s: %s", sid, e)
 
 
+def _config_model_sync_due(session: dict, target: tuple[str, str]) -> bool:
+    """A session pin wins until its recorded composer profile changes."""
+    if not target[0] or target == session.get("config_model_seen"):
+        return False
+    if not session.get("model_override"):
+        return True
+    profile = session.get("composer_override_profile")
+    return isinstance(profile, dict) and target != (
+        str(profile.get("model") or "").strip(), str(profile.get("provider") or "").strip())
+
+
+def _record_config_model_target(session: dict, target: tuple[str, str]) -> bool:
+    """Record an adopted target. Return whether it superseded a session pin."""
+    superseded_pin = bool(session.get("model_override"))
+    if superseded_pin:
+        # A later profile edit supersedes the canonical chat's explicit pick. Clearing both fields lets
+        # the normal config-sync path switch now and prevents the old composer pick resurfacing on rebuild.
+        session.pop("model_override")
+        session["composer_override_profile"] = None
+    # Record first so a broken config gets one attempt per edit, not per turn.
+    session["config_model_seen"] = target
+    return superseded_pin
+
+
 def _sync_agent_model_with_config(sid: str, session: dict) -> None:
     """Adopt a config.yaml model change at turn start (like gateways do per message). Sessions
     pinned with /model keep their choice; a failed switch keeps the current model."""
@@ -495,31 +519,14 @@ def _sync_agent_model_with_config(sid: str, session: dict) -> None:
     if agent is None:
         return
     target = _config_model_target()
-    if not target[0]:
+    if not _config_model_sync_due(session, target):
         return
-    seen = session.get("config_model_seen")
-    if target == seen:
-        return
-    superseded_pin = None
-    if session.get("model_override"):
-        composer_profile = session.get("composer_override_profile")
-        pinned_profile = (
-            str(composer_profile.get("model") or "").strip(),
-            str(composer_profile.get("provider") or "").strip(),
-        ) if isinstance(composer_profile, dict) else None
-        if pinned_profile is None or pinned_profile == target:
-            return
-        # A later profile edit supersedes the canonical chat's explicit pick. Clearing both fields lets
-        # the normal config-sync path switch now and prevents the old composer pick resurfacing on rebuild.
-        superseded_pin = session.pop("model_override"), composer_profile
-        session["composer_override_profile"] = None
-    # Record first so a broken config gets one attempt per edit, not per turn.
-    session["config_model_seen"] = target
+    superseded_pin = _record_config_model_target(session, target)
     model, provider = target
     # Already on the configured model (resumed before first sync, or a config revert after
     # a failed switch): adopt without switching.
     if model == getattr(agent, "model", "") and (not provider or provider == getattr(agent, "provider", "")):
-        if superseded_pin is not None:
+        if superseded_pin:
             _persist_live_session_runtime(session)
         return
     raw = f"{model} --provider {provider}" if provider else model

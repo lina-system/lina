@@ -214,9 +214,9 @@ def _runtime_model_config(agent, existing: dict | None = None) -> dict:
     return config
 
 
-def _persist_live_session_runtime(session: dict | None) -> None:
+def _persist_live_session_runtime(session: dict | None, *, runtime=None) -> None:
     """Persist active session runtime so future resumes restore the same footer."""
-    live = _live_session_agent_db(session)
+    live = _live_session_agent_db(session, runtime=runtime)
     if live is None:
         return
     agent, session_key, db = live

@@ -111,6 +111,8 @@ def _prepare_inline_after_compute_host(session: dict) -> bool:
             return False
         session.pop("_compute_host_active", None)
         session.pop("_metadata_mirror", None)
+        session.pop("_rust_plan_state", None)
+        session.pop("_rust_planner_announced", None)
     return True
 
 
@@ -171,6 +173,8 @@ def _metadata_mirror(session: dict | None) -> dict:
 
 
 def _compute_host_session_info(session: dict) -> dict:
+    if (state := session.get("_rust_plan_state")) is not None:
+        return _session_info(state, {**session, "agent": state})
     return _session_info(session.get("agent"), session)
 
 
@@ -336,7 +340,7 @@ _NO_FORWARDED_SWITCH = object()
 
 def _on_compute_host_turn_done(
     rid: str, sid: str, session: dict, frame: dict, *, forwarded_switch=_NO_FORWARDED_SWITCH,
-    crash_info: dict | None = None, goal_followup: str | None = None,
+    crash_info: dict | None = None, drain_queue: bool = True,
 ) -> None:
     _apply_compute_host_metadata_mirror(session, frame)
     with session["history_lock"]:
@@ -369,10 +373,43 @@ def _on_compute_host_turn_done(
         _emit("message.complete", sid, {"text": f"Error: {message}", "status": "error"})
     if not frame.get("session_info_emitted"):
         _emit("session.info", sid, crash_info if crash_info is not None else _compute_host_session_info(info_session))
-    if goal_followup:
-        _run_post_turn_followups(rid, sid, session, None, goal_followup)
-    else:
+    if drain_queue:
         _drain_queued_prompt(rid, sid, session)
+
+
+def _start_rust_goal_followup(rid, sid: str, session: dict, prompt: str, version: int) -> None:
+    """Claim the inline continuation only if this settled turn still owns the next dispatch."""
+    def run():
+        with _session_profile_runtime_scope(session):
+            try:
+                if _prepare_inline_after_compute_host(session):
+                    # Native planning never needed a Python agent. Build it on
+                    # demand and use the same cancellable wait as prompt.submit.
+                    if not _restart_completed_failed_agent_build(sid, session, session.get("agent_ready")):
+                        _start_agent_build(sid, session)
+                    _emit("message.start", sid)
+                    _run_after_agent_ready(rid, sid, session, prompt, None, None, None)
+                    return
+            except Exception:
+                logger.exception("Failed to dispatch goal continuation for session %s", sid)
+            with session["history_lock"]:
+                session["running"] = False
+
+    with _session_turn_admission(session) as admitted:
+        if (not admitted or session.get("_closing") or session.get("running") or session.get("_turn_cancel_requested")
+                or session.get("history_version") != version):
+            return
+        if session.get("queued_prompt"):
+            _start_session_work(lambda: _drain_queued_prompt(rid, sid, session), name=f"queued-prompt-{sid}")
+            return
+        session["running"] = True
+        try:
+            worker = _start_session_work(run, name=f"goal-continuation-{sid}", session=session)
+        except BaseException:
+            session["running"] = False
+            raise
+        if worker is None:
+            session["running"] = False
 
 
 def _rust_goal_completion(settlement: dict) -> tuple[dict | None, str | None]:
@@ -400,7 +437,7 @@ def _submit_prompt_to_compute_host(
     # Caller JSON-RPC ids may repeat across sockets and turns. Use an opaque
     # dispatch lifetime token, installed before a fast child can send activity.
     from tui_gateway.rust_host_supervisor import RustHostSupervisor, select_host
-    from tui_gateway.rust_turn_plan import persist_rust_turn
+    from tui_gateway.rust_turn_plan import persist_rust_turn, rust_plan_state
 
     leases = contextlib.ExitStack()
     turn_id = frame["turn_id"] = frame["request_id"] = uuid.uuid4().hex
@@ -454,7 +491,7 @@ def _submit_prompt_to_compute_host(
                             settlement = {**{key: value for key, value in done.items() if key != "provider_error"},
                                           **details}
                             receipt = persist_rust_turn(session, settlement)
-                            if (db := getattr(session.get("agent"), "_session_db", None)) is not None:
+                            if (db := getattr(rust_plan_state(session), "_session_db", None)) is not None:
                                 db.flush_token_counts()
                             handoff, goal_reply = _rust_goal_completion(settlement)
                             if details.get("status") == "error":
@@ -482,9 +519,11 @@ def _submit_prompt_to_compute_host(
                             leases.close()
         finally:
             with _session_profile_runtime_scope(session, hydrate_secrets=False):
+                if goal_followup:
+                    rust_host.pending_goal = (turn_id, rid, goal_followup, session["history_version"])
                 _on_compute_host_turn_done(
                     rid, sid, session, done, forwarded_switch=frame.get("pending_model_switch"),
-                    crash_info=crash_info, goal_followup=goal_followup)
+                    crash_info=crash_info, drain_queue=not goal_followup)
 
     rust_host = None
     claimed_images = []

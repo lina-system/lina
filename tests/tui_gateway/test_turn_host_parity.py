@@ -303,6 +303,10 @@ def _observe(
                 _host_frame(client, "turn.end", "turn.error")
             rows = stored_rows(home)
         frames = client.sink.frames()
+        if impl == "rust":
+            assert not any(frame.get("parity_parent_agent_built") for frame in frames), (
+                "Rust-eligible turn constructed an AIAgent in the dashboard parent"
+            )
         assert not any(frame.get("parity_credential_leak") for frame in frames), "Gateway emitted a fixture credential"
         serialized = json.dumps([model.requests, rows])
         assert all(secret not in serialized for secret in (MODEL_KEY, APP_PASSWORD)), (
@@ -452,6 +456,10 @@ def _differences(python: JsonValue, rust: JsonValue, path: str = "$") -> Iterato
                 yield path, f"Python has {len(python)} items, Rust has {len(rust)}"
             for index, (left, right) in enumerate(zip(python, rust)):
                 yield from _differences(left, right, f"{path}[{index}]")
+        case str(), str() if python != rust:
+            offset = next((i for i, (a, b) in enumerate(zip(python, rust)) if a != b), min(len(python), len(rust)))
+            start = max(0, offset - 40)
+            yield path, f"at character {offset}: Python {python[start:offset+80]!r}, Rust {rust[start:offset+80]!r}"
         case _:
             if python != rust:
                 yield path, f"Python {python!r:.350}, Rust {rust!r:.350}"
@@ -509,6 +517,9 @@ def test_compute_hosts_have_identical_turn_observations(
     root = parity_root / case
     workspace = root / "workspace"
     workspace.mkdir(parents=True)
+    # Both prompts include a Git status snapshot. Isolate it from edits to the
+    # enclosing checkout while the Python and Rust arms run in sequence.
+    subprocess.run(["git", "init", "-q", "-b", "parity", str(workspace)], check=True)
     gate = None
     if case == "interrupt_during_read":
         gate = ReadGate(root / "gate.so", root / "read-entered", root / "release", workspace / "normal.txt")

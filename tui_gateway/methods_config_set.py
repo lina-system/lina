@@ -195,9 +195,16 @@ _FAST_WORDS = {"fast": "fast", "on": "fast", "normal": "normal", "off": "normal"
                "auto": "auto", "cold": "cold", "ultrafast": "ultrafast", "ultra": "ultrafast"}
 
 
+def _session_policy_runtime(session):
+    if session is None:
+        return None
+    agent = session.get("agent")
+    return agent if agent is not None else session.get("_rust_plan_state")
+
+
 def _set_fast(rid, params, key, value, session):
     raw = _word(value)
-    agent = session.get("agent") if session else None
+    agent = _session_policy_runtime(session)
     if agent is not None:
         current_tier = getattr(agent, "service_tier", None)
     elif session is not None and session.get("create_service_tier_override") is not None:
@@ -242,6 +249,7 @@ def _set_fast(rid, params, key, value, session):
         current_overrides = {k: v for k, v in (getattr(agent, "request_overrides", {}) or {}).items()
                              if k not in ("service_tier", "speed")}
         agent.request_overrides = {**current_overrides, **(overrides or {})}
+    if session and session.get("agent") is not None:
         _persist_live_session_runtime(session)
         _emit_session_info(params.get("session_id", ""), session)
     return _kv(rid, key, nv)
@@ -369,8 +377,9 @@ def _set_reasoning(rid, params, key, value, session):
             session.pop("create_reasoning_override", None)
     else:  # session-scoped like the gateway's `/reasoning <level>`; a menu pick must not rewrite the global
         session["create_reasoning_override"] = parsed
+    if (runtime := _session_policy_runtime(session)) is not None:
+        runtime.reasoning_config = parsed
     if session and session.get("agent") is not None:
-        session["agent"].reasoning_config = parsed
         _persist_live_session_runtime(session)
         _emit_session_info(params.get("session_id", ""), session)
     return _kv(rid, key, arg)
