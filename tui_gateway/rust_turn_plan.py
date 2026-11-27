@@ -1,4 +1,4 @@
-"""Adapt the production agent to the deliberately narrow Rust turn protocol.
+"""Plan native turns from the session's runtime, tool schemas and transcript.
 
 The bridge admits ownership before preparation, holds ``rust_turn_lease`` from
 dispatch through persistence, and buffers message.complete until persistence
@@ -53,37 +53,68 @@ class RustTurnConflict(RuntimeError):
     """The prepared turn no longer owns the transcript it was built against."""
 
 
-def _agent_for_turn(sid: str, session: dict, frame: dict):
-    from tui_gateway import server
+def rust_plan_state(session: dict):
+    return session.get("_rust_plan_state") or session.get("agent")
 
-    # Ordinary Rust settlement does not drive the owning profile's goal judge
-    # and continuation dispatcher.
-    if session.get("session_key") and server._active_goal_manager(session) is not None:
-        return None
-    if session.get("agent") is None:
-        server._start_agent_build(sid, session)
-        if server._wait_agent_for_prompt(session, str(frame.get("request_id") or ""), sid):
-            return None
-        # The isolated Python creation route initializes the session directly,
-        # without the parent lazy builder's config-sync baseline. Rust adoption
-        # must run that same first-turn sync before freezing its prompt/history.
-        session.pop("config_model_seen", None)
-    return session.get("agent")
+
+@contextlib.contextmanager
+def _planning_state(sid: str, session: dict):
+    from tui_gateway import server
+    from tui_gateway.rust_plan_input import compatible_tool_pin
+    from tui_gateway.rust_plan_runtime import build_plan_state
+
+    if session.get("agent") is not None:
+        session.pop("_rust_plan_state", None)
+        yield session["agent"]
+        return
+    if not session.get("session_key") or session.get("agent_build_started") or not server._await_resume_history(sid, session):
+        yield None
+        return
+    with server._session_db(session) as db:
+        if db is None:
+            yield None
+            return
+        row = db.get_session(session["session_key"])
+        if not compatible_tool_pin(row):
+            yield None
+            return
+        saved_tool_pin = (row or {}).get("tool_names")
+        state = session.get("_rust_plan_state")
+        if state is None:
+            state = build_plan_state(sid, session, db)
+            if state is None:
+                yield None
+                return
+            session["_rust_plan_state"] = state
+        state._session_db = db
+        try:
+            previous_stage = session.get("_rust_turn_stage")
+            yield state
+            with session["history_lock"]:
+                stage = session.get("_rust_turn_stage")
+                if stage is not None and stage is not previous_stage:
+                    stage["saved_tool_pin"] = saved_tool_pin
+                    stage["pending_tool_pin"] = copy.deepcopy(state.pending_tool_pin)
+        finally:
+            state._session_db = None
 
 
 def _compatible_agent(agent) -> bool:
     """Require the actual OpenAI transport and the complete read-only tool set."""
-    from openai import OpenAI
     from agent.context_compressor import ContextCompressor
     from agent.reasoning_promotion import answer_in_reasoning_capability
     from hermes_cli.plugins import has_hook, has_middleware
     from hermes_cli.plugins_dispatch import stream_held
-    from run_agent import AIAgent
+    from tui_gateway.rust_plan_runtime import RustPlanState
 
+    if not isinstance(agent, RustPlanState):
+        from openai import OpenAI
+        from run_agent import AIAgent
+
+        if not isinstance(agent, AIAgent) or not isinstance(agent.client, OpenAI):
+            return False
     return (
-        isinstance(agent, AIAgent)
-        and isinstance(agent.client, OpenAI)
-        and agent.api_mode == "chat_completions"
+        agent.api_mode == "chat_completions"
         and bool(agent.tools)
         and all(t.get("type") == "function" and t.get("function", {}).get("name") == "read_file"
                 for t in agent.tools)
@@ -126,10 +157,14 @@ def _model_environment(agent) -> dict[str, str] | None:
     return {"OPENAI_API_KEY": key}
 
 
-def _prepare_input(sid: str, session: dict, text: str):
+def _prepare_input(sid: str, session: dict, text: str, agent):
     """Run the production TUI prologue and release its thread-local scopes."""
     from tui_gateway import server
+    from tui_gateway.rust_plan_input import prepare_plan_input
 
+    if session.get("_rust_plan_state") is agent:
+        return prepare_plan_input(
+            sid, session, agent, text, before_prepare=lambda: _stage_plan_info(sid, session, agent))
     state = server._TurnRun(
         agent=session["agent"], one_turn_restore=None, terminal_callback=None,
         receipt_committed=False)
@@ -148,6 +183,18 @@ def _prepare_input(sid: str, session: dict, text: str):
             server.reset_hermes_home_override(state.scopes.home)
 
 
+def _refresh_request_prompt(session, agent, history):
+    if session.get("_rust_plan_state") is agent:
+        agent.refresh_plan_prompt(history)
+        return
+    from agent.conversation_loop import _restore_or_build_system_prompt
+    from agent.prompt_refresh import refresh_warm_prompt
+
+    refresh_warm_prompt(agent, None, history)
+    if agent._cached_system_prompt is None:
+        _restore_or_build_system_prompt(agent, None, history)
+
+
 def prepare_rust_turn(sid: str, session: dict, frame: dict) -> tuple[dict, dict[str, str]] | None:
     """Return the real assembled request and minimal auth, or refuse this route.
 
@@ -163,9 +210,7 @@ def prepare_rust_turn(sid: str, session: dict, frame: dict) -> tuple[dict, dict[
         return None
 
     from agent.chat_completion_helpers import _StreamingCall, build_api_kwargs
-    from agent.conversation_loop import _restore_or_build_system_prompt
     from agent.opencode_affinity import resolve_affinity_key
-    from agent.prompt_refresh import refresh_warm_prompt
     from agent.turn_api_call import _should_stream
     from agent.turn_context import (
         _merge_gateway_notes, compose_user_api_content, stage_date_note, stage_skills_index_note,
@@ -182,8 +227,9 @@ def prepare_rust_turn(sid: str, session: dict, frame: dict) -> tuple[dict, dict[
             or not isinstance(frame.get("text"), str) or "@" in frame["text"]
             or (session.get("seeded") and not session.get("_branch_seed_persisted"))):
         return None
-    with server._session_profile_runtime_scope(session):
-        agent = _agent_for_turn(sid, session, frame)
+    if session.get("session_key") and server._active_goal_manager(session) is not None:
+        return None
+    with server._session_profile_runtime_scope(session), _planning_state(sid, session) as agent:
         if agent is None or not _compatible_agent(agent):
             return None
         with session["history_lock"]:
@@ -193,7 +239,7 @@ def prepare_rust_turn(sid: str, session: dict, frame: dict) -> tuple[dict, dict[
         # prologue: a model-sync marker is already a durable transcript write.
         if not server._ensure_session_db_row(session):
             return None
-        prepared = _prepare_input(sid, session, frame["text"])
+        prepared = _prepare_input(sid, session, frame["text"], agent)
         if prepared is None:
             return None
         agent, prompt, run_message, history, version = prepared
@@ -215,10 +261,8 @@ def prepare_rust_turn(sid: str, session: dict, frame: dict) -> tuple[dict, dict[
             file_ops = _get_file_ops(key)
             if type(file_ops.env) is not LocalEnvironment:
                 return None
-            refresh_warm_prompt(agent, None, history)
-            if agent._cached_system_prompt is None:
-                _restore_or_build_system_prompt(agent, None, history)
-            # A persisted tool pin can restore a wider surface.
+            _refresh_request_prompt(session, agent, history)
+            # Both a restored pin and a between-turn rebuild can widen the surface.
             if not _compatible_agent(agent):
                 return None
             agent._current_turn_timestamp = time.time()
@@ -318,8 +362,46 @@ def prepare_rust_turn(sid: str, session: dict, frame: dict) -> tuple[dict, dict[
         return plan, env
 
 
+def _stage_plan_info(sid: str, session: dict, state) -> None:
+    from tui_gateway import server
+
+    if session.get("_rust_planner_announced"):
+        return
+    initial = {**session, "agent": state, "running": False, "inflight_turn": None, "_compute_host_active": False}
+    initial.pop("_metadata_mirror", None)
+    session["_rust_ready_info"] = server._session_info(state, initial)
+    if not session.get("_parent_agent_announced"):
+        info = server._session_info(state, {**session, "agent": state, "_compute_host_active": True},
+                                    announce_agent_capabilities=True)
+        if warning := server._probe_config_health(server._load_cfg()):
+            info["config_warning"] = warning
+        session["_rust_parent_info"] = info
+
+
 @contextlib.contextmanager
 def rust_turn_lease(session: dict, frame: dict) -> Iterator[None]:
+    from tui_gateway import server
+
+    state = session.get("_rust_plan_state")
+    if state is None:
+        with _durable_lease(session, frame):
+            yield
+        return
+    # A profile handle is borrowed for this dispatch, including settlement on
+    # the supervisor thread. No profile ContextVar is carried across the yield.
+    with server._session_db(session) as db:
+        if db is None:
+            raise RustTurnConflict("session store unavailable")
+        state._session_db = db
+        try:
+            with _durable_lease(session, frame):
+                yield
+        finally:
+            state._session_db = None
+
+
+@contextlib.contextmanager
+def _durable_lease(session: dict, frame: dict) -> Iterator[None]:
     """Hold the production durable lease after eligibility, through final commit.
 
     Enter/exit may happen on different threads. All profile tokens are reset
@@ -331,7 +413,7 @@ def rust_turn_lease(session: dict, frame: dict) -> Iterator[None]:
     from agent.conversation_loop import _persist_system_prompt
     from tui_gateway import server
 
-    agent = session["agent"]
+    agent = rust_plan_state(session)
     with server._session_profile_runtime_scope(session, hydrate_secrets=False):
         if not server._ensure_session_db_row(session):
             raise RustTurnConflict("session store unavailable")
@@ -355,9 +437,22 @@ def rust_turn_lease(session: dict, frame: dict) -> Iterator[None]:
         with server._session_profile_runtime_scope(session, hydrate_secrets=False):
             # A first prompt can be built while the draft has no row. Publish
             # its frozen prompt/tool pin only after durable ownership.
+            planned = session.get("_rust_plan_state") is agent
+            pending = None
+            if planned:
+                row = agent._session_db.get_session(agent.session_id)
+                if row is None or row.get("tool_names") != stage["saved_tool_pin"]:
+                    raise RustTurnConflict("tool pin changed during lease admission")
+                pending = stage["pending_tool_pin"]
+                if pending != agent.pending_tool_pin or (pending is not None and pending.get("tools") != agent.tools):
+                    raise RustTurnConflict("planned tool pin changed during lease admission")
             _persist_system_prompt(
                 agent, "Rust turn system prompt persist failed (session=%s): %s",
-                persist_tools=True)
+                persist_tools=not planned)
+            if pending is not None:
+                agent._session_db.update_session_tool_names(agent.session_id, pending)
+                if agent.pending_tool_pin == pending:
+                    agent.pending_tool_pin = None
             lease.start()
         with session["history_lock"]:
             user = _accepted_rust_user(session, stage)
@@ -374,15 +469,21 @@ def rust_turn_lease(session: dict, frame: dict) -> Iterator[None]:
         lease.release()
         if stage and stage.get("retire_agent"):
             with session["history_lock"]:
-                if session.get("agent") is agent:
+                planned = session.get("_rust_plan_state") is agent
+                if planned:
+                    session.pop("_rust_plan_state")
+                    session.pop("_rust_planner_announced", None)
+                    session.pop("config_model_seen", None)
+                elif session.get("agent") is agent:
                     session["agent"] = None
                     session["agent_ready"] = threading.Event()
                     session.pop("agent_build_started", None)
                     session.pop("agent_error", None)
                     session.pop("config_model_seen", None)
-            agent._end_session_on_close = False
-            with server._session_profile_runtime_scope(session, hydrate_secrets=False):
-                agent.close()
+            if not planned:
+                agent._end_session_on_close = False
+                with server._session_profile_runtime_scope(session, hydrate_secrets=False):
+                    agent.close()
 
 
 def _accepted_rust_user(session: dict, stage: dict) -> dict:
@@ -419,7 +520,7 @@ def _append_rust_rows(session: dict, stage: dict, rows: list[dict]) -> None:
     from agent.transcript_repair import sync_flushed_message_markers
     from tui_gateway import server
 
-    agent = session["agent"]
+    agent = rust_plan_state(session)
     holder = getattr(agent, "_active_session_turn_lease_holder", None)
     if not holder:
         raise RustTurnConflict("Rust transcript has no durable turn lease")
@@ -441,7 +542,7 @@ def _adopt_rust_snapshot(session: dict, messages: list[dict]) -> None:
     from agent.context_compressor import _DB_PERSISTED_MARKER
     from agent.session_persistence import _persist_lock
 
-    agent = session["agent"]
+    agent = rust_plan_state(session)
     with _persist_lock(agent):
         agent._session_messages = messages
         watermark = next(
@@ -541,7 +642,7 @@ def prepare_empty_retry(session: dict, check: ContextPreflight) -> float | None:
         if (check.summary or check.priced_prefix_count != count or len(check.messages) != count
                 or check.response_index != stage.get("context_api_calls", 0) + 1):
             raise RustTurnConflict("empty response has an invalid priced prefix or attempt index")
-        agent = session["agent"]
+        agent = rust_plan_state(session)
 
     _record_context_response_usage(agent, stage, check, check.messages)
     if (attempt := check.empty_attempt) is None:
@@ -560,7 +661,7 @@ def prepare_context_preflight(session: dict, check: ContextPreflight) -> Literal
     from agent.context_compressor import MAX_ITERATIONS_SUMMARY_REQUEST
     from agent.conversation_compression import ensure_compression_feasibility_checked
     from agent.conversation_loop import _midturn_request_pressure_tokens, _pressure_with_real_floor
-    from agent.model_metadata import estimate_messages_tokens_rough
+    from agent.model_metadata import MINIMUM_CONTEXT_LENGTH, estimate_messages_tokens_rough
     from agent.turn_context import _agent_stale_thinking_on_wire
     from agent.usage_anchor import anchored_context_tokens, capture_usage_anchor
 
@@ -580,7 +681,7 @@ def prepare_context_preflight(session: dict, check: ContextPreflight) -> Literal
                 or check.messages[-1].get("role") != "tool"):
             raise RustTurnConflict("context preflight has no completed model and tool round")
         system = stage["context_system"]
-        agent = session["agent"]
+        agent = rust_plan_state(session)
         stage["context_message_count"] = len(check.messages)
 
     # The supervisor serializes this sample with terminal settlement.
@@ -590,28 +691,44 @@ def prepare_context_preflight(session: dict, check: ContextPreflight) -> Literal
                   or stage.get("context_anchor"))
         stage["context_anchor"] = anchor
 
-    messages = check.messages
-    if check.summary:
-        messages = [*messages, {"role": "user", "content": MAX_ITERATIONS_SUMMARY_REQUEST}]
-    compressor = agent.context_compressor
-    pressure = anchored_context_tokens(messages, anchor or getattr(agent, "_usage_anchor", None))
-    anchored = pressure is not None
-    if not anchored:
-        api_messages = [{"role": "system", "content": system}, *messages]
-        rough = estimate_messages_tokens_rough(api_messages, charge_stale_thinking=_agent_stale_thinking_on_wire(agent))
-        pressure = _pressure_with_real_floor(
-            compressor, _midturn_request_pressure_tokens(agent, api_messages, system, rough))
-    blocked = False
+    decision: Literal["allow", "pressure", "unavailable"] = "allow"
     if agent.compression_enabled and getattr(agent, "max_compression_attempts", 3) > 0:
-        ensure_compression_feasibility_checked(agent, pressure)
-        defer = not anchored and compressor.should_defer_preflight_to_real_usage(pressure)
-        blocked = not defer and compressor.should_compress(pressure)
+        messages = check.messages
+        if check.summary:
+            messages = [*messages, {"role": "user", "content": MAX_ITERATIONS_SUMMARY_REQUEST}]
+        compressor = agent.context_compressor
+        pressure = anchored_context_tokens(messages, anchor or getattr(agent, "_usage_anchor", None))
+        anchored = pressure is not None
+        if not anchored:
+            api_messages = [{"role": "system", "content": system}, *messages]
+            rough = estimate_messages_tokens_rough(
+                api_messages, charge_stale_thinking=_agent_stale_thinking_on_wire(agent))
+            pressure = _pressure_with_real_floor(
+                compressor, _midturn_request_pressure_tokens(agent, api_messages, system, rough))
+        lightweight = session.get("_rust_plan_state") is agent
+        if not lightweight:
+            ensure_compression_feasibility_checked(agent, pressure)
+
+        def needs_compression(policy) -> bool:
+            defer = not anchored and policy.should_defer_preflight_to_real_usage(pressure)
+            return not defer and policy.should_compress(pressure)
+
+        if needs_compression(compressor):
+            decision = "pressure"
+        elif (lightweight and not getattr(agent, "_compression_feasibility_checked", False)
+              and pressure >= MINIMUM_CONTEXT_LENGTH and compressor.threshold_tokens > MINIMUM_CONTEXT_LENGTH):
+            # Feasibility can only lower the trigger, down to this minimum. If even that
+            # trigger allows the request, every possible auxiliary window agrees.
+            lowest = copy.copy(compressor)
+            lowest.threshold_tokens = MINIMUM_CONTEXT_LENGTH
+            if needs_compression(lowest):
+                decision = "unavailable"
 
     with session["history_lock"]:
         if (session.get("_rust_turn_stage") is not stage or not session.get("running")
                 or session.get("_closing") or session.get("_turn_cancel_requested")):
             return "unavailable"
-    return "pressure" if blocked else "allow"
+    return decision
 
 
 def _pending_context_response(stage: dict, frame: dict) -> ContextResponseUsage | None:
@@ -653,7 +770,7 @@ def _stage_context_recovery(session: dict, stage: dict, history: list[dict]) -> 
     if priced_count <= len(history):
         rebased = capture_usage_anchor(anchor["prompt_tokens"], anchor["completion_tokens"], history[:priced_count])
         with server._session_profile_runtime_scope(session, hydrate_secrets=False):
-            set_usage_anchor(session["agent"], rebased)
+            set_usage_anchor(rust_plan_state(session), rebased)
 
 
 def prepare_iteration_summary(session: dict, frame: dict) -> dict:
@@ -666,7 +783,7 @@ def prepare_iteration_summary(session: dict, frame: dict) -> dict:
 
     with session["history_lock"]:
         stage = session["_rust_turn_stage"]
-        agent = session["agent"]
+        agent = rust_plan_state(session)
         rows = _rust_suffix(stage, frame)
         attempts = stage.get("context_api_calls", 0)
         message_count = len(frame["messages"])
@@ -708,7 +825,7 @@ def _finish_iteration_summary(session: dict, stage: dict, frame: dict, rows: lis
     if (frame.get("max_iterations_reached") is not True or rows != stage.get("summary_rows")
             or frame.get("status") != "complete" or frame.get("interrupted")):
         raise RustTurnConflict("invalid iteration summary completion")
-    agent = session["agent"]
+    agent = rust_plan_state(session)
     with server._session_profile_runtime_scope(session, hydrate_secrets=False):
         match frame.get("summary_outcome"):
             case "success" if isinstance(frame.get("text"), str) and frame["text"].strip():
@@ -765,7 +882,7 @@ def _close_rust_outcome(session: dict, frame: dict, rows: list[dict], status: st
             "failure_reason": frame.get("failure_reason") or "host_error",
             "failure_retryable": frame.get("failure_retryable", False),
         }
-        if metadata := _failed_turn_display_metadata(session["agent"], result):
+        if metadata := _failed_turn_display_metadata(rust_plan_state(session), result):
             boundary["display_metadata"] = metadata
         append_message(rows, boundary)
 
@@ -795,7 +912,7 @@ def persist_rust_turn(session: dict, frame: dict) -> dict | None:
         if "rows" not in stage:
             raise RustTurnConflict("Rust turn was not durably admitted")
         rows = _rust_suffix(stage, frame)
-        agent = session["agent"]
+        agent = rust_plan_state(session)
         context_response = _pending_context_response(stage, frame)
         if frame.get("max_iterations_reached") or frame.get("summary_outcome") is not None:
             _finish_iteration_summary(session, stage, frame, rows)
@@ -809,7 +926,7 @@ def persist_rust_turn(session: dict, frame: dict) -> dict | None:
         history = [*stage["history"], *rows]
         _adopt_rust_snapshot(session, history)
         receipt_state = server._TurnRun(
-            agent=session["agent"], one_turn_restore=None, terminal_callback=None,
+            agent=agent, one_turn_restore=None, terminal_callback=None,
             receipt_committed=False)
         receipt_state.history = stage["history"]
         receipt_state.compression_count = stage["compression_count"]

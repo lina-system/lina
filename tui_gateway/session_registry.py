@@ -556,12 +556,20 @@ def _finalize_superseded_runtimes(stale: list[tuple[str, dict]]) -> None:
             logger.exception("superseded runtime teardown failed sid=%s", old_sid)
 
 
+def _prewarm_session_agent(sid: str, session: dict) -> None:
+    with _session_profile_runtime_scope(session, hydrate_secrets=False):
+        cfg = _load_dashboard_process_isolation_config()
+    if cfg["compute_host_impl"] == "rust" and _turn_isolation_enabled(cfg):
+        return  # Native planning reads the route and transcript at submit time.
+    _start_agent_build(sid, session)
+
+
 def _schedule_agent_build(sid: str, delay: float = 0.05) -> None:
     """Pre-warm a deferred session's agent off the response path (session.create + cold resume; _sess() also builds on demand)."""
 
     def _run():
         if (session := _sessions.get(sid)) is not None:
-            _start_agent_build(sid, session)
+            _prewarm_session_agent(sid, session)
             _maybe_notify_auto_prune(sid, session.get("profile_home"))
     timer = threading.Timer(delay, _run)
     timer.daemon = True
@@ -631,7 +639,7 @@ def _schedule_resume_hydration(sid: str, stored_id: str, db, *, close_db: bool =
             _emit("session.resume_progress", sid,
                   {"message_count": session["resume_message_count"], "phase": "history", "status": "complete"})
             _maybe_schedule_auto_continue(sid, session, stored_id)
-            _start_agent_build(sid, session)
+            _prewarm_session_agent(sid, session)
         except (Exception, ConfigBackendUnavailable) as exc:  # health: allow BLE001 -- reported as the resume failure
             if _sessions.get(sid) is not session:
                 return

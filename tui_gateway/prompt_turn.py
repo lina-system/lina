@@ -30,7 +30,7 @@ def _bot_mode_delivery_text(response: Any, *, successful: bool) -> Any:
     return "" if is_intentional_silence_response(response) else strip_trailing_silence_marker(response)
 
 
-def _is_bot_mode_session(session: dict) -> bool:
+def _is_bot_mode_session(session: dict, *, runtime=None) -> bool:
     """Whether this completion belongs to the canonical Bot Chat surface.
 
     Same resolution as the system-prompt gate: the agent's title hint first (the DB
@@ -38,7 +38,8 @@ def _is_bot_mode_session(session: dict) -> bool:
     live title from the session store.
     """
     from tools.bot_mode_probe import BOT_CHAT_TITLE
-    hint = str(getattr(session.get("agent"), "_session_title_hint", "") or "").strip()
+    agent = runtime if runtime is not None else session.get("agent")
+    hint = str(getattr(agent, "_session_title_hint", "") or "").strip()
     if hint:  # any explicit hint decides; only an empty one costs a session-store read
         return hint == BOT_CHAT_TITLE
     return _session_live_title(session, _session_lookup_key(session)) == BOT_CHAT_TITLE
@@ -659,16 +660,9 @@ def _stage_first_contact_onboarding_note(session: dict, agent, history_empty: bo
         logger.debug("first-contact onboarding note failed", exc_info=True)
 
 
-def _prepare_turn_input(sid: str, session: dict, st: _TurnRun, text: Any, images: list[str]):
-    """Bind scopes, sync the agent, snapshot history, build the run message; returns
-    ``(prompt, run_message, cols, streamer)`` or None when @-expansion was refused.
-    Scopes fill field by field so a failure midway still leaves every bound token for the
-    finally; the profile's terminal policy is bound too (a failed install leaves a
-    fail-closed refusal scope).  The config-model sync is skipped under a /model --once
-    override (not pinned as model_override, the sync would clobber it); a model picked
-    mid-turn is applied first so the explicit pick wins over a config change."""
+def _bind_turn_input_scopes(sid: str, session: dict, scopes: _TurnScopes) -> None:
+    """Record reset tokens as each turn scope is installed, including on a partial bind."""
     from tools.approval_context import set_current_session_key
-    scopes = st.scopes
     scopes.approval = set_current_session_key(session["session_key"])
     scopes.session_tokens = _set_session_context(session["session_key"], ui_session_id=sid)
     # Profile turn: that profile's home + secrets + terminal policy. Launch-profile turn: unscoped in a
@@ -679,6 +673,11 @@ def _prepare_turn_input(sid: str, session: dict, st: _TurnRun, text: Any, images
     bound = _profile_runtime_scope_tokens(session.get("profile_home"))
     if bound is not None:
         scopes.home, scopes.secret, scopes.terminal = bound.home, bound.secret, bound.terminal
+
+
+def _prepare_turn_input(sid: str, session: dict, st: _TurnRun, text: Any, images: list[str]):
+    """Sync the live agent and return ``(prompt, run_message, cols, streamer)`` for this turn."""
+    _bind_turn_input_scopes(sid, session, st.scopes)
     # The sudo password callback is thread-local: without re-wiring here, sudo prompts
     # fall through to /dev/tty and hang the headless gateway (re-run is a no-op).
     _wire_callbacks(sid)
@@ -694,7 +693,13 @@ def _prepare_turn_input(sid: str, session: dict, st: _TurnRun, text: Any, images
     _sync_agent_fallback_with_config(sid, session)  # chain added after the chat opened reaches this turn
     _sync_bot_capabilities(sid, session)  # Bot Chat: adopt Settings->Capabilities edits
     _adopt_out_of_band_turns(session)
-    st.agent = agent = session["agent"]
+    st.agent = session["agent"]
+    return _prepare_turn_message(sid, session, st, text, images)
+
+
+def _prepare_turn_message(sid: str, session: dict, st: _TurnRun, text: Any, images: list[str]):
+    """Freeze the history after adoption and stage the model-facing notes for that snapshot."""
+    agent = st.agent
     # Snapshot after the model sync: a deferred switch's history mutation belongs to this turn.
     with session["history_lock"]:
         st.history = list(session["history"])

@@ -111,6 +111,8 @@ def _prepare_inline_after_compute_host(session: dict) -> bool:
             return False
         session.pop("_compute_host_active", None)
         session.pop("_metadata_mirror", None)
+        session.pop("_rust_plan_state", None)
+        session.pop("_rust_planner_announced", None)
     return True
 
 
@@ -171,6 +173,8 @@ def _metadata_mirror(session: dict | None) -> dict:
 
 
 def _compute_host_session_info(session: dict) -> dict:
+    if (state := session.get("_rust_plan_state")) is not None:
+        return _session_info(state, {**session, "agent": state})
     return _session_info(session.get("agent"), session)
 
 
@@ -400,7 +404,7 @@ def _submit_prompt_to_compute_host(
     # Caller JSON-RPC ids may repeat across sockets and turns. Use an opaque
     # dispatch lifetime token, installed before a fast child can send activity.
     from tui_gateway.rust_host_supervisor import RustHostSupervisor, select_host
-    from tui_gateway.rust_turn_plan import persist_rust_turn
+    from tui_gateway.rust_turn_plan import persist_rust_turn, rust_plan_state
 
     leases = contextlib.ExitStack()
     turn_id = frame["turn_id"] = frame["request_id"] = uuid.uuid4().hex
@@ -454,7 +458,7 @@ def _submit_prompt_to_compute_host(
                             settlement = {**{key: value for key, value in done.items() if key != "provider_error"},
                                           **details}
                             receipt = persist_rust_turn(session, settlement)
-                            if (db := getattr(session.get("agent"), "_session_db", None)) is not None:
+                            if (db := getattr(rust_plan_state(session), "_session_db", None)) is not None:
                                 db.flush_token_counts()
                             handoff, goal_reply = _rust_goal_completion(settlement)
                             if details.get("status") == "error":

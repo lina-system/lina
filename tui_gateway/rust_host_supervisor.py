@@ -16,6 +16,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from tui_gateway.contracts.compute_host import ModelRetry, ProviderError, TransportError
 from tui_gateway.host_supervisor import HostSupervisor, NativeHostBuildError, _build_sha
+from tui_gateway.rust_turn_plan import rust_plan_state
 
 logger = logging.getLogger(__name__)
 _MODEL_FAILURE = TypeAdapter(ProviderError | TransportError)
@@ -191,7 +192,7 @@ class RustHostSupervisor(HostSupervisor):
         from agent.redact import redact_sensitive_text
         from tui_gateway import server
 
-        agent = self.session["agent"]
+        agent = rust_plan_state(self.session)
         if isinstance(failure, TransportError):
             error = ConnectionError("Model connection interrupted")
         else:
@@ -216,7 +217,7 @@ class RustHostSupervisor(HostSupervisor):
 
             with server._session_profile_runtime_scope(self.session, hydrate_secrets=False):
                 text = _explain_abnormal_exit(
-                    self.session["agent"], "(empty)", "empty_response_exhausted", False, logger)
+                    rust_plan_state(self.session), "(empty)", "empty_response_exhausted", False, logger)
             payload["text"] = text
             self._failure_status = (
                 "⚠️ Model produced reasoning but no visible response after all retries. Returning empty."
@@ -237,7 +238,7 @@ class RustHostSupervisor(HostSupervisor):
             with server._session_profile_runtime_scope(self.session, hydrate_secrets=False):
                 detail = redact_sensitive_text(payload.get("error", ""), force=True)
                 detail = server._strip_prompt_echo(detail, (self.session.get("_rust_turn_stage") or {}).get("text"))
-                agent = self.session["agent"]
+                agent = rust_plan_state(self.session)
                 text = "⚠️ " + content_policy_copy(
                     label=provider_label_for(agent.provider),
                     summary=detail or "the model returned no explanation",
@@ -261,7 +262,7 @@ class RustHostSupervisor(HostSupervisor):
             failure = _MODEL_FAILURE.validate_python(frame["provider_error"], strict=True)
         except ValidationError:
             return details
-        agent = self.session["agent"]
+        agent = rust_plan_state(self.session)
         with server._session_profile_runtime_scope(self.session, hydrate_secrets=False):
             error, classifier = self._classify_model_failure(failure)
             summary = agent._summarize_api_error(error)
@@ -304,7 +305,7 @@ class RustHostSupervisor(HostSupervisor):
                 payload["text"] = None
             if handoff is not None:
                 payload["text"] = handoff["final_response"]
-            if (agent := self.session.get("agent")) is not None and isinstance(payload.get("usage"), dict):
+            if (agent := rust_plan_state(self.session)) is not None and isinstance(payload.get("usage"), dict):
                 payload["usage"] = server._get_usage(agent)
             if isinstance(payload.get("text"), str) and (
                     rendered := render_message(payload["text"], self.session.get("cols", 80))):
@@ -470,7 +471,7 @@ class RustHostSupervisor(HostSupervisor):
         delay = None
         if self._owns_policy_request(check):
             with self.settlement_lock, server._session_profile_runtime_scope(self.session):
-                agent = self.session["agent"]
+                agent = rust_plan_state(self.session)
                 error, verdict = self._classify_model_failure(check.failure)
                 rate_limited = verdict.reason in (FailoverReason.rate_limit, FailoverReason.upstream_rate_limit)
                 if (check.failure.attempts < agent._api_max_retries and verdict.retryable
@@ -513,6 +514,9 @@ def _select_python_host(session, cfg):
     from tui_gateway import server
 
     server._retire_session_rust_host(session)
+    session.pop("_rust_plan_state", None)
+    session.pop("_rust_parent_info", None)
+    session.pop("_rust_planner_announced", None)
     if session.get("_rust_parent_history"):
         return None  # A previous Python child may still cache a pre-Rust transcript.
     return server._get_compute_host_supervisor(cfg)
@@ -578,6 +582,11 @@ def select_host(sid, session, cfg, frame, leases):
         return _select_python_host(session, cfg)
     # This lease may persist the user row, so acquire it only after hello validates.
     leases.enter_context(rust_turn_lease(session, rust_frame))
+    if session.get("_rust_plan_state") is not None:
+        if (info := session.pop("_rust_parent_info", None)) is not None:
+            server._emit("session.info", sid, info)
+            session["_parent_agent_announced"] = True
+        session["_rust_planner_announced"] = True
     frame.update(rust_frame)
     frame["turn_plan"] = plan
     return host

@@ -162,8 +162,10 @@ def _decision(session: dict, frame: dict) -> dict:
 
 
 def _completion_hints(session: dict, frame: dict) -> str:
+    from tui_gateway.rust_turn_plan import rust_plan_state
+
     args = ReadFileHintArgs.model_validate(frame["hint_args"]).model_dump(exclude_none=True)
-    tracker = getattr(session.get("agent"), "_subdirectory_hints", None)
+    tracker = getattr(rust_plan_state(session), "_subdirectory_hints", None)
     return (tracker.check_tool_call("read_file", args) or "") if tracker is not None else ""
 
 
