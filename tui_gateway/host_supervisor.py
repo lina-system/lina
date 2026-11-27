@@ -5,6 +5,7 @@ agent threads do not contend with the serving process' event loop for the GIL.""
 from __future__ import annotations
 
 import contextlib
+import errno
 import json
 import logging
 import os
@@ -214,7 +215,7 @@ class HostSupervisor:
             if self.is_running():
                 return
             if self._proc is not None and not self._closing:
-                raise RuntimeError("compute host is exiting")
+                raise BlockingIOError(errno.EAGAIN, "compute host is exiting")
             self._closing = False
             self.reconcile_startup_orphan()
             self._spawn_locked(reason="startup")

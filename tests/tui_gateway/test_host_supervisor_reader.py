@@ -1,10 +1,12 @@
 """Exercise compute host frame recovery over a subprocess's stdio pipes."""
 
+import errno
 import queue
 import sys
 
 import pytest
 
+from tests.waiting import wait_until
 from tui_gateway.host_supervisor import HostSupervisor
 
 
@@ -58,6 +60,30 @@ for line in sys.stdin:
         emit("turn.end", sid="first", request_id="failed", history_version=7, interrupted=True)
         interrupted = False
 """
+
+
+def test_submit_during_exit_is_retryable(tmp_path):
+    completed = queue.Queue()
+    host = HostSupervisor(
+        argv=[sys.executable, "-u", "-c", _CHILD, "normal"],
+        registry_path=tmp_path / "host.json", expected_build_sha="unknown",
+    )
+    frame = {"sid": "second", "request_id": "other"}
+    try:
+        with host._lock:  # Hold the exit watcher at the boundary between wait() and cleanup.
+            proc = host._proc
+            proc.terminate()
+            proc.wait(timeout=5)
+            with pytest.raises(BlockingIOError) as raised:
+                host.submit_turn(frame, on_complete=completed.put)
+            assert raised.value.errno == errno.EAGAIN
+        assert wait_until(lambda: host.is_running() and host.pid != proc.pid, timeout=5)
+        host.submit_turn(frame, on_complete=completed.put)
+        terminal = completed.get(timeout=5)
+        assert (terminal["request_id"], terminal["type"]) == ("other", "turn.end")
+        assert completed.empty()
+    finally:
+        host.shutdown()
 
 
 def test_reader_recovers_correlated_turn_after_rpc_handler_fault(tmp_path, caplog):
