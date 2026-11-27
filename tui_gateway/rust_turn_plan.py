@@ -102,12 +102,17 @@ def _planning_state(sid: str, session: dict):
 def _compatible_agent(agent) -> bool:
     """Require the actual OpenAI transport and the complete read-only tool set."""
     from agent.context_compressor import ContextCompressor
+    from agent.fast_mode import BOUNDED_MODES
     from agent.reasoning_promotion import answer_in_reasoning_capability
     from hermes_cli.plugins import has_hook, has_middleware
     from hermes_cli.plugins_dispatch import stream_held
     from tui_gateway.rust_plan_runtime import RustPlanState
 
-    if not isinstance(agent, RustPlanState):
+    if isinstance(agent, RustPlanState):
+        # A session can enable a Python-managed fast window after its first native turn.
+        if agent.service_tier in BOUNDED_MODES:
+            return False
+    else:
         from openai import OpenAI
         from run_agent import AIAgent
 
