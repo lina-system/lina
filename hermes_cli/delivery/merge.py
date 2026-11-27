@@ -27,9 +27,9 @@ def _state(pr: dict) -> str:
     return "OPEN" if pr.get("state") == "open" else "CLOSED"
 
 
-def collect_pr(gh, repo: str, number: int, base: Path | None = None) -> dict:
+def collect_pr(gh, repo: str, number: int, base: Path | None = None, *, base_branch: str | None = None) -> dict:
     pr = gh.json(f"repos/{repo}/pulls/{number}")
-    head, delivery = pr["head"]["sha"], settings.base_branch(base)
+    head, delivery = pr["head"]["sha"], settings.delivery_branch(gh, repo, base, base_branch)
     # Rules and dev green are read on the delivery branch, never on whatever base the PR names.
     found = rule_types(gh, repo, delivery)
     dev_ok, dev_failed = dev_state(gh, repo, delivery, settings.dev_workflow(base))
@@ -94,9 +94,9 @@ def after_merge(gh, repo: str, snapshot: dict, out, base: Path | None = None) ->
         out(line)
 
 
-def merge_pr(gh, repo: str, number: int, *, base: Path | None = None, out=print, sleep=time.sleep,
+def merge_pr(gh, repo: str, number: int, *, base: Path | None = None, base_branch: str | None = None, out=print, sleep=time.sleep,
              queue_timeout_s: float = 90 * 60, poll_s: float = 60) -> int:
-    snapshot = collect_pr(gh, repo, number, base)
+    snapshot = collect_pr(gh, repo, number, base, base_branch=base_branch)
     if snapshot["state"] == "MERGED":
         return _finish_merged(gh, repo, snapshot, out, base)
     verdict = rules.may_merge(snapshot)
@@ -127,9 +127,10 @@ def merge_pr(gh, repo: str, number: int, *, base: Path | None = None, out=print,
     return rules.PASS
 
 
-def report_only(gh, repo: str, number: int, *, base: Path | None = None, out=print, **_merge_options) -> int:
+def report_only(gh, repo: str, number: int, *, base: Path | None = None, base_branch: str | None = None,
+                out=print, **_merge_options) -> int:
     """Report the gates for an open PR, or finish the issue updates for an already merged PR."""
-    snapshot = collect_pr(gh, repo, number, base)
+    snapshot = collect_pr(gh, repo, number, base, base_branch=base_branch)
     if snapshot["state"] == "MERGED":
         return _finish_merged(gh, repo, snapshot, out, base)
     verdict = rules.may_merge(snapshot)

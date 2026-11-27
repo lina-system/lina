@@ -40,6 +40,12 @@ def _crash(*_args, **_kwargs):
     raise RuntimeError("the process died before the worker call")
 
 
+def test_submit_stores_the_requested_base_branch(work):
+    work.ok("run", "submit", "T1", "--repo", "acme/app", "--brief", str(work.brief), "--base", "release")
+    (job,) = _jobs(work).values()
+    assert job["base_branch"] == "release"
+
+
 def test_crash_between_record_and_worker_leaves_an_outbox_row_the_next_call_resumes(work, monkeypatch):
     real = runs._call_worker
     monkeypatch.setattr(runs, "_call_worker", _crash)

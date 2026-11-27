@@ -277,6 +277,7 @@ def _run(sp) -> None:
     q.add_argument("--card", help="a work card (t_…): every to-do linked to it")
     q.add_argument("--brief", required=True)
     q.add_argument("--mode", default="ulw")
+    q.add_argument("--base", dest="base_branch", help="branch to start the worker from and land its changes on")
     for flag in ("--repo", "--host", "--runner", "--model", "--note"):
         q.add_argument(flag)
     q.add_argument("--input", action="append")

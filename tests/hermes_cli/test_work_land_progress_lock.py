@@ -14,6 +14,7 @@ from tests.hermes_cli._work_fakes import FakeGh
 @pytest.fixture
 def run_land(tmp_path, monkeypatch):
     repo, task = "acme/app", "OT-LAND"
+    (tmp_path / "config.yaml").write_text("work:\n  base: dev\n", encoding="utf-8")
     Store(tmp_path / "worker").save({"id": task, "repo": repo, "bot": "worker"})
     open_pulls = {}
 

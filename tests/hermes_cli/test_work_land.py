@@ -4,6 +4,7 @@ a branch whose history carries a subtree merge keeps that merge and its files af
 author outside the project's noreply address stops the landing before anything is pushed."""
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -75,26 +76,40 @@ def import_subtree(work: Path, vendor: Path) -> None:
     git(work, "commit", "-q", "-m", "feat(vendor): import the server as a subtree")
 
 
+class RepositoryGh(FakeGh):
+    """Record repository metadata requests with the other reads."""
+
+    default_branch = "dev"
+
+    def run(self, args, *options, **kwargs):
+        if args == ["repo", "view", REPO, "--json", "defaultBranchRef"]:
+            self.reads.append(" ".join(args))
+            return json.dumps({"defaultBranchRef": {"name": self.default_branch}})
+        return super().run(args, *options, **kwargs)
+
+
 def fake_github() -> FakeGh:
-    head = {"sha": None}
+    head = {"sha": None, "base": "dev"}
 
     def pulls(query: str):
         if not head["sha"] or ("state=open" in query and head.get("state", "open") != "open"):
             return []
-        return [{"number": 31, "state": head.get("state", "open"), "head": {"ref": BRANCH}, "base": {"ref": "dev"}}]
+        return [{"number": 31, "state": head.get("state", "open"), "head": {"ref": BRANCH}, "base": {"ref": head["base"]}}]
 
     def pull(_query):
         return {"number": 31, "state": "open", "merged": False, "node_id": "PR_31", "body": "Closes #12",
-                "head": {"sha": head["sha"], "ref": BRANCH}, "base": {"ref": "dev"}, "labels": []}
+                "head": {"sha": head["sha"], "ref": BRANCH}, "base": {"ref": head["base"]}, "labels": []}
 
     def on_run(args):
         if args[:2] == ["pr", "create"]:
             body = Path(args[args.index("--body-file") + 1]).read_text(encoding="utf-8")
             head["body"] = body
+            head["base"] = args[args.index("--base") + 1]
+            gh.routes.setdefault(f"repos/{REPO}/rules/branches/{head['base']}", [])
             head["sha"] = "f" * 40
         return ""
 
-    gh = FakeGh({f"repos/{REPO}/pulls": pulls, f"repos/{REPO}/pulls/31": pull,
+    gh = RepositoryGh({f"repos/{REPO}/pulls": pulls, f"repos/{REPO}/pulls/31": pull,
                  f"repos/{REPO}/rules/branches/dev": [{"type": "required_status_checks", "parameters": {
                      "required_status_checks": [{"context": "tests"}]}}],
                  f"repos/{REPO}/actions/runs": {"workflow_runs": []},
@@ -104,6 +119,42 @@ def fake_github() -> FakeGh:
                  f"repos/{REPO}/issues/12": {"number": 12, "state": "open", "body": ""}}, on_run=on_run)
     gh.created = head
     return gh
+
+
+@pytest.mark.parametrize("configured,requested,branches,target", [
+    (None, None, {"main"}, "main"),
+    ("dev", None, {"main", "dev"}, "dev"),
+    ("dev", "release", {"main", "dev", "release"}, "release"),
+])
+def test_land_uses_the_expected_base_for_the_clone_pr_and_checks(
+        tmp_path, monkeypatch, configured, requested, branches, target):
+    from hermes_cli.delivery import land as landing
+
+    if configured:
+        (tmp_path / "config.yaml").write_text(f"work:\n  base: {configured}\n", encoding="utf-8")
+    Store(tmp_path / "worker").save({"id": TASK, "repo": REPO, "bot": "worker", "base_branch": requested})
+    cloned = []
+
+    def local_git(command, *args, **kwargs):
+        if command == "clone":
+            branch = args[args.index("-b") + 1]
+            if branch not in branches:
+                raise LandError(f"remote branch {branch} not found")
+            cloned.append(branch)
+        return "1" if command == "rev-list" else ""
+
+    monkeypatch.setattr(landing, "git", local_git)
+    monkeypatch.setattr(landing.WorkerBranchSource, "fetch", lambda *args: "worker-head")
+    monkeypatch.setattr(landing, "merge_base_into", lambda *args: None)
+    monkeypatch.setattr(landing, "check_result", lambda *args: None)
+    gh = fake_github()
+    gh.default_branch = "main"
+    gh.routes[f"repos/{REPO}/rules/branches/{target}"] = gh.routes[f"repos/{REPO}/rules/branches/dev"]
+    assert land(gh, BRANCH, TASK, "feat: example", 12, base=tmp_path) == rules.WAIT
+    assert cloned == [target] and gh.created["base"] == target
+    assert f"repos/{REPO}/rules/branches/{target}" in gh.reads
+    assert any(f"actions/runs?branch={target}&" in path for path in gh.reads)
+    assert ("repo view acme/app --json defaultBranchRef" in gh.reads) == (configured is None and requested is None)
 
 
 def test_a_subtree_merge_survives_the_landing_and_dev_is_merged_in(world):

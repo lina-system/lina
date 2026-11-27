@@ -17,8 +17,11 @@ work:
 """
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
+
+from hermes_cli.delivery.github import GhError
 
 DEFAULT_SCOPES = ("store", "install", "models", "cli", "home", "config", "service", "migrate")
 _SPRINT = re.compile(r"^\s*(?:(M\d+)\s+)?S(\d+)\s*$", re.IGNORECASE)
@@ -67,6 +70,19 @@ def land_merge(base: Path | None = None) -> bool:
 
 def base_branch(base: Path | None = None) -> str:
     return str(section(base).get("base") or "dev")
+
+
+def delivery_branch(gh, repo: str, base: Path | None, job_base: str | None = None) -> str:
+    if branch := job_base or section(base).get("base"):
+        return str(branch)
+    answer = gh.run(["repo", "view", repo, "--json", "defaultBranchRef"])
+    try:
+        branch = json.loads(answer)["defaultBranchRef"]["name"]
+    except (ValueError, KeyError, TypeError) as exc:
+        raise GhError(f"could not read the default branch of {repo}") from exc
+    if not isinstance(branch, str) or not branch.strip():
+        raise GhError(f"{repo} has no default branch")
+    return branch
 
 
 def dev_workflow(base: Path | None = None) -> str:
