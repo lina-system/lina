@@ -197,7 +197,7 @@ def test_local_prefill_plan_matches_delayed_python_stream(turn, monkeypatch):
     complete = ModelHandler._complete
 
     def slow_prefill(handler, request, index, reply):
-        time.sleep(0.4)
+        time.sleep(0.4)  # health: allow HX013 -- delay the first byte past the 0.1 s read timeout to exercise the provider override
         complete(handler, request, index, reply)
 
     monkeypatch.setattr(ModelHandler, "_complete", slow_prefill)
