@@ -263,10 +263,19 @@ Run `python scripts/korean_checks_probe.py --synthetic` for the 20-reply synthet
 An agent whose language setting is Korean (`display.language: ko`, read through `agent.i18n.get_language`) gets two
 things (lina#380); every other agent gets neither, and its prompt is the same bytes as without this feature.
 
-- **The rule**, in the frozen system-prompt section `agent-korean-writing` (`agent/korean_rule_section.py`), before
-  the self note: use the owner's words, describe a concept he never named instead of coining a name, keep the register,
-  no translationese. It is one constant, so it is the same bytes on every turn and in every session of every Korean
-  agent; it changes the cache prefix only where the language setting does.
+- **The rule** comes before the self note in the frozen system-prompt section `agent-korean-writing`
+  (`agent/korean_rule_section.py`). It is one constant, so every Korean agent gets the same bytes on every turn
+  and in every session. It changes the cache prefix only where the language setting does.
+  1. Use the owner's words. If he has never named a concept, describe it in plain words without coining a name.
+  2. Keep the register you use with the owner.
+  3. Avoid phrasing that sounds like a translation from English.
+  4. Answer directly, without a lead-in such as “요약하면” (“in short”).
+  5. Do not repeat the question.
+  6. Do not apologize out of habit.
+  7. Leave out habitual closing lines.
+  8. Say something is done only when you have checked it. Otherwise, give its actual status, such as draft,
+     waiting or blocked.
+  9. Use abbreviations and paths only when needed, and spell them out on first use.
 - **The turn's words**, in found memory (`plugins/memory/lina/korean.py`, appended to lina-memory's `prefetch`), so
   they ride the `memory_recall` tool result after the cached prefix and never touch the system prompt. Under the
   heading `주인의 말 (이번 턴에 나온 개념):` a turn gets:
