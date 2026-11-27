@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import copy
+import json
 import threading
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -156,6 +158,58 @@ def test_plan_uses_actual_prompt_tools_parameters_and_scoped_auth(turn):
     assert plan["params"]["stream_options"] == {"include_usage": True}
     assert plan["params"]["timeout"] == agent._resolved_api_call_timeout()
     assert frame["terminal_backend"] == "local"
+
+
+@pytest.mark.parametrize(("base_url", "provider_settings", "expected"), [
+    ("http://127.0.0.1:9/v1", {}, 240.0),
+    ("https://model.example/v1", {"request_timeout_seconds": 320.5}, 320.5),
+    ("https://model.example/v1", {"stale_timeout_seconds": 90}, 120.0),
+    ("https://model.example/v1", {"stale_timeout_seconds": 210}, 210.0),
+])
+def test_plan_preserves_stream_patience_and_request_deadline(turn, monkeypatch, base_url,
+                                                             provider_settings, expected):
+    session, frame, _ = turn
+    agent = session["agent"]
+    monkeypatch.setenv("HERMES_API_TIMEOUT", "240")
+    monkeypatch.delenv("HERMES_STREAM_READ_TIMEOUT", raising=False)
+    agent.base_url = agent._client_kwargs["base_url"] = base_url
+    (Path(session["profile_home"]) / "config.yaml").write_text(
+        json.dumps({"providers": {agent.provider: provider_settings}}), encoding="utf-8",
+    )
+
+    plan, _ = prepare_rust_turn("runtime", session, frame)
+
+    assert plan["params"]["stream_read_timeout"] == expected
+    assert plan["params"]["timeout"] == agent._resolved_api_call_timeout()
+
+
+def test_local_prefill_plan_matches_delayed_python_stream(turn, monkeypatch):
+    from agent.chat_completion_helpers import interruptible_streaming_api_call
+    from tests.tui_gateway._turn_host_parity_support import ModelHandler, Reply, loopback_model
+
+    session, frame, _ = turn
+    agent = session["agent"]
+    monkeypatch.setenv("HERMES_STREAM_READ_TIMEOUT", "0.1")
+    (Path(session["profile_home"]) / "config.yaml").write_text(
+        json.dumps({"providers": {agent.provider: {"request_timeout_seconds": 3}}}),
+        encoding="utf-8",
+    )
+    complete = ModelHandler._complete
+
+    def slow_prefill(handler, request, index, reply):
+        time.sleep(0.4)  # health: allow HX013 -- delay the first byte past the 0.1 s read timeout to exercise the provider override
+        complete(handler, request, index, reply)
+
+    monkeypatch.setattr(ModelHandler, "_complete", slow_prefill)
+    with loopback_model((Reply(text="ready"),)) as model:
+        agent.base_url = agent._client_kwargs["base_url"] = model.url
+        plan, _ = prepare_rust_turn("runtime", session, frame)
+        reply = interruptible_streaming_api_call(agent, {
+            "model": agent.model, "messages": [{"role": "user", "content": frame["text"]}],
+        })
+        assert reply.choices[0].message.content == "ready"
+        assert len(model.requests) == 1
+    assert plan["params"]["stream_read_timeout"] == 3
 
 
 @pytest.mark.parametrize("hook_name", [

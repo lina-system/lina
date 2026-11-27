@@ -245,6 +245,62 @@ fn reply(mut socket: TcpStream, content_type: &str, body: &str) {
 }
 
 #[test]
+fn delayed_first_byte_obeys_each_turns_read_budget_and_request_deadline() {
+    let (listener, base_url) = model();
+    let cases = [
+        ("short-read", 0.1, 3.0, false),
+        ("slow-prefill", 3.0, 3.0, true),
+        ("short-request", 3.0, 0.1, false),
+    ];
+    let server = std::thread::spawn(move || {
+        for (_, _, _, completes) in cases {
+            let (mut socket, body) = request(&listener);
+            assert!(body.get("stream_read_timeout").is_none());
+            assert!(body.get("timeout").is_none());
+            std::thread::sleep(Duration::from_millis(400));
+            let data = "data: {\"choices\":[{\"delta\":{\"content\":\"ready\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n";
+            let sent = write!(
+                socket,
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{data}",
+                data.len()
+            );
+            // A timed-out client may have closed the socket during prefill.
+            if completes {
+                sent.unwrap();
+            }
+        }
+    });
+    let affinity: serde_json::Map<_, _> = AFFINITY
+        .into_iter()
+        .map(|name| (name.to_owned(), json!("session-17")))
+        .collect();
+    let mut host = Host::spawn();
+    for (id, read, total, completes) in cases {
+        host.send(&json!({
+            "type": "turn.start", "sid": "session", "request_id": id, "turn_id": id,
+            "text": "ping", "cwd": std::env::current_dir().unwrap(), "terminal_backend": "local",
+            "turn_plan": {"system": "", "tools": [], "model": "local", "stream": true,
+                          "base_url": base_url, "params": {"timeout": total,
+                          "stream_read_timeout": read, "session_affinity": affinity}}
+        }));
+        assert_eq!(host.next()["type"], "turn.started");
+        let end = loop {
+            let frame = host.next();
+            if frame["type"] == "turn.end" {
+                break frame;
+            }
+        };
+        if completes {
+            assert_eq!(end["new_messages"][1]["content"], "ready");
+        } else {
+            assert_eq!(end["provider_error"]["transport"], "connection", "{id}");
+        }
+    }
+    host.close();
+    server.join().unwrap();
+}
+
+#[test]
 fn same_process_completes_nonstream_and_stream_with_cached_prompt_fields() {
     let (model, base_url) = model();
     let server = std::thread::spawn(move || {
