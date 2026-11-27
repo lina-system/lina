@@ -171,6 +171,8 @@ class HostSupervisor:
     """Own one persistent compute-host child and relay its frames."""
 
     requires_build_sha = False
+    # A per-session supervisor binds this before spawning its dedicated child.
+    sid: str | None = None
 
     def __init__(
         self, *, registry_path: str | Path | None = None, argv: list[str] | None = None,
@@ -562,6 +564,11 @@ class HostSupervisor:
             except (OSError, RuntimeError, ValueError) as exc:
                 _log_frame_failure("compute host frame recovery could not send interrupt", exc)
                 grace = 0.0
+        # Python writes history before its terminal frame. A slow cooperative
+        # interrupt is no reason to kill the writer and every other session.
+        # Native requests awaiting a parent reply can require process retirement.
+        if self.sid is None:
+            return
         spawn_context_thread(
             self._retire_if_turn_unsettled, args=(proc, request_id, settled, grace),
             name="compute-host-frame-recovery",
