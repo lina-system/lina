@@ -328,8 +328,10 @@ def resolve_invoke_tool_executor(agent, function_name: str) -> Optional[InlineTo
         return INLINE_TOOL_EXECUTORS[function_name]
     memory_manager = agent._memory_manager
     if memory_manager and memory_manager.has_tool(function_name):
+        session_id = getattr(agent, "session_id", "") or ""
         return lambda agent, args, ctx: agent._memory_manager.handle_tool_call(
             function_name, args,
+            session_id=session_id,
             caller_gsk=(getattr(agent, "_gateway_session_key", "") or ""),
             task_id=ctx.effective_task_id or "",
         )
