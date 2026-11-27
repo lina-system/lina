@@ -76,6 +76,7 @@ def _build_server() -> Any:
         raise ImportError(f"hermes-tools MCP server requires the 'mcp' package: {exc}") from exc
 
     from model_tools import get_tool_definitions, handle_function_call
+    from tools.code_execution_rpc import standalone_tool_hook_ids
 
     mcp = MCPServer(
         HERMES_TOOLS_MCP_SERVER_NAME,
@@ -102,7 +103,8 @@ def _build_server() -> Any:
         def _dispatch(**kwargs: Any) -> str:
             try:
                 # Drop None so unset optionals aren't forwarded to the handler.
-                return handle_function_call(tool_name, {k: v for k, v in kwargs.items() if v is not None})
+                args = {k: v for k, v in kwargs.items() if v is not None}
+                return handle_function_call(tool_name, args, **standalone_tool_hook_ids())
             except Exception as exc:
                 logger.exception("tool %s raised", tool_name)
                 return json.dumps({"error": str(exc), "tool": tool_name})
