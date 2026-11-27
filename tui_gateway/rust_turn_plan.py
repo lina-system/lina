@@ -162,7 +162,7 @@ def prepare_rust_turn(sid: str, session: dict, frame: dict) -> tuple[dict, dict[
     if os_family() != "linux" or not Path("/proc/self/fd").is_dir():
         return None
 
-    from agent.chat_completion_helpers import build_api_kwargs
+    from agent.chat_completion_helpers import _StreamingCall, build_api_kwargs
     from agent.conversation_loop import _restore_or_build_system_prompt
     from agent.opencode_affinity import resolve_affinity_key
     from agent.prompt_refresh import refresh_warm_prompt
@@ -245,11 +245,19 @@ def prepare_rust_turn(sid: str, session: dict, frame: dict) -> tuple[dict, dict[
             affinity_key = resolve_affinity_key(agent.session_id)
         finally:
             server._clear_session_context(tokens)
+        stream = _should_stream(agent)
+        read_timeout = None
+        if stream:
+            # The stale-stream policy uses the full request's model and context size.
+            call = _StreamingCall(agent, kwargs, None)
+            call._resolve_stale_timeout()
+            _, read_timeout, _ = call._stream_timeouts()
+            if not 0 <= read_timeout < 2**64:
+                return None  # Outside the native Duration range.
         wire = kwargs.pop("messages")
         model = kwargs.pop("model")
         tools = kwargs.pop("tools", [])
         kwargs.pop("stream", None)
-        stream = _should_stream(agent)
         if (stream and not is_native_gemini_base_url(agent.base_url)
                 and not getattr(agent, "_stream_options_unsupported", False)):
             kwargs["stream_options"] = {"include_usage": True}
@@ -265,6 +273,8 @@ def prepare_rust_turn(sid: str, session: dict, frame: dict) -> tuple[dict, dict[
             return None
         if session_affinity:
             kwargs["session_affinity"] = session_affinity
+        if read_timeout is not None:
+            kwargs["stream_read_timeout"] = read_timeout
         if (not wire or wire[0].get("role") != "system"
                 or not isinstance(wire[0].get("content"), str)
                 or wire[-1].get("role") != "user"

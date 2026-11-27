@@ -107,6 +107,8 @@ impl ModelError {
 
 pub(crate) struct ModelClient {
     http: Client,
+    stream_http: Mutex<(Duration, Client)>,
+    proxy: Option<reqwest::Proxy>,
     key: Option<HeaderValue>,
     authenticated_proxy: bool,
     last_stream_probe: Mutex<Option<Instant>>,
@@ -129,12 +131,8 @@ impl ModelClient {
                 Ok::<_, ModelError>(header)
             })
             .transpose()?;
-        let mut builder = Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .retry(reqwest::retry::never())
-            .no_proxy();
         let mut authenticated_proxy = false;
-        if let Some(raw) = std::env::var_os("LINA_TURN_MODEL_PROXY") {
+        let proxy = if let Some(raw) = std::env::var_os("LINA_TURN_MODEL_PROXY") {
             let mut url = Url::parse(raw.to_str().ok_or(ModelError::Transport)?)
                 .map_err(|_| ModelError::Transport)?;
             authenticated_proxy = !url.username().is_empty() || url.password().is_some();
@@ -143,20 +141,51 @@ impl ModelClient {
                 url.set_scheme("socks5h")
                     .map_err(|_| ModelError::Transport)?;
             }
-            builder = builder.proxy(reqwest::Proxy::all(url).map_err(|_| ModelError::Transport)?);
-        }
-        let http = builder
-            .connect_timeout(Duration::from_secs(10))
-            .read_timeout(Duration::from_secs(120))
-            .pool_idle_timeout(Duration::from_secs(90))
-            .build()
-            .map_err(|_| ModelError::Transport)?;
+            Some(reqwest::Proxy::all(url).map_err(|_| ModelError::Transport)?)
+        } else {
+            None
+        };
+        let default_read = Duration::from_secs(120);
+        let http = Self::http_client(proxy.as_ref(), default_read)?;
         Ok(Self {
+            stream_http: Mutex::new((default_read, http.clone())),
+            proxy,
             http,
             key,
             authenticated_proxy,
             last_stream_probe: Mutex::new(None),
         })
+    }
+
+    fn http_client(
+        proxy: Option<&reqwest::Proxy>,
+        read_timeout: Duration,
+    ) -> Result<Client, ModelError> {
+        let mut builder = Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .retry(reqwest::retry::never())
+            .no_proxy();
+        if let Some(proxy) = proxy {
+            builder = builder.proxy(proxy.clone());
+        }
+        builder
+            .connect_timeout(Duration::from_secs(10))
+            .read_timeout(read_timeout)
+            .pool_idle_timeout(Duration::from_secs(90))
+            .build()
+            .map_err(|_| ModelError::Transport)
+    }
+
+    fn stream_client(&self, timeout: &Value) -> Result<Client, ModelError> {
+        let seconds = timeout.as_f64().ok_or(ModelError::InvalidTimeout)?;
+        let read = Duration::try_from_secs_f64(seconds).map_err(|_| ModelError::InvalidTimeout)?;
+        // reqwest sets read patience on the pool. Keep one configured pool across
+        // rounds; outstanding requests retain their own client when policy changes.
+        let mut cached = self.stream_http.lock().map_err(|_| ModelError::Transport)?;
+        if cached.0 != read {
+            *cached = (read, Self::http_client(self.proxy.as_ref(), read)?);
+        }
+        Ok(cached.1.clone())
     }
 
     pub(crate) fn claim_stream_probe(&self) -> bool {
@@ -210,9 +239,13 @@ impl ModelClient {
         secret: Option<&str>,
     ) -> Result<Response, ModelError> {
         let body = request_body(plan, messages, mode);
+        let http = match (mode, plan.params.get("stream_read_timeout")) {
+            (RequestMode::Stream, Some(timeout)) => self.stream_client(timeout)?,
+            _ => self.http.clone(),
+        };
         self.send(
             endpoint,
-            &body,
+            http.post(endpoint.clone()).json(&body),
             plan.params.get("timeout"),
             plan.params.get("session_affinity"),
             secret,
@@ -232,7 +265,7 @@ impl ModelClient {
             let response = self
                 .send(
                     endpoint,
-                    &body,
+                    self.http.post(endpoint.clone()).json(&body),
                     timeout.as_ref(),
                     plan.params.get("session_affinity"),
                     secret,
@@ -248,12 +281,11 @@ impl ModelClient {
     async fn send(
         &self,
         endpoint: &Url,
-        body: &Map<String, Value>,
+        mut request: reqwest::RequestBuilder,
         timeout: Option<&Value>,
         affinity: Option<&Value>,
         secret: Option<&str>,
     ) -> Result<Response, ModelError> {
-        let mut request = self.http.post(endpoint.clone()).json(body);
         if let Some(timeout) = timeout {
             let seconds = timeout.as_f64().ok_or(ModelError::InvalidTimeout)?;
             let timeout = Duration::try_from_secs_f64(seconds)
